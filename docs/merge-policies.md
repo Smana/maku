@@ -1,7 +1,7 @@
 # Merge policies
 
-Every served `Repository` evaluates Maku's shipped catalog of four bounded `MergePolicy` objects
-(`docs-links`, `revert`, `deps-patch`, `docs`) in `shadow` from its first pull request, with no
+Every served `Repository` evaluates Maku's shipped catalog of three bounded `MergePolicy` objects
+(`docs-links`, `deps-patch`, `docs`) in `shadow` from its first pull request, with no
 binding and no `.policy.yml` rule. The merge gate picks the policy from the diff, records shadow
 evidence for every shadow policy that holds, and merges under the strictest `live` one that holds. A
 binding in `Repository.spec.mergePolicies` or `.github/agent-factory.yaml` is an exception: it takes
@@ -35,7 +35,7 @@ only the ownership fence in `.github/agent-factory.yaml` (`factory: <name>`). No
 manifest and no `.policy.yml` rule is needed (`maku/merge-gate` is the gate status by default):
 
 1. Every served `Repository` automatically evaluates [the catalog](#the-catalog) (`docs-links`,
-   `revert`, `deps-patch`, `docs`) in `shadow`.
+   `deps-patch`, `docs`) in `shadow`.
 2. On every agent pull request, the gate evaluates the diff against all candidate policies
    ([selection from the diff](#selection-from-the-diff)) and writes a `shadow_would_arm` record for
    each shadow policy that holds, regardless of any issue label.
@@ -52,7 +52,6 @@ A binding overrides the catalog default for that policy: `mode: live` promotes i
 # after: a new repository has no mergePolicies key at all; a repository with exceptions lists only those
 mergePolicies:
   - {name: docs-links, mode: live, holdoutChecks: ["Check the documentation links 🔗"]}
-  - {name: revert,     mode: live, holdoutChecks: ["Check the documentation links 🔗"]}
   - {name: alert-rules, mode: shadow, allowedFiles: ['^observability/.+\.ya?ml$']}
   - {name: dead-links,  mode: shadow, allowedFiles: ['^(docs|website/content)/.+\.md$'], oracleWorkflow: dead-links.yaml}
   - {name: deps-patch,  mode: shadow, protectedFiles: ['^security/base/zitadel/']}
@@ -67,7 +66,6 @@ bound, since no binding supplies one:
 | Policy | What it merges | Bound | `evidence` |
 |---|---|---|---|
 | `docs-links` | Link targets in Markdown, nothing else, 20 lines | `diffShape: links-only` | `low` (5) |
-| `revert` | A revert whose diff changes link targets only, 20 lines | `diffShape: links-only` | `low` (5) |
 | `deps-patch` | Renovate patch updates after their release age (`renovate/stability-days`): adopted from `renovate[bot]` on `renovate/` branches, 3 files, 10 lines, 2 a day | `diffShape: semver-patch` | `low` (5) |
 | `docs` | Prose in Markdown files (`^.+\.mdx?$`), 5 files, 100 lines, 2 a day | `allowedFiles` | `standard` (20) |
 
@@ -76,15 +74,6 @@ kind: MergePolicy
 metadata: {name: docs-links}
 spec:
   description: Link targets in Markdown, nothing else.
-  diffShape: links-only
-  modifyOnly: true
-  maxModifiedLines: 20
-  evidence: low
----
-kind: MergePolicy
-metadata: {name: revert}
-spec:
-  description: A revert whose diff changes link targets only.
   diffShape: links-only
   modifyOnly: true
   maxModifiedLines: 20
@@ -143,15 +132,14 @@ mergeGuardrails:
   # maxGrantLifetime 90 days is the code's default; a policy's evidence sets its promotion minimum
 ```
 
-Guardrails cap every bound class, a file's or a `Repository`'s (`config.Resolve`), never a class the
-config file declares under `classes`. A binding over one is refused alone (`GuardrailMismatch`). For
-a repository whose classes are still the config file's, guardrails set before a cutover make the
-dual evaluation's repository decision stricter than the central one and show up as disagreements:
-land them in the cutover's own pull request.
+Guardrails cap every bound class, a file's or a `Repository`'s (`config.Resolve`), including a
+repository-authoritative file with no central `classes`. A policy cap above one is clamped; an
+explicit binding value above one is refused alone (`GuardrailMismatch`). An unset `merge.maxPerDay`
+inherits the guardrail's daily cap.
 
 | Default | Value |
 |---|---|
-| Zero-binding `Repository` | Evaluates all four catalog policies in `shadow` |
+| Zero-binding `Repository` | Evaluates all three catalog policies in `shadow` |
 | Selection | Strictest `live` policy whose conditions hold on the diff |
 | Guardrails when unset | `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`; `10` files, `300` lines, `5` per day |
 | Promotion minimum | `5` clean shadow merges (`evidence: low`) or `20` (`standard`), plus one drill per repository |
@@ -183,7 +171,7 @@ flowchart LR
 | Term | Meaning | Code |
 |---|---|---|
 | Policy | A `MergePolicy` object: one bounded merge rule, named by the object. What it may say is in [policies and bindings](#policies-and-bindings) | `config.PolicySpec` |
-| Catalog | The four `MergePolicy` objects (`docs-links`, `revert`, `deps-patch`, `docs`) shipped by the `agent-factory` chart and evaluated in `shadow` by every served `Repository` unless bound otherwise | `internal/factory/resources/bindings.go` |
+| Catalog | The three `MergePolicy` objects (`docs-links`, `deps-patch`, `docs`) shipped by the `agent-factory` chart and evaluated in `shadow` by every served `Repository` unless bound otherwise | `internal/factory/resources/bindings.go` |
 | Binding | One entry of `mergePolicies` (on a `Repository` or in `.github/agent-factory.yaml`): a policy's name, its `mode` (`live`, `shadow`, `disabled`), and this repository's narrowing parameters | `config.Binding` |
 | Repository policy | The `mergePolicies` bindings of `.github/agent-factory.yaml` on the default branch. A file with `factory:` alone is the ownership fence and binds no policy | `internal/factory/mergepolicy/policy.go` |
 | Central config | `Factory` and config-file settings: `workflows`, `mergeDefaults`, `mergeGuardrails`, `policyManagement.stage`, and per repository `classAuthority`, maintainers, `merge`, `workflow`, `schedules`, budgets | `internal/factory/config/mergepolicy.go` |
@@ -209,7 +197,8 @@ decides on. Each binding resolves on its own: one that does not drops its policy
    ([the combination rules](#policies-and-bindings)).
 3. The guardrails are applied: their `protectedFiles` and `mandatoryChecks` are appended
    (`mandatoryChecks` become holdout checks, so GitHub Actions must report them); a cap left unset
-   inherits the guardrail's; a cap above it refuses the binding (`GuardrailMismatch`).
+   inherits the guardrail's; a policy cap above it is clamped, while an explicit binding cap above it
+   is refused (`GuardrailMismatch`).
 4. The resolved policy must carry `allowedFiles` or a `diffShape` (`Unbounded` otherwise) and pass
    the gate's class rules (`Invalid` otherwise).
 
@@ -263,7 +252,7 @@ flowchart TD
 | The diff | Conditions on the diff hold until it is read: the first pass decides without it, and only a decision that would arm or shadow reads it and decides again |
 | The approval subset | Applies to a policy's own arm or shadow, never to a maintainer's approval, which is already a human's. It is decided after the caps: a capped pull request says `auto_merge_cap`, not `approval_required` |
 | Deny | `protectedFiles` is the second condition checked, after `allowedFiles`: a file both outside the allow list and protected reports `file_not_allowed`. Either way a human merges |
-| Built-in shape | `docs-links` and `revert` are held to `diffShape: links-only` when they declare none, and may declare no other |
+| Built-in shape | `docs-links` is held to `diffShape: links-only` when it declares none, and may declare no other. `links-only` reads `.md` and `.mdx` files only; any other changed path refuses `class_mismatch` even when `allowedFiles` admits it |
 
 ### description
 
@@ -389,7 +378,6 @@ Rules a file that sets `mergePolicies` must meet:
 
 | Rule | Error | Fix |
 |---|---|---|
-| It binds `docs-links` and `revert` (`mode: disabled` keeps one unarmed) | `class revert is required in a file that declares classes (OD-8): add it, "- {name: revert, mode: disabled}" keeps it unarmed` | Add `- {name: revert, mode: disabled}` (or `shadow` / `live`) |
 | `mode` is `live`, `shadow` or `disabled` (`"off"` and `review` are refused) | `binding docs-links: mode "off" is not live, shadow or disabled` | Use `disabled` for a catalog policy, or delete the binding |
 
 An unknown key names where it is, the key meant when it is close or another tool's name for it, and
@@ -423,7 +411,6 @@ pauses auto-merge (`policy_invalid`). The guardrails cap every binding.
 factory: aws-0
 mergePolicies:
   - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
-  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
   - {name: docs,       mode: disabled}
   - name: alert-rules
     mode: shadow
@@ -442,7 +429,7 @@ rules](#policies-and-bindings) allow. An empty value is refused rather than read
 | `maxPatchFiles` | Essential | int ≥ 1 | `patch_too_large` | At most the guardrail's |
 | `maxModifiedLines` | Essential | int ≥ 1 | `patch_too_large` | Additions plus deletions, GitHub's count. At most the guardrail's |
 | `maxPerDay` | Essential | int ≥ 1 | `auto_merge_cap` | Policy daily cap, at most the guardrail's |
-| `evidence` | Essential | `low` \| `standard` (default) | none: sets the clean shadow decisions promotion needs, 5 or 20 | Policy only. `low` needs a `diffShape` (or the built-in shape of `docs-links` and `revert`) or an `oracle` |
+| `evidence` | Essential | `low` \| `standard` (default) | none: sets the clean shadow decisions promotion needs, 5 or 20 | Policy only. `low` needs a `diffShape` (or the built-in shape of `docs-links`) or an `oracle` |
 | `description` | Essential | string ≤ 280 chars | none: documentation only | Policy only |
 | `diffShape` | Shape and checks | `links-only` \| `semver-patch` \| `semver-minor` \| `added-entry` | `class_mismatch` | Policy only. Semver shapes and `added-entry` need `author.adopt`; semver needs `modifyOnly: true`; `semver-minor` is shadow only; `added-entry` needs `allowedFiles`, `holdoutChecks`, `requiredLabel` and no `modifyOnly` |
 | `modifyOnly` | Shape and checks | `true` | `file_added_or_deleted` | Policy only. Renames and copies count as added |
@@ -483,7 +470,7 @@ All three blocks live at the top level of the factory's config (or `Factory.spec
 | `workflows.<name>` | `{template, tier, checks, loop, escalation, effort, models, description}` | the shipped `quick`, `standard`, `careful`, `none` | Name like a policy name. `template`: `solo`, `pair`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `escalation`: `{outOfBudget, notConverged}`, each a workflow; `effort` and `models` map non-implementer roles to `low`/`medium`/`high` and a model alias (internal runs: tier aliases only); `none` takes no other key; `description` ≤ 120 bytes |
 | `mergeGuardrails.protectedFiles` | list of regexp | `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`, always first | Appended to every bound policy's `protectedFiles` |
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every bound policy's `holdoutChecks` |
-| `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0, read as `10`, `300` and `5` | A bound policy above it is refused (`GuardrailMismatch`); one without it inherits it |
+| `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0, read as `10`, `300` and `5` | A policy cap above it is clamped; an explicit binding cap above it is `GuardrailMismatch`; one without it inherits it |
 | `mergeGuardrails.maxGrantLifetime` | duration | 0, read as `2160h` (90 days) | `0` to `8760h`. Every lookup expires a grant older than this since its creation or last renewal |
 | `policyManagement.stage` | `read` \| `simulate` \| `manage` | `manage` | See [the stages](#rollout-stages) |
 | `policyManagement.operators` | list of GitHub logins | none: no exception can be approved | Read by the broker |
@@ -585,10 +572,9 @@ about five weeks at one finding a week instead of five months.
 
 ## Recipes
 
-Start every new binding in `shadow`. On a `Repository` object you bind only exceptions; in
-`.github/agent-factory.yaml` (for repository-authority files), a file that declares `mergePolicies`
-also lists `docs-links` and `revert` (`mode: disabled` keeps one unarmed). Every resolved policy must
-be bounded by `allowedFiles` or `diffShape` (`Unbounded` otherwise).
+Start every new binding in `shadow`. On a `Repository` object you bind only exceptions; a
+repository-authoritative `.github/agent-factory.yaml` lists only the policies it wants to override.
+Every resolved policy must be bounded by `allowedFiles` or `diffShape` (`Unbounded` otherwise).
 
 ### Export a repository's bindings to `.github/agent-factory.yaml`
 
@@ -626,7 +612,6 @@ spec:
 factory: aws-0
 mergePolicies:
   - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
-  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
   - name: docs-broad
     mode: shadow
     allowedFiles: ['^docs/.+\.md$', '^README\.md$']
@@ -667,7 +652,6 @@ spec:
 factory: aws-0
 mergePolicies:
   - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
-  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
   - name: deps-patch
     mode: shadow
     allowedFiles: ['^(apps|flux|infrastructure)/.+\.ya?ml$']
@@ -684,7 +668,6 @@ merges.
 factory: aws-0
 mergePolicies:
   - {name: docs-links, mode: disabled}
-  - {name: revert,     mode: disabled}
   - {name: deps-minor, mode: shadow, allowedFiles: ['^(apps|flux|infrastructure)/.+\.ya?ml$']}
 ```
 
@@ -707,7 +690,6 @@ spec:
 factory: aws-0
 mergePolicies:
   - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
-  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
   - name: generated-files
     mode: shadow
     allowedFiles: ['^gen/.+$']
@@ -748,7 +730,6 @@ spec:
 factory: aws-0
 mergePolicies:
   - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
-  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
   - {name: docs-small,    mode: shadow, allowedFiles: ['^docs/.+\.md$']}
   - {name: website-small, mode: shadow, allowedFiles: ['^website/content/.+\.md$']}
 ```
@@ -1080,9 +1061,6 @@ approval patterns are unanchored on purpose: `'^docs/specs/'` covers the directo
 **`key "Mode" is not a field (did you mean "mode"?)`.** Keys are case-exact. The message starts
 with where the key is (`mergePolicies[2]:`) and lists every key valid there.
 
-**`class revert is required in a file that declares classes`.** Add `- {name: revert, mode: disabled}`
-to keep it unarmed in `.github/agent-factory.yaml`.
-
 **`considered=docs:reviewer_verdict_missing`.** `docs` has no `diffShape` and no `oracle`, so MR12
 requires a reviewer's `approve`, and the task ran a workflow without a reviewer (such as `quick`).
 Run with `standard` or `careful`, or merge by hand.
@@ -1173,7 +1151,6 @@ spec:
     breaker: {window: 10, maxReverts: 1}
   mergePolicies:
     - {name: docs-links, mode: shadow, holdoutChecks: [validate]}
-    - {name: revert,     mode: shadow, holdoutChecks: [validate]}
     - {name: docs,       mode: disabled}
     - name: dead-links
       mode: shadow
@@ -1196,20 +1173,23 @@ Every field has one combination rule:
 
 A binding tightens or fills; it never widens what the policy says. The
 [guardrails](#central-config) cap every binding: their paths and checks are added, an unset cap
-inherits theirs, and a cap above theirs is `GuardrailMismatch`. `docs-links` and `revert` carry
-`diffShape: links-only` built in; `review` is not a policy and is refused on both `MergePolicy` and
-bindings.
+inherits theirs, a policy cap above theirs is clamped, and an explicit binding cap above theirs is
+`GuardrailMismatch`. `docs-links` carries `diffShape: links-only` built in; `review` is not a policy
+and is refused on both `MergePolicy` and bindings.
 
 `Factory.spec.mergeDefaults` holds the merge settings most repositories share. A `Repository`
 overrides them key by key: a key it sets wins whole (a `breaker` it sets replaces the default's), and
 a key it omits is the default's. `Repository.status.merge` shows the result, and
-`status.mergeDefaulted` names the keys the `Factory` filled.
+`status.mergeDefaulted` names the keys the `Factory` filled. Set `merge.autoRevert: true` to let the
+merger merge a green revert at the exact head GitHub created; the default is off and no `revert`
+policy is needed.
 
-**Each binding resolves, fails and keeps its last good version on its own.** A policy is accepted
-when it is valid alone. A binding that does not resolve drops that policy only: the `Repository` and
-its other policies keep serving. While the factory runs, the binding keeps its last resolved policy
-when it still holds under today's catalogue, guardrails and merge settings; after a restart it serves
-none. A repository's own file in `mergePolicies` ([above](#a-binding)) resolves the same way.
+**Each binding resolves and fails on its own.** A policy is accepted when it is valid alone. A
+binding that does not resolve drops that policy only: the `Repository` and its other policies keep
+serving. While the factory runs, a refused edit can restore the last resolved policy only at the
+lower of its old mode and the binding's written mode. `disabled` and `MissingRef` restore nothing;
+after a restart no refused binding serves a last resolved policy. A repository's own file in
+`mergePolicies` ([above](#a-binding)) resolves the same way.
 
 | Reason | On | Means | Fix |
 |---|---|---|---|
@@ -1218,7 +1198,7 @@ none. A repository's own file in `mergePolicies` ([above](#a-binding)) resolves 
 | `ParameterTwice` | a binding | A fill-once parameter (`companionFiles`, `requiredLabel`, `oracleWorkflow`) set on the policy and the binding | Remove one |
 | `OverPolicy` | a binding | A cap above the policy's | Lower it |
 | `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
-| `Unbounded` | a binding | Bound `live` or `shadow`, the policy resolved with it has neither `allowedFiles` nor a `diffShape` (`docs-links` and `revert` have theirs built in) | Set `allowedFiles` on the policy or the binding, or a `diffShape` |
+| `Unbounded` | a binding | Bound `live` or `shadow`, the policy resolved with it has neither `allowedFiles` nor a `diffShape` (`docs-links` has its shape built in) | Set `allowedFiles` on the policy or the binding, or a `diffShape` |
 | `AmbiguousAdoption` | a binding | Two adopted bindings of one shape share a login and an overlapping branch prefix; the later in the list is refused and keeps no last policy | Narrow or unbind one |
 | `Invalid` | a binding, a policy | The resolved policy, or the policy alone, fails the class rules | The message names the rule |
 | `DefinedTwice` | a `Repository` | The config file also defines the repository | Remove it from one of the two |

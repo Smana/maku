@@ -153,6 +153,8 @@ func TestDecideArm(t *testing.T) {
 	forged.Statuses[0].Creator = "ogenki-agents[bot]"
 	scanRed := green("SUCCESS")
 	scanRed.Runs = append(scanRed.Runs, forge.Check{Name: "Security scanning", State: "FAILURE"})
+	scanSkipped := green("SUCCESS")
+	scanSkipped.Runs = append(scanSkipped.Runs, forge.Check{Name: "Security scanning", State: "SUCCESS", Conclusion: "SKIPPED"})
 	for name, c := range map[string]struct {
 		in                       ArmInputs
 		verdict, reason, matched string
@@ -162,15 +164,16 @@ func TestDecideArm(t *testing.T) {
 		// v2 D7: every other condition holds, but the fence names another factory: a human merges.
 		"not this factory's repository": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
 			ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)"), NotOwned: true}, "human", "not_owned", ""},
-		"CI red":             {ArmInputs{PR: agentPR(), Checks: red, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
-		"CI errored":         {ArmInputs{PR: agentPR(), Checks: errored, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
-		"CI still running":   {ArmInputs{PR: agentPR(), Checks: pending, Task: armTask("docs-links", "solo", "")}, "wait", "ci_pending", ""},
-		"secret scan red":    {ArmInputs{PR: agentPR(), Checks: scanRed, Task: armTask("docs-links", "solo", "")}, "escalate", "secret_scan_red", ""},
-		"gate path":          {ArmInputs{PR: agentPR(), Checks: green("ERROR"), Task: armTask("docs-links", "solo", "")}, "human", "gate_path", "gate"},
-		"diff not the class": {ArmInputs{PR: agentPR(), Checks: green("PENDING"), Task: armTask("docs-links", "solo", "")}, "human", "policy_pending", "review"},
-		"a forged status":    {ArmInputs{PR: agentPR(), Checks: forged, Task: armTask("docs-links", "solo", "")}, "human", "policy_absent", ""},
+		"CI red":              {ArmInputs{PR: agentPR(), Checks: red, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
+		"CI errored":          {ArmInputs{PR: agentPR(), Checks: errored, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
+		"CI still running":    {ArmInputs{PR: agentPR(), Checks: pending, Task: armTask("docs-links", "solo", "")}, "wait", "ci_pending", ""},
+		"secret scan red":     {ArmInputs{PR: agentPR(), Checks: scanRed, Task: armTask("docs-links", "solo", "")}, "escalate", "secret_scan_red", ""},
+		"secret scan skipped": {ArmInputs{PR: agentPR(), Checks: scanSkipped, Task: armTask("docs-links", "solo", "")}, "escalate", "secret_scan_red", ""},
+		"gate path":           {ArmInputs{PR: agentPR(), Checks: green("ERROR"), Task: armTask("docs-links", "solo", "")}, "human", "gate_path", "gate"},
+		"diff not the class":  {ArmInputs{PR: agentPR(), Checks: green("PENDING"), Task: armTask("docs-links", "solo", "")}, "human", "policy_pending", "review"},
+		"a forged status":     {ArmInputs{PR: agentPR(), Checks: forged, Task: armTask("docs-links", "solo", "")}, "human", "policy_absent", ""},
 		"no policy matched": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs", "pair", "approve"),
-			ReportedHead: head, Files: changed("text.", "text, reworded.")}, "human", "no_policy_matched", ""},
+			ReportedHead: head, Files: changed("text.", "text, reworded."), DiffRead: true}, "human", "no_policy_matched", ""},
 		"maintainer approved":  {ArmInputs{PR: approved, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", "")}, "human", "maintainer_approved", "review"},
 		"not an agent's PR":    {ArmInputs{PR: byOwner, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", "")}, "human", "not_agent_authored", ""},
 		"no approving verdict": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "pair", "none")}, "human", "no_approving_verdict", ""},
@@ -182,9 +185,9 @@ func TestDecideArm(t *testing.T) {
 			ReportedHead: head, Verifiers: []v1alpha1.RunRecord{{ID: "r3vnwr3v", Role: "reviewer", Trigger: "review", Verdict: "approve", HeadSHA: oldHead}}},
 			"human", "verdict_stale", ""},
 		"docs-links moved beyond links": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
-			ReportedHead: head, Files: changed("text.", "text <script>alert(1)</script>.")}, "human", "no_policy_matched", ""},
+			ReportedHead: head, Files: changed("text.", "text <script>alert(1)</script>."), DiffRead: true}, "human", "no_policy_matched", ""},
 		"revert moved beyond links": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("revert", "solo", ""),
-			ReportedHead: head, Files: changed("The link is broken.", "The link has rotted.")}, "human", "no_policy_matched", ""},
+			ReportedHead: head, Files: changed("The link is broken.", "The link has rotted."), DiffRead: true}, "human", "no_policy_matched", ""},
 		"class paused": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
 			ReportedHead: head, Paused: true}, "human", "class_paused", "docs-links"},
 		"daily cap": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),

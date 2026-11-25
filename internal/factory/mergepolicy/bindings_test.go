@@ -134,10 +134,13 @@ func TestABindingThatDoesNotResolveIsIsolated(t *testing.T) {
 	if r := rep.BindingErrors["foo"]; r.Reason != v1alpha1.ReasonMissingRef || !strings.Contains(r.Message, "MergePolicy foo") {
 		t.Fatalf("foo: %+v", r)
 	}
-	if r := rep.BindingErrors["alert-rules-2"]; r.Reason != config.ReasonGuardrailMismatch {
+	if r := rep.BindingErrors["alert-rules-2"]; r.Reason != "" {
 		t.Fatalf("alert-rules-2: %+v", r)
 	}
-	if _, ok := rep.Classes["foo"]; ok || len(rep.Classes) != 3 {
+	if cl := rep.Classes["alert-rules-2"].Class.MaxPerDay; cl != 2 {
+		t.Fatalf("alert-rules-2 maxPerDay = %d, want the guardrail cap 2", cl)
+	}
+	if _, ok := rep.Classes["foo"]; ok || len(rep.Classes) != 4 {
 		t.Fatalf("classes %v", slices.Sorted(func(y func(string) bool) {
 			for k := range rep.Classes {
 				if !y(k) {
@@ -159,7 +162,7 @@ func TestAnAmbiguousFileBindingIsRefused(t *testing.T) {
 		DiffShape: "semver-patch", ModifyOnly: true, ReleaseAgeCheck: "age"}
 	c.Policies["deps-a"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: adopt}}
 	c.Policies["deps-b"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: adopt}}
-	f, err := Parse([]byte(bindingFile + "  - {name: deps-b, mode: disabled}\n  - {name: deps-a, mode: shadow}\n"))
+	f, err := Parse([]byte(bindingFile + "  - {name: deps-b, mode: shadow}\n  - {name: deps-a, mode: shadow}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,15 +178,30 @@ func TestAnAmbiguousFileBindingIsRefused(t *testing.T) {
 	}
 }
 
-// OD-8 holds on the binding names: a file that binds any policy binds docs-links and revert.
-func TestABindingFileWithoutRevertIsInvalid(t *testing.T) {
+// A file may bind docs-links without a revert companion.
+func TestABindingFileWithoutRevertIsValid(t *testing.T) {
 	c, rc := boundCentral()
 	f, err := Parse([]byte("factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: live, holdoutChecks: [x]}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ValidateFile(f, rc, c); err == nil || !strings.Contains(err.Error(), "revert") {
+	if _, err := ValidateFile(f, rc, c); err != nil {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFileBindingUsesDefaultGuardrailsWithoutCentralClasses(t *testing.T) {
+	f := &File{MergePolicies: []config.Binding{{Name: "docs", Mode: config.ModeShadow}}}
+	c := &config.Config{Policies: map[string]config.ServedPolicy{
+		"docs": {Spec: config.PolicySpec{MergeClass: config.MergeClass{AllowedFiles: []string{`^docs/.+\.md$`}}}},
+	}}
+	classes, refused := ResolveBindings(f, &config.Repository{}, c)
+	if len(refused) != 0 {
+		t.Fatalf("%+v", refused)
+	}
+	cl := classes["docs"].Class
+	if !slices.Contains(cl.ProtectedFiles, `^\.github/`) || cl.MaxPatchFiles != config.DefaultGuardrailMaxPatchFiles || cl.MaxPerDay != 5 {
+		t.Fatalf("%+v", cl)
 	}
 }
 

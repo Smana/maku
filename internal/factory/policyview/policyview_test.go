@@ -50,7 +50,7 @@ func TestCheck(t *testing.T) {
 		"not YAML":             {"factory: aws-0\nmergePolicies: [\n", "not YAML", "", ""},
 		"an unknown condition": {r(base, "maxPatchFiles: 10", "maxFiles: 10", 1), "not a field", "", ""},
 		"factory: edited":      {r(base, "factory: aws-0", "factory: gcp-0", 1), "factory: is read-only", "", ""},
-		"no revert":            {r(base, "  - name: revert\n    mode: shadow\n", "", 1), "revert", "", ""},
+		"no revert":            {r(base, "  - name: revert\n    mode: shadow\n", "", 1), "", mergepolicy.KindUnchanged, ""},
 		"the classes shape":    {"factory: aws-0\nclasses: {}\n", "write mergePolicies with maku policy export", "", ""},
 		"a lower cap":          {r(base, "maxPatchFiles: 10", "maxPatchFiles: 5", 1), "", mergepolicy.KindTightening, ""},
 		"promoted":             {r(base, "mode: shadow", "mode: live", 1), "", mergepolicy.KindRelaxation, "mode"},

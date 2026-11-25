@@ -328,7 +328,7 @@ func DiffShapes() []string {
 // BuiltInShape is the diff shape the gate holds a class to when its config names none: R52's
 // promise of the two entry classes (MC1: their conditions become built-in defaults at parity).
 func BuiltInShape(name string) string {
-	if name == "docs-links" || name == "revert" {
+	if name == "docs-links" {
 		return "links-only"
 	}
 	return ""
@@ -346,7 +346,8 @@ func (c Class) ReadsDiff(name string) bool {
 }
 
 // Bounded reports whether the class says which diffs it may merge (MR6): allowedFiles, a declared
-// diff shape, or the shape built in under its name.
+// diff shape, or the shape built in under its name. links-only carries its own Markdown path bound,
+// whatever allowedFiles says.
 func (c Class) Bounded(name string) bool {
 	return len(c.AllowedFiles) > 0 || c.DiffShape != "" || BuiltInShape(name) != ""
 }

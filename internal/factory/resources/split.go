@@ -379,16 +379,22 @@ func Equal(before, after *config.Config) []string {
 			continue
 		}
 		mb, ma := rb.Merge, ra.Merge
+		mb.AutoRevert = mb.AutoRevert || rb.Classes["revert"].Live
+		ma.AutoRevert = ma.AutoRevert || ra.Classes["revert"].Live
 		mb.FluxSource, ma.FluxSource = "", ""
 		for _, f := range fieldDiff(mb, ma) {
 			out = append(out, fmt.Sprintf("%s merge: %s %s -> %s", n, f, jsonOf(jsonMap(mb)[f]), jsonOf(jsonMap(ma)[f])))
 		}
 		classes := map[string]bool{}
-		for c := range rb.Classes {
-			classes[c] = true
+		for c, cl := range rb.Classes {
+			if c != "revert" && (cl.Live || cl.Shadow) {
+				classes[c] = true
+			}
 		}
-		for c := range ra.Classes {
-			classes[c] = true
+		for c, cl := range ra.Classes {
+			if c != "revert" && (cl.Live || cl.Shadow) {
+				classes[c] = true
+			}
 		}
 		for _, c := range slices.Sorted(maps.Keys(classes)) {
 			cb, inB := rb.Classes[c]

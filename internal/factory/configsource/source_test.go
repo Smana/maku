@@ -124,10 +124,10 @@ func TestSyncAddsARepository(t *testing.T) {
 	if f, r := cfg.GenerationsFor("smana/other"); f != 0 || r != 3 {
 		t.Fatalf("generations: %d %d", f, r)
 	}
-	if p, r, bound := cfg.ClassGenerations("smana/other", "docs"); p != 5 || r != 3 || !bound {
-		t.Fatalf("docs generations: %d %d %v", p, r, bound)
+	if p, r, bound := cfg.ClassGenerations("smana/other", "docs-links"); p != 5 || r != 3 || !bound {
+		t.Fatalf("docs-links generations: %d %d %v", p, r, bound)
 	}
-	if g := cfg.Generations.Repos["smana/other"]; g.RepositoryName != "other" || g.Classes["docs"].PolicyName != "docs" {
+	if g := cfg.Generations.Repos["smana/other"]; g.RepositoryName != "other" || g.Classes["docs-links"].PolicyName != "docs-links" {
 		t.Fatalf("names: %+v", g)
 	}
 	if o := outcome(t, s, resources.KindRepository, "other"); !o.Accepted || o.ServedGeneration != 3 || o.ObservedGeneration != 3 {
@@ -159,7 +159,7 @@ func TestSyncKeepsTheLastGoodVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := s.Live.Current()
-	if _, ok := cfg.RepositoryFor("Smana/Other").Classes["docs"]; !ok {
+	if _, ok := cfg.RepositoryFor("Smana/Other").Classes["docs-links"]; !ok {
 		t.Fatalf("generation 1's classes must still be served: %+v", cfg.RepositoryFor("Smana/Other").Classes)
 	}
 	if _, rg := cfg.GenerationsFor("Smana/Other"); rg != 1 {

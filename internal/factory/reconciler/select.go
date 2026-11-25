@@ -44,6 +44,9 @@ func candidates(classes map[string]config.Class, t *v1alpha1.Task) []string {
 	}
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(classes)) {
+		if name == "revert" {
+			continue // rollback is merge.autoRevert, not a diff-chosen merge policy
+		}
 		if cl := classes[name]; (cl.Live || cl.Shadow) && !cl.Adopted() && cl.Oracle == nil {
 			out = append(out, name)
 		}
@@ -117,7 +120,7 @@ func decideAmong(in ArmInputs, cfg *config.Config, rc *config.Repository, classe
 	if in.DiffRead && cfg.SteeringOn() && touchesSteering(in.Stats) {
 		return human("steering_path") // no agent pull request changes a note (scoper SC3)
 	}
-	var live, shadow, liveWait, shadowWait []held
+	var live, shadow, liveWait, shadowWait, liveGuards []held
 	var considered []string
 	for _, name := range candidates(classes, in.Task) {
 		cl := withShape(classes[name], name)
@@ -130,7 +133,11 @@ func decideAmong(in ArmInputs, cfg *config.Config, rc *config.Repository, classe
 		}
 		d = withApproval(d, in, approvals[name])
 		h := held{Name: name, Class: cl, Rows: d.Rows, Reason: d.Reason, D: d}
+		guard := cl.Live && d.Verdict == "human" && slices.Contains([]string{"file_protected", reasonApprovalRequired, "holdout_red"}, d.Reason)
 		switch {
+		case guard:
+			liveGuards = append(liveGuards, h)
+			considered = append(considered, name+":"+d.Reason)
 		case d.Verdict == "wait" && cl.Live:
 			liveWait = append(liveWait, h)
 		case d.Verdict == "wait":
@@ -143,8 +150,13 @@ func decideAmong(in ArmInputs, cfg *config.Config, rc *config.Repository, classe
 			shadow = append(shadow, h)
 		}
 	}
-	for _, l := range [][]held{live, shadow, liveWait, shadowWait} {
+	for _, l := range [][]held{live, shadow, liveWait, shadowWait, liveGuards} {
 		slices.SortFunc(l, compareHeld)
+	}
+	if len(liveGuards) > 0 {
+		d := liveGuards[0].D
+		d.Rows.Considered = strings.Join(considered, ",")
+		return withIntegrationHold(in.Integration, d)
 	}
 	// A pending check waits only where it could decide: the strictest pending policy of the tier
 	// that decides, stricter than every policy of that tier that holds. A looser pending policy, or

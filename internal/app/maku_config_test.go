@@ -308,8 +308,8 @@ func TestMakuConfigValidateResolvedAndUnchanged(t *testing.T) {
 	}
 }
 
-// Q10: a binding over a guardrail is one guardrail: line, and validate fails; within them, the
-// count is printed.
+// Q10: policy caps above a guardrail are clamped; an explicit binding cap above one is one
+// guardrail line and fails validate. Within them, the count is printed.
 func TestMakuConfigValidateGuardrails(t *testing.T) {
 	residual := anrResidual(t)
 	guarded := func(maxPerDay int) string {
@@ -323,17 +323,37 @@ func TestMakuConfigValidateGuardrails(t *testing.T) {
 	}
 	var out bytes.Buffer
 	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
-	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, guarded(1)})
-	if err == nil || !strings.Contains(err.Error(), "2 bindings over a guardrail") {
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, guarded(1)}); err != nil {
+		t.Fatalf("policy caps are clamped: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "guardrails: 16 bindings within\n") {
+		t.Fatalf("%s", out.String())
+	}
+	out.Reset()
+	raised := splitANR(t, func(objs []resources.Object) {
+		for i := range objs {
+			switch objs[i].Kind {
+			case resources.KindFactory:
+				objs[i].Spec["mergeGuardrails"] = map[string]any{"maxPerDay": 1}
+			case resources.KindRepository:
+				if objs[i].Name != "cloud-native-ref" {
+					continue
+				}
+				for _, b := range objs[i].Spec["mergePolicies"].([]any) {
+					if binding := b.(map[string]any); binding["name"] == "docs-links" {
+						binding["maxPerDay"] = 2
+					}
+				}
+			}
+		}
+	})
+	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, raised})
+	if err == nil || !strings.Contains(err.Error(), "1 bindings over a guardrail") {
 		t.Fatalf("got %v\n%s", err, out.String())
 	}
-	for _, line := range []string{
-		"guardrail: Repository/cloud-native-ref deps-patch: maxPerDay 2 is over the guardrail's 1\n",
-		"guardrail: Repository/runlore-kb kb-entries: maxPerDay 5 is over the guardrail's 1\n",
-	} {
-		if !strings.Contains(out.String(), line) {
-			t.Fatalf("missing %q in:\n%s", line, out.String())
-		}
+	line := "guardrail: Repository/cloud-native-ref docs-links: maxPerDay 2 is over the guardrail's 1\n"
+	if !strings.Contains(out.String(), line) {
+		t.Fatalf("missing %q in:\n%s", line, out.String())
 	}
 	out.Reset()
 	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, guarded(5)}); err != nil {
@@ -422,11 +442,11 @@ func TestMakuConfigValidateBaseRef(t *testing.T) {
 	var out, errOut bytes.Buffer
 	m := Maku{Dir: repo, Out: &out, Err: &errOut}
 	err = m.run(t.Context(), []string{"config", "validate", "--config", filepath.Join(repo, "factory.yaml"), "--base-ref", "HEAD", filepath.Join(repo, "objects.yaml")})
-	if err == nil {
-		t.Fatal("bindings over the guardrail fail validate")
+	if err != nil {
+		t.Fatalf("policy caps above the guardrail are clamped: %v\n%s", err, out.String())
 	}
 	for _, want := range []string{
-		"MergePolicy deps-patch:\n  cloud-native-ref  shadow  -  refused: GuardrailMismatch: class deps-patch: maxPerDay 2 is over the guardrail's 1\n",
+		"MergePolicy deps-patch:\n  cloud-native-ref  shadow  tightening  resolves\n",
 		"MergePolicy alert-rules:\n  cloud-native-ref  shadow  tightening  resolves\n",
 	} {
 		if !strings.Contains(out.String(), want) {

@@ -1240,6 +1240,10 @@ func TestLabelEventsKeepOnlyTheLabelsAdditions(t *testing.T) {
 	if len(evs) != 2 || evs[0].Actor != "someone" || evs[1].Actor != "Smana" || evs[1].Label != "factory/ready" {
 		t.Fatalf("%+v", evs)
 	}
+	history, err := r.g.LabelHistory(t.Context(), 7, "factory/ready")
+	if err != nil || len(history) != 3 || !history[1].Removed || history[1].Actor != "ogenki-agent-factory[bot]" {
+		t.Fatalf("history %+v, %v", history, err)
+	}
 }
 
 // Past the forge's page cap the newest events are unread: the caller is told, not handed a
@@ -1609,6 +1613,22 @@ func TestFilesReadsBothSidesOfADiff(t *testing.T) {
 	}
 	if _, err := r.g.Diff(ctx, "mid", "new"); !errors.Is(err, ErrDiffTooLarge) {
 		t.Errorf("a truncated compare must be ErrDiffTooLarge: %v", err)
+	}
+}
+
+func TestFileAtRefusesNonRegularFiles(t *testing.T) {
+	const path = "docs/x.md"
+	for name, body := range map[string]string{
+		"a directory": "dir", "a symlink": "symlink", "a submodule": "submodule",
+		"a symlink resolved to its target": "linked", "a withheld body": "big",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			r.gh.atCommit = map[string]string{"head:" + path: body}
+			if _, err := r.g.fileAt(t.Context(), path, "head"); !errors.Is(err, ErrNotAFile) {
+				t.Fatalf("err %v, want ErrNotAFile", err)
+			}
+		})
 	}
 }
 

@@ -20,8 +20,8 @@ func catalogPolicies(t *testing.T) []Object {
 		t.Fatal(err)
 	}
 	objs, err := Decode(raw)
-	if err != nil || len(objs) != 4 {
-		t.Fatalf("%v: %d policies, want 4", err, len(objs))
+	if err != nil || len(objs) != 3 {
+		t.Fatalf("%v: %d policies, want 3", err, len(objs))
 	}
 	for i := range objs {
 		objs[i].Generation, objs[i].Catalog = 1, true
@@ -29,7 +29,7 @@ func catalogPolicies(t *testing.T) []Object {
 	return objs
 }
 
-// MR2, MR6, MR4: the four catalog policies are accepted alone, each bounded and carrying its own
+// MR2, MR6, MR4: the three catalog policies are accepted alone, each bounded and carrying its own
 // evidence level, and a Repository with no mergePolicies at all evaluates every one in shadow.
 func TestCatalogPolicyIsShadowWithoutABinding(t *testing.T) {
 	r := repo("ai-native-ref", "Smana/ai-native-ref")
@@ -42,7 +42,7 @@ func TestCatalogPolicyIsShadowWithoutABinding(t *testing.T) {
 		t.Fatalf("refused: %+v", res.Refused)
 	}
 	rc := res.Config.RepositoryFor("Smana/ai-native-ref")
-	for name, minimum := range map[string]int{"docs-links": 5, "revert": 5, "deps-patch": 5, "docs": 20} {
+	for name, minimum := range map[string]int{"docs-links": 5, "deps-patch": 5, "docs": 20} {
 		cl, ok := rc.Classes[name]
 		switch {
 		case !ok:
@@ -58,7 +58,7 @@ func TestCatalogPolicyIsShadowWithoutABinding(t *testing.T) {
 			t.Errorf("%s: outcome %+v", name, b)
 		}
 	}
-	if got := strings.Join(rc.Bound, " "); got != "deps-patch docs docs-links revert" {
+	if got := strings.Join(rc.Bound, " "); got != "deps-patch docs docs-links" {
 		t.Fatalf("bound %q: the catalog's names, so the rules that read Bound see them", got)
 	}
 }
@@ -82,17 +82,17 @@ func TestCatalogPolicyBindingWins(t *testing.T) {
 	if cl := rc.Classes["docs-links"]; !cl.Live || !slices.Contains(cl.HoldoutChecks, "validate") {
 		t.Fatalf("docs-links bound live: %+v", cl)
 	}
-	if !rc.Classes["revert"].Shadow || !rc.Classes["deps-patch"].Shadow {
-		t.Fatalf("the unbound catalog policies are shadow: %+v", rc.Classes)
+	if !rc.Classes["deps-patch"].Shadow {
+		t.Fatalf("the unbound catalog policy is shadow: %+v", rc.Classes)
 	}
 	if _, ok := rc.Classes["alert-rules"]; ok {
 		t.Fatal("an unlabelled policy no Repository binds is not evaluated")
 	}
-	if got := strings.Join(rc.Bound, " "); got != "docs-links docs deps-patch revert" {
+	if got := strings.Join(rc.Bound, " "); got != "docs-links docs deps-patch" {
 		t.Fatalf("bound %q: the Repository's bindings in order, then the catalog's", got)
 	}
-	if n := len(res.Bindings); n != 4 {
-		t.Fatalf("%d binding outcomes, want 4 (two bound, two from the catalog)", n)
+	if n := len(res.Bindings); n != 3 {
+		t.Fatalf("%d binding outcomes, want 3 (two bound, one from the catalog)", n)
 	}
 }
 

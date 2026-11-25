@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 )
 
@@ -164,11 +165,14 @@ func refusedNames(s Snapshot) []string {
 	return out
 }
 
-// lastResolved is each binding's last resolved class after s: the one resolved now, else the one
-// kept before. A binding the file no longer names keeps none.
+// lastResolved is each evaluated binding's last resolved class after s: the one resolved now, else
+// the one kept before. A disabled binding or one the file no longer names keeps none.
 func lastResolved(s Snapshot, last map[string]Resolved) map[string]Resolved {
 	out := map[string]Resolved{}
 	for _, b := range s.File.MergePolicies {
+		if config.Disabled(b.Mode) {
+			continue
+		}
 		if _, refused := s.Refused[b.Name]; !refused {
 			out[b.Name] = s.Classes[b.Name]
 		} else if r, ok := last[b.Name]; ok {
@@ -179,8 +183,8 @@ func lastResolved(s Snapshot, last map[string]Resolved) map[string]Resolved {
 }
 
 // evaluate parses, validates, resolves and compares one file. A binding that does not resolve
-// serves last's class for it, checked again under cfg and rc's merge (B9): never one that is the
-// ambiguity refused or would make one with a served class.
+// serves last's class at the written mode or stricter, checked again under cfg and rc's merge:
+// never for a missing policy, an ambiguous adoption, or a disabled binding.
 func (w *Watch) evaluate(cfg *config.Config, rc *config.Repository, hash string, body []byte, last map[string]Resolved) Snapshot {
 	w.mu.Lock()
 	w.evaluations++
@@ -204,7 +208,8 @@ func (w *Watch) evaluate(cfg *config.Config, rc *config.Repository, hash string,
 	for _, b := range f.MergePolicies {
 		refusal, refused := s.Refused[b.Name]
 		prior, ok := last[b.Name]
-		if !refused || !ok || refusal.Reason == config.ReasonAmbiguousAdoption {
+		if config.Disabled(b.Mode) || !refused || !ok || refusal.Reason == config.ReasonAmbiguousAdoption ||
+			refusal.Reason == v1alpha1.ReasonMissingRef {
 			continue
 		}
 		served := map[string]config.Class{}
@@ -214,7 +219,11 @@ func (w *Watch) evaluate(cfg *config.Config, rc *config.Repository, hash string,
 		if config.AmbiguousWithAny(prior.Class, served) {
 			continue
 		}
-		if cl, again := config.Recheck(b.Name, prior.Class, policyContext(cfg, rc), rc.Merge); again == nil {
+		limited, modeOK := config.LimitMode(prior.Class, b.Mode)
+		if !modeOK {
+			continue
+		}
+		if cl, again := config.Recheck(b.Name, limited, policyContext(cfg, rc), rc.Merge); again == nil {
 			r := resolvedOf(cl)
 			r.PolicyGeneration = prior.PolicyGeneration
 			s.Classes[b.Name] = r

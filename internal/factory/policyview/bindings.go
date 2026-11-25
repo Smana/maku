@@ -80,9 +80,6 @@ func CheckBindings(cfg *config.Config, rc *config.Repository, rep evidence.Repor
 		}
 		names[b.Name] = true
 	}
-	if len(bindings) > 0 && (!names["docs-links"] || !names["revert"]) {
-		errs = append(errs, "bind docs-links and revert when any policy is bound (OD-8)")
-	}
 	if rc.ClassAuthority == config.ClassAuthorityRepository && len(bindings) > 0 {
 		errs = append(errs, "classAuthority repository: the repository's file holds the bindings (MP15)")
 	}

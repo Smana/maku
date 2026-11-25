@@ -2407,6 +2407,12 @@ spec:
                       before a decision named one, and then the task's predictedClass stands for it.
                     maxLength: 64
                     type: string
+                  revertHeadSHA:
+                    description: |-
+                      RevertHeadSHA is the head GitHub created with the revert pull request. Only this exact head
+                      may be merged automatically; a later push leaves the revert with a maintainer.
+                    maxLength: 64
+                    type: string
                   revertNumber:
                     type: integer
                   reviewers:

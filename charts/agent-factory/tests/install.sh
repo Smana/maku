@@ -479,9 +479,9 @@ reasons=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o j
 ! grep -qE 'CreateContainerConfigError|ContainerCannotRun|InvalidImageName|ErrImage' <<<"$reasons" ||
   die "the factory failed before it started (a mount or the image)"
 
-step "the merge policy catalog: four labelled MergePolicies admitted; a platform's own of a catalog name fails the render"
+step "the merge policy catalog: three labelled MergePolicies admitted; a platform's own of a catalog name fails the render"
 n=$(kubectl -n "$NS" get mergepolicies -l maku.ogenki.io/catalog=true -o name | wc -l)
-[[ $n == 4 ]] || die "the API server holds $n catalog MergePolicies, want 4"
+[[ $n == 3 ]] || die "the API server holds $n catalog MergePolicies, want 3"
 # A platform's own MergePolicy/docs: the installed one with its catalog label removed. The render
 # reads it (lookup) and fails naming it, before any apply; listed in exclude, the render passes.
 kubectl -n "$NS" label mergepolicy docs maku.ogenki.io/catalog- >/dev/null

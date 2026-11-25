@@ -1,47 +1,61 @@
-# The merge policy catalog's four specs, exactly as the merge policies review states them
-# (docs/superpowers/specs/2026-11-14-merge-policies-review-design.md, "The catalog"). render.sh
-# compares each rendered MergePolicy's name and spec with these; Go's resources tests assemble them.
+# Source: agent-factory/templates/merge-policies-catalog.yaml
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
-metadata: {name: docs-links}
+metadata:
+  name: docs-links
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
 spec:
   description: Link targets in Markdown, nothing else.
   diffShape: links-only
-  modifyOnly: true
-  maxModifiedLines: 20
   evidence: low
+  maxModifiedLines: 20
+  modifyOnly: true
 ---
+# Source: agent-factory/templates/merge-policies-catalog.yaml
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
-metadata: {name: revert}
+metadata:
+  name: deps-patch
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
 spec:
-  description: A revert whose diff changes link targets only.
-  diffShape: links-only
-  modifyOnly: true
-  maxModifiedLines: 20
-  evidence: low
----
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata: {name: deps-patch}
-spec:
+  author:
+    adopt:
+      branches:
+        - ^renovate/
+      logins:
+        - renovate[bot]
   description: Renovate patch updates, after their release age.
-  author: {adopt: {logins: ["renovate[bot]"], branches: ['^renovate/']}}
   diffShape: semver-patch
-  modifyOnly: true
-  maxPatchFiles: 3
-  maxModifiedLines: 10
-  releaseAgeCheck: renovate/stability-days
-  maxPerDay: 2
   evidence: low
+  maxModifiedLines: 10
+  maxPatchFiles: 3
+  maxPerDay: 2
+  modifyOnly: true
+  releaseAgeCheck: renovate/stability-days
 ---
+# Source: agent-factory/templates/merge-policies-catalog.yaml
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
-metadata: {name: docs}
+metadata:
+  name: docs
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
 spec:
+  allowedFiles:
+    - ^.+\.mdx?$
   description: Prose in Markdown files, small changes.
-  allowedFiles: ['^.+\.mdx?$']
-  maxPatchFiles: 5
-  maxModifiedLines: 100
-  maxPerDay: 2
   evidence: standard
+  maxModifiedLines: 100
+  maxPatchFiles: 5
+  maxPerDay: 2

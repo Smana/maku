@@ -2676,24 +2676,6 @@ spec:
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata:
-  name: revert
-  namespace: maku
-  labels:
-    app.kubernetes.io/part-of: agent-factory
-    app.kubernetes.io/managed-by: Helm
-    maku.ogenki.io/catalog: "true"
-spec:
-  description: A revert whose diff changes link targets only.
-  diffShape: links-only
-  evidence: low
-  maxModifiedLines: 20
-  modifyOnly: true
-
----
-# Source: agent-factory/templates/merge-policies-catalog.yaml
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
   name: deps-patch
   namespace: maku
   labels:

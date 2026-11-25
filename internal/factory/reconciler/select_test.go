@@ -74,6 +74,35 @@ func TestNoFallThrough(t *testing.T) {
 	}
 }
 
+func TestLivePolicyGuardsAreRepositoryWide(t *testing.T) {
+	for name, test := range map[string]struct {
+		guard  config.Class
+		checks *forge.Check
+		reason string
+	}{
+		"protected files": {config.Class{Live: true, AllowedFiles: []string{`^.+\.md$`}, MaxModifiedLines: 200,
+			ProtectedFiles: []string{`website/content`}}, nil, "file_protected"},
+		"approval subset": {config.Class{Live: true, AllowedFiles: []string{`^.+\.md$`}, MaxModifiedLines: 200,
+			RequiresApproval: []config.ApprovalLeaf{{ChangedFiles: []string{`website/content`}}}}, nil, reasonApprovalRequired},
+		"red holdout": {config.Class{Live: true, AllowedFiles: []string{`^.+\.md$`}, MaxModifiedLines: 200,
+			HoldoutChecks: []string{"Policy guard"}}, &forge.Check{Name: "Policy guard", State: "FAILURE", Conclusion: "FAILURE", App: forge.ActionsApp}, "holdout_red"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := selectInputs()
+			in.Cfg.Current().Repositories[0].Classes = map[string]config.Class{
+				"docs":  {Live: true, AllowedFiles: []string{`^.+\.md$`}, MaxModifiedLines: 100},
+				"guard": test.guard,
+			}
+			if test.checks != nil {
+				in.Checks.Runs = append(in.Checks.Runs, *test.checks)
+			}
+			if d := DecideArm(in); d.Verdict != "human" || d.Reason != test.reason || d.Matched != "guard" {
+				t.Fatalf("%+v, want human/%s under guard", d, test.reason)
+			}
+		})
+	}
+}
+
 // A task with findings (a schedule's probe) or an adopted pull request is decided on its one
 // policy, as before: no other policy is read, whatever would hold.
 func TestOracleAndAdoptedKeepOnePolicy(t *testing.T) {

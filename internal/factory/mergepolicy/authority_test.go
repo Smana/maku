@@ -48,7 +48,7 @@ func TestAuthority(t *testing.T) {
 		"a stale read":     {liveDocs, 15 * time.Minute, ErrStale},
 		"an invalid file":  {"factory: aws-0\nclasses: [no]\n", 0, ErrInvalid},
 		"a fence-only one": {"factory: aws-0\n", 0, ErrInvalid},
-		"without revert":   {"factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n", 0, ErrInvalid},
+		"without revert":   {"factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n", 0, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _, now := authorityRig()
@@ -99,9 +99,15 @@ func TestClassesPauseWhileThePolicyGivesNoAuthority(t *testing.T) {
 func TestARelaxationReturnsTheClassToShadow(t *testing.T) {
 	w, r, _ := authorityRig()
 	w.Observe(t.Context(), "o/r", []byte(liveDocs))
+	before, _ := w.Snapshot("o/r")
+	nextFile, _ := Parse([]byte(tighterDocs))
+	nextClasses, _ := ResolveBindings(nextFile, w.Cfg.Current().RepositoryFor("o/r"), w.Cfg.Current())
+	if change := ClassChange(before.Classes["docs-links"].Class, nextClasses["docs-links"].Class); change.Kind != KindTightening {
+		t.Fatalf("direct structural comparison: %+v; before %+v; next %+v", change, before.Classes["docs-links"], nextClasses["docs-links"])
+	}
 	w.Observe(t.Context(), "o/r", []byte(tighterDocs))
 	if s, err := w.Authority("o/r"); err != nil || !s.Classes["docs-links"].Class.Live {
-		t.Fatalf("a tightening stays live: %v %+v", err, s.Classes["docs-links"])
+		t.Fatalf("a tightening stays live: %v %+v; changes %q", err, s.Classes["docs-links"], r.changes)
 	}
 	w.Observe(t.Context(), "o/r", []byte(looserDocs))
 	s, err := w.Authority("o/r")

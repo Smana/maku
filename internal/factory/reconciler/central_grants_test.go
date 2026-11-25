@@ -107,6 +107,7 @@ func TestAMultiLeafClassAndItsFileHashAlike(t *testing.T) {
 	c := conformanceCfg()
 	rc := c.RepositoryFor("")
 	cl := rc.Classes["docs-links"]
+	cl.Shadow = true
 	cl.RequiresApproval = []config.ApprovalLeaf{{ChangedFiles: []string{"^docs/a/"}}, {ChangedFiles: []string{"^docs/b/", "^docs/c/"}}}
 	rc.Classes["docs-links"] = cl
 	file := exported(t, c)["docs-links"]

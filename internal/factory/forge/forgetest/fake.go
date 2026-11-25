@@ -172,11 +172,19 @@ func (f *Fake) SetIssue(i forge.Issue) {
 	f.issues[i.Number] = i
 }
 
-// SetPR stores a pull request under its number.
+// SetPR stores a pull request under its number. Ledger labels get a merger label event by default,
+// as the real merger writes them; SetEvents can replace that history to exercise actor checks.
 func (f *Fake) SetPR(p forge.PR) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prs[p.Number] = p
+	for _, label := range p.Labels {
+		if strings.HasPrefix(label, "factory/auto-merged:") || strings.HasPrefix(label, "factory/merged:") ||
+			strings.HasPrefix(label, "factory/revert-of:#") || strings.HasPrefix(label, "factory/follow-up-of:#") ||
+			label == "factory/monitor:regression" {
+			f.events[p.Number] = append(f.events[p.Number], forge.LabelEvent{Actor: "ogenki-agent-merger[bot]", Label: label, At: p.MergedAt})
+		}
+	}
 }
 
 // SetBranch makes n the pull request of branch.
@@ -246,6 +254,11 @@ func (f *Fake) LabelEvents(_ context.Context, n int, label string) ([]forge.Labe
 		return out, forge.ErrEventsTruncated
 	}
 	return out, nil
+}
+
+// LabelHistory implements the forge's LabelHistory. SetEvents stores additions and removals alike.
+func (f *Fake) LabelHistory(ctx context.Context, n int, label string) ([]forge.LabelEvent, error) {
+	return f.LabelEvents(ctx, n, label)
 }
 
 // LabelEventsBy implements the forge's LabelEventsBy: n's stored events by actor at or after

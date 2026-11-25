@@ -44,6 +44,7 @@ const (
 	ConditionRepositoryFileValid = "RepositoryFileValid"
 	ConditionInSync              = "InSync"
 	ConditionReady               = "Ready"
+	ConditionDeprecated          = "Deprecated"
 
 	// ReasonPending is Accepted's reason before the factory looked at the object.
 	ReasonPending = "Pending"
@@ -263,6 +264,10 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Rep
 			stamp(&bs)
 			st.Classes = append(st.Classes, bs)
 		}
+	}
+	if o != nil && slices.ContainsFunc(o.Bindings, func(b resources.BindingOutcome) bool { return b.Name == "revert" }) {
+		d.set(&st.Conditions, g, ConditionDeprecated, metav1.ConditionTrue, "Deprecated",
+			"the revert binding is deprecated: set spec.merge.autoRevert and remove the binding")
 	}
 	if len(refused) > 0 {
 		d.set(&st.Conditions, g, v1alpha1.ConditionBindingsValid, metav1.ConditionFalse, "BindingsRefused", truncate("refused: "+strings.Join(refused, ", "), maxBindingMessage))

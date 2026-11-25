@@ -136,7 +136,7 @@ An approval counts only once the head has stopped moving. GitHub must have recor
 | `no_policy_matched` | No policy of the repository holds on the diff (each one's refusal is in the record's `considered=`): a maintainer reviews and merges it. Not counted in `maku_factory_class_mismatch_total` |
 | `reviewer_verdict_missing` | In `considered=`: a policy with no `diffShape` and no `oracle` holds only on a reviewer's approve, and the workflow has no reviewer |
 | `class_unarmed` | Before the gate picked the policy from the diff: the predicted class was neither live nor shadow. Kept on older tasks only |
-| `class_mismatch` | The predicted class's `diffShape` does not hold (`docs-links` and `revert` diffs change only link targets) |
+| `class_mismatch` | The predicted class's `diffShape` does not hold (`docs-links` diffs change only link targets) |
 | `file_not_allowed` | It changes a file outside its class's allowed files |
 | `file_protected` | It changes a file its class protects |
 | `file_added_or_deleted` | Any change but a content modification: an add, delete, rename, copy or mode-only change, which its class does not allow |

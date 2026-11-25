@@ -185,18 +185,24 @@ func (g *GitHub) Labeled(ctx context.Context, label string) ([]Item, error) {
 // Past them it returns what it read and ErrEventsTruncated: GitHub lists events oldest first, so
 // the unread ones are the newest.
 func (g *GitHub) LabelEvents(ctx context.Context, number int, label string) ([]LabelEvent, error) {
-	return g.labelEvents(ctx, number, func(e LabelEvent) bool { return e.Label == label })
+	return g.labelEvents(ctx, number, func(e LabelEvent) bool { return e.Label == label }, false)
+}
+
+// LabelHistory is label's complete add/remove history, oldest first, capped as LabelEvents.
+func (g *GitHub) LabelHistory(ctx context.Context, number int, label string) ([]LabelEvent, error) {
+	return g.labelEvents(ctx, number, func(e LabelEvent) bool { return e.Label == label }, true)
 }
 
 // LabelEventsBy are every label actor added to an issue or pull request at or after since,
 // whatever the label, oldest first (hardening HR1: the labels a run added); capped as LabelEvents.
 func (g *GitHub) LabelEventsBy(ctx context.Context, number int, actor string, since time.Time) ([]LabelEvent, error) {
-	return g.labelEvents(ctx, number, func(e LabelEvent) bool { return e.Actor == actor && !e.At.Before(since) })
+	return g.labelEvents(ctx, number, func(e LabelEvent) bool { return e.Actor == actor && !e.At.Before(since) }, false)
 }
 
-// labelEvents are the labeled events of an issue that keep accepts, oldest first; at most ten
-// pages of 100, then ErrEventsTruncated with what was read.
-func (g *GitHub) labelEvents(ctx context.Context, number int, keep func(LabelEvent) bool) ([]LabelEvent, error) {
+// labelEvents are the label events of an issue that keep accepts, oldest first; at most ten pages
+// of 100, then ErrEventsTruncated with what was read. removals includes unlabeled events beside
+// labeled ones; otherwise removals are ignored.
+func (g *GitHub) labelEvents(ctx context.Context, number int, keep func(LabelEvent) bool, removals bool) ([]LabelEvent, error) {
 	var out []LabelEvent
 	opt := &github.ListOptions{PerPage: 100}
 	truncated := true
@@ -207,10 +213,11 @@ func (g *GitHub) labelEvents(ctx context.Context, number int, keep func(LabelEve
 			return nil, wrap("list issue events", err)
 		}
 		for _, e := range evs {
-			if e.GetEvent() != "labeled" {
+			kind := e.GetEvent()
+			if kind != "labeled" && (!removals || kind != "unlabeled") {
 				continue
 			}
-			if le := (LabelEvent{Actor: e.GetActor().GetLogin(), Label: e.GetLabel().GetName(), At: e.GetCreatedAt().Time}); keep(le) {
+			if le := (LabelEvent{Actor: e.GetActor().GetLogin(), Label: e.GetLabel().GetName(), At: e.GetCreatedAt().Time, Removed: kind == "unlabeled"}); keep(le) {
 				out = append(out, le)
 			}
 		}
@@ -1670,29 +1677,14 @@ func (g *GitHub) Diff(ctx context.Context, base, head string) (Diff, error) {
 }
 
 // fileAt is one file's content at one commit. Absent there — an added file's base, a deleted
-// file's head — reads "". A file GitHub will not inline (over a megabyte, a submodule) is an
-// error: the links-only test must see every byte of the diff or refuse to decide it.
+// file's head — reads "". A non-regular file or one GitHub will not inline is ErrNotAFile: the
+// links-only test must see every byte of the diff or refuse to decide it.
 func (g *GitHub) fileAt(ctx context.Context, path, ref string) (string, error) {
-	fc, _, resp, err := g.rest.Repositories.GetContents(ctx, g.owner, g.name, path, &github.RepositoryContentGetOptions{Ref: ref})
-	if resp != nil && resp.StatusCode == http.StatusNotFound {
-		g.mark(nil)
-		return "", nil
+	fc, found, err := g.file(ctx, path, &github.RepositoryContentGetOptions{Ref: ref})
+	if err != nil || !found {
+		return "", err
 	}
-	g.mark(err)
-	if err != nil {
-		return "", wrap("read a file", err)
-	}
-	if fc == nil {
-		return "", fmt.Errorf("forge: %s at %s is not a file", path, ref)
-	}
-	text, err := fc.GetContent()
-	if err != nil {
-		return "", wrap("decode a file", err)
-	}
-	if text == "" && fc.GetSize() > 0 {
-		return "", fmt.Errorf("forge: %s at %s is %d bytes and not readable through the contents API (%s)", path, ref, fc.GetSize(), fc.GetType())
-	}
-	return text, nil
+	return string(fc.Bytes), nil
 }
 
 // FenceFile is the ownership fence (v2 D7) on the default branch, found false when the repository

@@ -12,6 +12,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [A task steps up once](#a-task-steps-up-once)
 - [The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)](#the-six-tool-mcp-surface-and-the-names-it-replaced-v05x-six-tool-surface)
 - [Merge policies removals](#merge-policies-removals)
+- [Merge policy safety tightening (v0.53.x)](#merge-policy-safety-tightening-v053x)
 - [The gate picks the policy from the diff (v0.52.0)](#the-gate-picks-the-policy-from-the-diff-v0520)
 - [Workflows name what runs](#workflows-name-what-runs)
 - [Workflows: old names warn (v0.51.0)](#workflows-old-names-warn-v0510)
@@ -91,6 +92,33 @@ and the command), and remove the two settings named under **What to change befor
 | The Slack draft grammar (`@factory [repo] title`, `Should:`, `Acceptance:`, the draft reply edits and the `factory_draft` message tag) | Plain words in the mention. A reply by the author re-plans the proposal |
 
 **What to change before upgrading.** Delete `human.mcp.sessionStart` from the broker's values (the broker refuses it even when it is empty) and `proposals:` from the Slack App's `config`. `sessionStart` was an allow list and `human.mcp.start` is not: with the planner on, "Start now" is now offered on every repository the planner serves, so list in `human.mcp.start.except` each one where the form must not offer it, or set `default: false` to offer it nowhere. Replace a saved prompt or script that calls a removed tool. The `/factory retry` and `/factory split` comments on a GitHub issue are the factory's own triggers and are unchanged.
+
+## Merge policy safety tightening (v0.53.x)
+
+The gate fails closed in cases that previously passed or waited on an unrelated check. Repository
+rollback now has one explicit switch, `merge.autoRevert` (default `false`), and three policy defaults
+change as described below:
+
+- `links-only` reads `.md` and `.mdx` files only. It recognizes real inline and reference links, not
+  footnotes or call-shaped text; refuses unchanged, empty and non-regular files; keeps the first path
+  segment on user-owned Git hosts; and accepts an archive only of the old URL.
+- Only a maintainer's removal of `factory/hold` re-enters the gate. Labels, base branch and reviews
+  are read again immediately before the success status.
+- A live policy's protected path, approval subset or red holdout stops every live candidate. Holdouts
+  are read only after the diff conditions hold; an unreadable file hands off `diff_unreadable`, and a
+  skipped or neutral leak scan is not green.
+- A refused binding never serves above its written mode. `disabled` and a missing `MergePolicy`
+  restore no old class; a refused `shadow` binding can restore only shadow.
+- File bindings receive the default guardrails even when the file has no central `classes` or uses
+  `classAuthority: repository`; an unset `merge.maxPerDay` inherits the guardrail's daily cap.
+- A policy's cap above a guardrail is clamped to that guardrail. An explicit binding value above a
+  guardrail is still refused as `GuardrailMismatch`.
+- A live policy without `holdoutChecks` no longer emits the TO5 warning, and neither `docs-links` nor
+  `revert` is a mandatory binding. The chart catalog now ships `docs-links`, `deps-patch` and `docs`.
+- Set `merge.autoRevert: true` to keep automatic rollback; an existing live `revert` binding still
+  loads, sets that switch and reports a `Deprecated` condition. Revert creation records GitHub's head,
+  and the merger merges only that exact head after checks pass, without native auto-merge.
+
 ## Merge policies removals
 
 This release removes every field and mode v0.50.0 deprecated. Unknown
@@ -108,7 +136,7 @@ for the zero-binding catalog setup and [worked examples](merge-policies.md#worke
 | `MergePolicy.spec.requires` | nothing: incomplete bindings are refused by the bound and parameter rules |
 | `MergePolicy.spec.live`, `MergePolicy.spec.shadow` | `mode: live` or `mode: shadow` on each `Repository.spec.mergePolicies` binding |
 | `MergePolicy` named `review`, or a binding named `review` | nothing: `no_policy_matched` sends unmatched pull requests to a human |
-| `mode: "off"` on a `mergePolicies` binding | delete the binding, or set `mode: disabled` for a catalog policy (`docs-links`, `revert`, `deps-patch`, `docs`) |
+| `mode: "off"` on a `mergePolicies` binding | delete the binding, or set `mode: disabled` for a catalog policy (`docs-links`, `deps-patch`, `docs`) |
 | `Schedule.class` without an `oracle.probe` policy | `Schedule.workflow` (`workflow` on the schedule) |
 | `merge.autoMergesPerDay`, `mergeDefaults.autoMergesPerDay` | `merge.maxPerDay`, `mergeDefaults.maxPerDay` |
 | `mergeGuardrails.minPromotionEvidence` | `evidence` (`low` or `standard`) on each `MergePolicy` |

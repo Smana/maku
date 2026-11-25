@@ -578,7 +578,7 @@ func requiredFor(rc *config.Repository, t *v1alpha1.Task) []string {
 }
 
 // LabelHold on a pull request keeps it from auto-merging (MR10): anyone who can label may apply it,
-// as it only ever stops a merge, and removing it lets the next pass decide.
+// as it only ever stops a merge. Only a maintainer's removal lets the next pass decide.
 const LabelHold = "factory/hold"
 
 // baseChecks are the base's rows before any class is read: the secret scan, target branch, check
@@ -590,6 +590,11 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 	// every check run of that name, not only the first.
 	if rc.Merge.LeakScanCheck != "" && slices.ContainsFunc(in.Checks.Runs, func(x forge.Check) bool {
 		return x.Name == rc.Merge.LeakScanCheck && x.State == "FAILURE"
+	}) {
+		return ArmDecision{Verdict: "escalate", Reason: "secret_scan_red"}, true
+	}
+	if rc.Merge.LeakScanCheck != "" && slices.ContainsFunc(in.Checks.Runs, func(x forge.Check) bool {
+		return x.Name == rc.Merge.LeakScanCheck && x.State == "SUCCESS" && x.Conclusion != "SUCCESS"
 	}) {
 		return ArmDecision{Verdict: "escalate", Reason: "secret_scan_red"}, true
 	}

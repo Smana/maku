@@ -80,7 +80,7 @@ func TestAnExportedBindingFileIsInSync(t *testing.T) {
 	w := &Watch{Cfg: c, Metrics: &rec{}}
 	w.Observe(t.Context(), "Smana/cloud-native-ref", raw)
 	s, _ := w.Snapshot("Smana/cloud-native-ref")
-	if s.Err != nil || !s.HasClasses || len(s.Divergences) != 0 || len(s.Refused) != 0 || len(s.Classes) != 4 {
+	if s.Err != nil || !s.HasClasses || len(s.Divergences) != 0 || len(s.Refused) != 0 || len(s.Classes) != 3 {
 		t.Fatalf("%+v", s)
 	}
 	if !equalClass(s.Classes["dead-links"].Class, rc.Classes["dead-links"]) {

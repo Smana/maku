@@ -101,6 +101,19 @@ func TestAPendingHoldoutWaits(t *testing.T) {
 	}
 }
 
+func TestPathFilteredHoldoutIsReadOnlyAfterTheDiffMatches(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{
+		"filtered": {Live: true, AllowedFiles: []string{`^other/`}, HoldoutChecks: []string{"Path filtered"}},
+	}
+	checks := green("SUCCESS")
+	checks.Runs = append(checks.Runs, forge.Check{Name: "Path filtered", State: "PENDING", App: forge.ActionsApp})
+	g.f.SetChecks(12, checks)
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != reasonNoPolicy {
+		t.Fatalf("%s %s, want the unrelated diff refused without waiting for its holdout", tk.Status.Phase, tk.Status.Reason)
+	}
+}
+
 // A diff of a full page is unseen files: the task is handed off, not retried in AwaitingCI.
 func TestAFullPageDiffRefusesPatchTooLarge(t *testing.T) {
 	g := declaredRig(t)
@@ -108,6 +121,12 @@ func TestAFullPageDiffRefusesPatchTooLarge(t *testing.T) {
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "patch_too_large" ||
 		len(g.f.Armed()) != 0 {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+	g = declaredRig(t)
+	g.f.SetDiffError(fmt.Errorf("wrapped: %w", forge.ErrNotAFile))
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "diff_unreadable" ||
+		len(g.f.Armed()) != 0 {
+		t.Fatalf("unreadable file: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	g = declaredRig(t)
 	g.f.SetDiffError(errors.New("boom"))
@@ -137,7 +156,10 @@ func TestShadowRecordedForEachHoldingPolicy(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	predict(t, g, "review") // the label names neither policy: the diff picks both
 	g.r.Decisions = &decision.Recorder{}
-	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Live: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{
+		"docs-links": {Live: true},
+		"docs":       {Shadow: true, AllowedFiles: []string{`^.+\.md$`}, DiffShape: "links-only"},
+	}
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.SetFiles(map[string]string{testFile: "[x](https://example.com/old)"}, map[string]string{testFile: "[x](https://example.com/new)"})
 	tk := g.reconcile(t, "3buqdlot", 1)
@@ -146,12 +168,12 @@ func TestShadowRecordedForEachHoldingPolicy(t *testing.T) {
 	}
 	c := strings.Join(g.f.Comments(12), "\n")
 	primary := strings.Index(c, "class=docs-links decision=arm:armed ")
-	shadow := strings.Index(c, "class=revert decision=shadow:shadow_would_arm ")
+	shadow := strings.Index(c, "class=docs decision=shadow:shadow_would_arm ")
 	if primary < 0 || shadow < primary {
 		t.Fatalf("two marker lines, the decision's first:\n%s", c)
 	}
 	latest := g.r.Decisions.Latest(tk.Spec.Repository)
-	if latest["docs-links"].Verdict != "arm" || latest["revert"].Verdict != "shadow" {
+	if latest["docs-links"].Verdict != "arm" || latest["docs"].Verdict != "shadow" {
 		t.Fatalf("%+v", latest)
 	}
 }

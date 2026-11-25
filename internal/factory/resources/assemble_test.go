@@ -93,7 +93,7 @@ func TestAssembleAddsARepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	rc := r.Config.RepositoryFor("Smana/maku")
-	if rc == nil || len(rc.Classes) != 3 || rc.Merge.MergerLogin == "" || len(r.Accepted) != 5 {
+	if rc == nil || len(rc.Classes) != 2 || rc.Merge.MergerLogin == "" || len(r.Accepted) != 5 {
 		t.Fatalf("Smana/maku not served: %+v %+v", rc, r.Refused)
 	}
 }

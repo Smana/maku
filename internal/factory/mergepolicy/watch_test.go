@@ -44,7 +44,7 @@ func TestObserve(t *testing.T) {
 		"equivalent":        {same, nil, []int{0}, true},
 		"divergent":         {"factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: shadow}\n  - {name: revert, mode: live}\n", nil, []int{1}, true},
 		"invalid":           {"factory: aws-0\nclasses: [no]\n", []string{ReasonInvalid}, nil, false},
-		"a class rule":      {"factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n", []string{ReasonInvalid}, nil, true},
+		"a single policy":   {"factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n", nil, []int{1}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, r := watchRig()

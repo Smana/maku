@@ -78,7 +78,7 @@ func TestADrillRevertDoesNotTripTheBreaker(t *testing.T) {
 			g.f.SetPR(forge.PR{Number: 9, State: "MERGED", MergedBy: "ogenki-agent-merger[bot]", MergedAt: now.Add(-48 * time.Hour),
 				Labels: []string{AutoMergedLabel("docs-links")}})
 			g.f.SetPR(forge.PR{Number: 30, State: "MERGED", MergedAt: now.Add(-47 * time.Hour), Labels: []string{RevertOfLabel(9), DrillLabel}})
-			var evs []forge.LabelEvent
+			evs := []forge.LabelEvent{{Actor: "ogenki-agent-merger[bot]", Label: RevertOfLabel(9), At: now.Add(-47 * time.Hour)}}
 			for i, a := range tc.actors {
 				evs = append(evs, forge.LabelEvent{Actor: a, Label: DrillLabel, At: now.Add(time.Duration(i-47) * time.Hour)})
 			}
@@ -228,7 +228,7 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 			predict(t, g, "plain") // a shape and no file condition: MR1 reads the diff all the same
 			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"plain": {Shadow: true, DiffShape: "links-only"}}
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=0/0 lines=0/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
 		{"no policy matched: no class, the rows before any policy", func(t *testing.T) *rig {
 			g := greenRig(t)
 			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {}, "revert": {Live: true, Oracle: &config.Oracle{Probe: "x"}}}
@@ -502,5 +502,34 @@ func TestGithubLedgerLoadsNewDynamicClassWithoutHoldingLock(t *testing.T) {
 	got, err = g.r.githubLedger(t.Context(), &rc)
 	if err != nil || len(got["new-class"]) != 1 || got["new-class"][0].Number != 102 {
 		t.Fatalf("dynamic class missing: %+v %v", got, err)
+	}
+}
+
+func TestLedgerLabelsNeedATrustedLabeller(t *testing.T) {
+	for name, tc := range map[string]struct {
+		actors []string
+		want   bool
+	}{
+		"the merger":                 {[]string{"ogenki-agent-merger[bot]"}, true},
+		"a maintainer":               {[]string{"Smana"}, true},
+		"the agents App":             {[]string{"ogenki-agents[bot]"}, false},
+		"an untrusted latest re-add": {[]string{"Smana", "ogenki-agents[bot]"}, false},
+		"no label event":             {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+			label := AutoMergedLabel("docs-links")
+			var events []forge.LabelEvent
+			for _, actor := range tc.actors {
+				events = append(events, forge.LabelEvent{Actor: actor, Label: label, At: now})
+			}
+			g.f.SetEvents(91, events...)
+			p := forge.LabelledPull{Number: 91, Labels: []string{label}}
+			rc := &g.r.Cfg.Current().Repositories[0]
+			got, err := g.r.trustedLabel(t.Context(), rc, p, label)
+			if err != nil || got != tc.want {
+				t.Fatalf("trusted = %v, %v; want %v", got, err, tc.want)
+			}
+		})
 	}
 }

@@ -1077,6 +1077,11 @@ type PullRequestRef struct {
 	HandedOffReason string `json:"handedOffReason,omitempty"`
 	// +optional
 	RevertNumber int `json:"revertNumber,omitempty"`
+	// RevertHeadSHA is the head GitHub created with the revert pull request. Only this exact head
+	// may be merged automatically; a later push leaves the revert with a maintainer.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	RevertHeadSHA string `json:"revertHeadSHA,omitempty"`
 	// Drill: the revert was a maintainer's drill (AM6); the breaker does not count it.
 	// +optional
 	Drill bool `json:"drill,omitempty"`

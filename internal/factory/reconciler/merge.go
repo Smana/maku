@@ -183,6 +183,8 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		case errors.Is(ferr, forge.ErrDiffTooLarge):
 			// A compare at GitHub's 300-file cap may hide files: hand it off, as the gate does.
 			d = ArmDecision{Verdict: "human", Reason: "patch_too_large", Matched: d.Matched, Rows: d.Rows}
+		case errors.Is(ferr, forge.ErrNotAFile):
+			d = ArmDecision{Verdict: "human", Reason: "diff_unreadable", Matched: d.Matched, Rows: d.Rows}
 		case ferr != nil:
 			return ferr
 		default:
@@ -324,6 +326,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
 		narrateOn(t, pr.Number, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
 		return nil
+	}
+	if held, err := r.preMergeRecheck(ctx, cfg, t, pr, in, &d, gateStatus, adopted); held || err != nil {
+		return err
 	}
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
 	// read refuses the merge (409) and the new head is decided again — never merged on this
@@ -574,10 +579,28 @@ func (r *Reconciler) escalatedReturn(ctx context.Context, cfg *config.Config, t 
 // re-reviews it itself.
 func (r *Reconciler) reenter(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	why := t.Status.Reason
-	if why == "held" { // MR10: the label's removal lets the next pass decide, on the head it held
-		if slices.Contains(pr.Labels, LabelHold) || t.Status.GateReentries >= maxGateReentries ||
+	if why == "held" { // MR10: only a maintainer's removal lets the next pass decide, on the held head
+		if slices.Contains(pr.Labels, LabelHold) || pr.LabelsTruncated || t.Status.GateReentries >= maxGateReentries ||
 			pr.HeadSHA == "" || pr.HeadSHA != t.Status.PullRequest.HeadSHA {
 			return false, nil
+		}
+		evs, err := r.gh(ctx).LabelHistory(ctx, pr.Number, LabelHold)
+		if errors.Is(err, forge.ErrEventsTruncated) {
+			return false, nil
+		}
+		if err != nil || len(evs) == 0 {
+			return false, err
+		}
+		last := evs[len(evs)-1]
+		rc := r.repo(cfg, t)
+		if !last.Removed || !rc.IsMaintainer(last.Actor) {
+			return false, nil
+		}
+		if r.CanWrite != nil {
+			ok, err := r.CanWrite(ctx, rc.Name, last.Actor)
+			if err != nil || !ok {
+				return false, err
+			}
 		}
 		r.backToGate(cfg, t, why, "reentered_unheld", pr.HeadSHA)
 		return true, nil
@@ -1101,6 +1124,60 @@ func (r *Reconciler) fixCI(ctx context.Context, cfg *config.Config, t *v1alpha1.
 	return nil
 }
 
+// preMergeRecheck re-reads the human-controlled pull-request state immediately before the success
+// status. The policy decision is still for pr's head; a hold, base retarget, new maintainer veto or
+// truncated review/label state since that decision keeps the merge with a human.
+func (r *Reconciler) preMergeRecheck(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR,
+	in ArmInputs, d *ArmDecision, gateStatus, adopted bool) (bool, error) {
+	current, err := r.gh(ctx).PullRequest(ctx, pr.Number)
+	if err != nil {
+		return true, err
+	}
+	rc := r.repo(cfg, t)
+	why := ""
+	switch {
+	case current.HeadSHA != pr.HeadSHA:
+		why = "head_moved"
+	case current.LabelsTruncated:
+		why = "labels_truncated"
+	case slices.Contains(current.Labels, LabelHold):
+		why = "held"
+	case current.BaseRef != "main":
+		why = "base_not_main"
+	case current.ReviewsTruncated || slices.ContainsFunc(openChangeRequests(current.Reviews, true), func(rv forge.Review) bool {
+		return rc.IsMaintainer(rv.Author)
+	}):
+		why = "changes_requested"
+	case current.State != "OPEN":
+		why = "not_mergeable"
+	case d.Reason == "maintainer_approved":
+		in.PR = current
+		if _, state := approval(in, rc); state != "approved" {
+			why = "approval_stale"
+		}
+	}
+	if why == "" {
+		return false, nil
+	}
+	*d = ArmDecision{Verdict: "human", Reason: why, Matched: d.Matched, Rows: d.Rows}
+	if why == "head_moved" {
+		d.Verdict = "wait"
+	}
+	if gateStatus {
+		if err := r.postGateStatus(ctx, t, current.HeadSHA, in.Checks, *d); err != nil {
+			return true, err
+		}
+	}
+	t.Status.PullRequest.HeadSHA = current.HeadSHA
+	if why == "head_moved" {
+		r.to(t, v1alpha1.PhaseAwaitingCI, why)
+		return true, nil
+	}
+	r.to(t, v1alpha1.PhaseAwaitingHuman, why)
+	narrateOn(t, current.Number, r.withRecord(cfg, r.handOff(cfg, t, why, adopted), t, *d, current.HeadSHA))
+	return true, nil
+}
+
 // autoMerging watches the merge the decision issued. R52 armed nothing on GitHub — the merge
 // either landed or did not — so there is no disarm path: an open pull request whose head moved
 // never merged, and the new head is decided again from AwaitingCI.
@@ -1265,31 +1342,20 @@ func (r *Reconciler) revertable(cfg *config.Config, t *v1alpha1.Task) bool {
 		r.Now().Sub(ref.MergedAt.Time) <= r.repo(cfg, t).Merge.RevertWindow.Duration
 }
 
-// revert opens the merger-authored revert PR and arms it: the policy's `revert` rule carries
-// docs-links' paths and caps, so GitHub merges it once its checks are green (§6.4). Human
-// merges are never reverted: only a task the merger merged reaches here (revertable), so before
-// the wave (R32) and with approveToMerge off no revert is ever opened.
+// revert opens the merger-authored revert PR and records the exact head GitHub created. The watch
+// merges that head explicitly once its checks are green; native auto-merge is never enabled. Human
+// merges are never reverted: only a task the merger merged reaches here (revertable).
 func (r *Reconciler) revert(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, why string) error {
 	ref := t.Status.PullRequest
 	var rv forge.Revert
-	armable := true
 	if ref.RevertNumber > 0 {
 		// A lost write's replay: the revert exists. Never open a second; finish what its pass did not
-		// (N6): the arm, the outcome, the narration (deduplicated by key), the parent and the end.
+		// (N6): the outcome, the narration (deduplicated by key), the parent and the end.
 		p, err := r.gh(ctx).PullRequest(ctx, ref.RevertNumber)
 		if err != nil {
 			return err
 		}
-		rv = forge.Revert{Number: p.Number, NodeID: p.NodeID, HeadSHA: p.HeadSHA}
-		if p.State != "OPEN" {
-			armable = false
-		} else {
-			trusted, err := r.revertTrusted(ctx, r.repo(cfg, t), p)
-			if err != nil {
-				return err
-			}
-			armable = trusted
-		}
+		rv = forge.Revert{Number: p.Number, NodeID: p.NodeID, HeadSHA: ref.RevertHeadSHA}
 	} else {
 		pr, err := r.gh(ctx).PullRequest(ctx, ref.Number)
 		if err != nil {
@@ -1304,17 +1370,15 @@ func (r *Reconciler) revert(ctx context.Context, cfg *config.Config, t *v1alpha1
 			return err
 		}
 		base := t.DeepCopy()
-		ref.RevertNumber = rv.Number
+		ref.RevertNumber, ref.RevertHeadSHA = rv.Number, rv.HeadSHA
 		if why == "revert_requested" && t.Annotations[v1alpha1.AnnotationDrill] == "true" { // AM6: never a main_red
 			ref.Drill = true
 			if err := r.merger(ctx).AddLabels(ctx, rv.Number, DrillLabel); err != nil {
 				r.log().Error("label the drill revert", "pr", rv.Number, "err", err)
 			}
 		}
-		// The revert PR exists on GitHub: its number, and whether it is a drill, are written now, or a
-		// conflict would drop them and the replay open a second revert, counted against the breaker
-		// (N6). A failed patch is returned: the pass's own write may still carry them, and the replay
-		// finishes the revert from either.
+		// The revert PR exists on GitHub: its number, original head, and whether it is a drill are
+		// written now, or a conflict would drop them and the replay open a second revert (N6).
 		if err := r.decidedWrite(ctx, t, base); err != nil {
 			return err
 		}
@@ -1322,11 +1386,6 @@ func (r *Reconciler) revert(ctx context.Context, cfg *config.Config, t *v1alpha1
 	}
 	if !ref.Drill { // a drill exercises the revert path, never the grant (AM6)
 		if err := r.disableGrant(ctx, cfg, t, why); err != nil {
-			return err
-		}
-	}
-	if r.repo(cfg, t).Classes["revert"].Live && armable { // not live (R32): the revert PR opens and a maintainer merges it
-		if err := r.merger(ctx).EnableAutoMerge(ctx, rv.NodeID, rv.HeadSHA); err != nil { // the merger's own revert-* branch
 			return err
 		}
 	}
@@ -1394,12 +1453,13 @@ func (r *Reconciler) revertTrusted(ctx context.Context, rc *config.Repository, p
 	return pushed == pushFactory, nil
 }
 
-// mergeGreenRevert merges a green revert at its head, as the decision path merges (R02). Native
-// auto-merge alone never fires where agent-merge restricts updates to main: GitHub reads the PR as
-// BLOCKED for every actor, so it would stay armed until the watch disarms it.
+// mergeGreenRevert merges a green revert only at the head GitHub created and the Task persisted.
+// A missing pinned head (a pre-upgrade Task) or any later push leaves the revert with a maintainer.
 func (r *Reconciler) mergeGreenRevert(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	rc := r.repo(cfg, t)
-	if !rc.Classes["revert"].Live {
+	expected := t.Status.PullRequest.RevertHeadSHA
+	enabled := rc.Merge.AutoRevert || rc.Classes["revert"].Live // the binding is the deprecated compatibility path
+	if !enabled || expected == "" || pr.HeadSHA != expected {
 		return false, nil
 	}
 	trusted, err := r.revertTrusted(ctx, rc, pr)
@@ -1415,20 +1475,20 @@ func (r *Reconciler) mergeGreenRevert(ctx context.Context, cfg *config.Config, t
 	// a failed post is logged, and the merger's bypass carries the merge.
 	revert := ArmDecision{Verdict: "arm", Matched: "revert"}
 	if rc.Merge.PostsGateStatus() {
-		_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", revert)
+		_ = r.postStatusAs(ctx, t, expected, "revert", revert)
 	}
-	switch err := r.merger(ctx).Merge(ctx, pr.NodeID, pr.HeadSHA); {
+	switch err := r.merger(ctx).Merge(ctx, pr.NodeID, expected); {
 	case err == nil:
 		t.Status.Narrated = append(t.Status.Narrated, "revert-end-merged")
 		return true, nil
 	case errors.Is(err, forge.ErrHeadMoved), errors.Is(err, forge.ErrNotMergeable):
 		if rc.Merge.PostsGateStatus() {
-			r.withdrawStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "human", Reason: "not_mergeable"})
+			r.withdrawStatusAs(ctx, t, expected, "revert", ArmDecision{Verdict: "human", Reason: "not_mergeable"})
 		}
 		return false, nil // the stall clock still runs: a revert GitHub refuses goes to a maintainer
 	default:
 		if rc.Merge.PostsGateStatus() {
-			r.withdrawStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "wait", Reason: "merge_failed"})
+			r.withdrawStatusAs(ctx, t, expected, "revert", ArmDecision{Verdict: "wait", Reason: "merge_failed"})
 		}
 		return false, err
 	}
