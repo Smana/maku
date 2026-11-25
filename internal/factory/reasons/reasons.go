@@ -20,6 +20,7 @@ var table = map[string]Words{
 	"Disrupted":                     {Short: "the sandbox's node was reclaimed or dra…", Long: "the sandbox's node was reclaimed or drained", Next: ""},
 	"PodFailed":                     {Short: "the sandbox failed on its own", Long: "the sandbox failed on its own", Next: ""},
 	"PodLost":                       {Short: "the sandbox was lost (deleted, or its n…", Long: "the sandbox was lost (deleted, or its node disappeared)", Next: ""},
+	"SandboxUnavailable":            {Short: "no sandbox node came up in time", Long: "no node of the sandbox class came up in time (the sandbox pool did not scale up, or its node did not start)", Next: "an operator checks the sandbox node pool and the cluster autoscaler's events, then comments `/factory retry`"},
 	"adopt_ref_invalid":             {Short: "the adopted branch name is invalid", Long: "the adopted pull request's reference could not be read, so it was not adopted", Next: ""},
 	"adopted_head_moved":            {Short: "the adopted branch moved", Long: "its author pushed a new head after the shadow decision, so it is decided again", Next: ""},
 	"adoption_unread":               {Short: "the adopted pull request is unreadable", Long: "who authored its commits and pushed its branch could not be read", Next: ""},

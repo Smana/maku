@@ -32,6 +32,14 @@ const (
 	quotaRetry     = 30 * time.Second
 )
 
+// SandboxWait is how long a new run waits on a preflight whose probe pod did not start (Result.Sandbox)
+// before it ends SandboxUnavailable: the sandbox pool may be scaling from zero, or a node starting.
+const SandboxWait = 10 * time.Minute
+
+// ReasonSandboxUnavailable is the status.reason of a run ended by SandboxWait: no pod of it was ever
+// created, so the factory may run it again (once) without losing work.
+const ReasonSandboxUnavailable = "SandboxUnavailable"
+
 // Reconciler turns an AgentRun into its owned objects and reports the pod back as status.
 // Owned objects are created once: a run's spec is immutable, so there is nothing to patch.
 type Reconciler struct {
@@ -40,7 +48,8 @@ type Reconciler struct {
 	Cfg       Config
 	Now       func() time.Time
 	Log       *slog.Logger
-	// Preflight, when set, is consulted before a run's first pod: Unknown and Waiting wait, Failed refuses.
+	// Preflight, when set, is consulted before a run's first pod: Unknown and Waiting wait, Failed refuses
+	// (a Sandbox failure after SandboxWait).
 	Preflight interface{ Result() Result }
 }
 
@@ -82,6 +91,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			switch res := r.Preflight.Result(); res.State {
 			case PreflightPassed:
 			case PreflightFailed:
+				if res.Sandbox { // the sandbox's nodes, not the cluster's setup: hold the run, then end it
+					why := "the sandbox nodes are unavailable: " + res.Check + ": " + res.Message
+					if now.Sub(run.CreationTimestamp.Time) < SandboxWait {
+						pending(st, "SandboxPending", why)
+						return ctrl.Result{RequeueAfter: preflightRetry}, r.writeStatus(ctx, run, *st)
+					}
+					fail(st, now, ReasonSandboxUnavailable, why)
+					st.Reason = ReasonSandboxUnavailable // the factory runs it again, once
+					setCond(st, "Ready", metav1.ConditionFalse, ReasonSandboxUnavailable, why)
+					return ctrl.Result{}, r.writeStatus(ctx, run, *st)
+				}
 				fail(st, now, "PreflightFailed", res.Check+": "+res.Message)
 				// A run held by a waiting preflight before keeps no stale PreflightPending beside phase Failed.
 				setCond(st, "Ready", metav1.ConditionFalse, "PreflightFailed", res.Check+": "+res.Message)

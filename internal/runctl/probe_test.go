@@ -150,8 +150,8 @@ func TestPreflightNetworkProbeNotStarted(t *testing.T) {
 		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "run-preflight-abcdefgh", Namespace: "agents"}}
 	p := netPreflight(t, probeClient(t, corev1.PodPending, "", ev))
 	p.Tick(t.Context())
-	want := `the probe pod did not start under RuntimeClass "gvisor": FailedCreatePodSandBox: no runtime for "runsc" is configured`
-	if got := p.Result(); got.State != PreflightFailed || got.Message != want {
+	want := `the probe pod did not start under RuntimeClass "gvisor" within 200ms: FailedCreatePodSandBox: no runtime for "runsc" is configured`
+	if got := p.Result(); got.State != PreflightFailed || got.Message != want || !got.Sandbox {
 		t.Fatalf("%+v\nwant %s", got, want)
 	}
 }

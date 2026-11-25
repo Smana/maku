@@ -5,6 +5,7 @@ package runctl
 import (
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -105,5 +106,36 @@ func TestEnvtestPreflightWaitingHoldsTheRun(t *testing.T) {
 	}
 	if err := e.c.Get(e.ctx, key("run-wwwwwwww"), &corev1.Pod{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("no pod while the preflight waits, got %v", err)
+	}
+}
+
+// A preflight failed for the sandbox's nodes (its probe did not start: a pool scaling from zero)
+// holds a new run Pending for SandboxWait, then ends it SandboxUnavailable, no pod ever created.
+func TestEnvtestSandboxPreflightHoldsThenEndsTheRun(t *testing.T) {
+	e := startEnv(t)
+	e.modelSecret(t)
+	const msg = `the probe pod did not start under RuntimeClass "gvisor" within 10m0s: FailedScheduling: 0/6 nodes are available`
+	e.r.Preflight = &fixedPreflight{Result{State: PreflightFailed, Check: "network", Message: msg, Sandbox: true}}
+	create(t, e, run("run-xxxxxxxx"))
+	created := e.get(t, "run-xxxxxxxx").CreationTimestamp.Time
+	e.r.Now = func() time.Time { return created.Add(SandboxWait - time.Minute) }
+	res := e.reconcile(t, "run-xxxxxxxx")
+	got := e.get(t, "run-xxxxxxxx")
+	ready := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
+	if got.Status.Phase != "Pending" || ready == nil || ready.Reason != "SandboxPending" || res.RequeueAfter != preflightRetry ||
+		!strings.Contains(ready.Message, "network: "+msg) || apimeta.IsStatusConditionTrue(got.Status.Conditions, "Invalid") {
+		t.Fatalf("a run waits on the sandbox's nodes: %+v, %+v", got.Status, res)
+	}
+	e.r.Now = func() time.Time { return created.Add(SandboxWait + time.Second) }
+	e.reconcile(t, "run-xxxxxxxx")
+	got = e.get(t, "run-xxxxxxxx")
+	ready = apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
+	invalid := apimeta.FindStatusCondition(got.Status.Conditions, "Invalid")
+	if got.Status.Phase != "Failed" || got.Status.Reason != ReasonSandboxUnavailable || invalid == nil || invalid.Reason != ReasonSandboxUnavailable ||
+		ready == nil || ready.Reason != ReasonSandboxUnavailable {
+		t.Fatalf("past SandboxWait the run ends SandboxUnavailable: %+v", got.Status)
+	}
+	if err := e.c.Get(e.ctx, key("run-xxxxxxxx"), &corev1.Pod{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("no pod for a run the sandbox never had, got %v", err)
 	}
 }

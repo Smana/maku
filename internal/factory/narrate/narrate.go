@@ -630,6 +630,14 @@ func Resuming(t *v1alpha1.Task, runID, role string, n, limit int) Event {
 	return Event{Key: fmt.Sprintf("resume-%d", n), Class: ClassChanged, Body: body}
 }
 
+// SandboxRetry says run runID ended before it started, the sandbox's nodes unavailable, and the task
+// runs it again once on its own.
+func SandboxRetry(t *v1alpha1.Task, runID string) Event {
+	body := fmt.Sprintf("Agent factory task `%s`: run `%s` never started because %s; starting it again automatically, once.",
+		t.Name, runID, Reason(runs.ReasonSandboxUnavailable))
+	return Event{Key: "sandbox-retry", Class: ClassChanged, Body: body}
+}
+
 // ModelHeld says the model provider refused run runID and the task waits and runs again on its own, n
 // of limit (#450). The refusal is a platform condition, not the agent's error: the reason names it.
 func ModelHeld(t *v1alpha1.Task, runID, reason string, delay time.Duration, n, limit int) Event {

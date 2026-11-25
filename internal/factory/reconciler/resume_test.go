@@ -412,3 +412,29 @@ func TestWithQueuedKeepsTheBriefUnderTheCap(t *testing.T) {
 		t.Fatalf("no room: refs=%v len=%d", refs, len(got))
 	}
 }
+
+// The gcp-0 incident (2026-11-25): a run the run-controller ended before its pod, the sandbox pool
+// still scaling from zero, escalated pod_lost. It is SandboxUnavailable: the factory runs it again
+// once on its own, spending no resume, and a second escalates under that reason.
+func TestASandboxUnavailableRunRunsAgainOnceThenEscalates(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "x"))
+	g.reconcile(t, "3buqdlot", 3)
+	g.lose(rid(0), runs.ReasonSandboxUnavailable) // the broker's room says pod_lost, as for any run with no harness status
+	tk := g.reconcile(t, "3buqdlot", 2)
+	if tk.Status.Phase != v1alpha1.PhaseImplementing || tk.Status.Resumes != 0 || len(g.runs.specs) != 2 ||
+		tk.Status.Runs[0].Reason != runs.ReasonSandboxUnavailable || tk.Status.Runs[1].Trigger != "resume" {
+		t.Fatalf("%s resumes=%d %d runs %+v", tk.Status.Phase, tk.Status.Resumes, len(g.runs.specs), tk.Status.Runs)
+	}
+	if c := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(c, "never started because no node of the sandbox class came up in time") ||
+		!strings.Contains(c, "starting it again automatically, once") || strings.Contains(c, "spot reclaim") {
+		t.Fatalf("%q", c)
+	}
+	if !slices.Contains(g.metrics.recorded, "resumed SandboxUnavailable") {
+		t.Fatalf("%q", g.metrics.recorded)
+	}
+	g.lose(rid(1), runs.ReasonSandboxUnavailable)
+	tk = g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != runs.ReasonSandboxUnavailable || len(g.runs.specs) != 2 {
+		t.Fatalf("a second SandboxUnavailable escalates: %s %s %d runs", tk.Status.Phase, tk.Status.Reason, len(g.runs.specs))
+	}
+}
