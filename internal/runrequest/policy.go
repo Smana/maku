@@ -13,6 +13,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/policyview"
+	"github.com/Smana/maku/internal/factory/promote"
 )
 
 // PolicyEvidence is GET /v1/policy/evidence (merge policy stage 6) with the caller's own token: the
@@ -120,6 +121,42 @@ func (f Factory) PolicyDecisions(ctx context.Context, accessToken, repository st
 	var out policyview.Timeline
 	q := url.Values{"repository": {repository}, "pr": {strconv.Itoa(pr)}}
 	err := f.call(ctx, http.MethodGet, accessToken, "/v1/policy/decisions?"+q.Encode(), http.NoBody, &out)
+	return out, err
+}
+
+// PolicyPromote opens a one-line promotion pull request for a maintainer.
+func (f Factory) PolicyPromote(ctx context.Context, accessToken, repository, class string, minimum int) (promote.Result, error) {
+	body, err := json.Marshal(map[string]any{"repository": repository, "class": class, "minimum": minimum})
+	if err != nil {
+		return promote.Result{}, err
+	}
+	var out promote.Result
+	err = f.call(ctx, http.MethodPost, accessToken, "/v1/policy/promote", bytes.NewReader(body), &out)
+	return out, err
+}
+
+// PolicyPromotionStatus reads the facts that close a promotion record.
+func (f Factory) PolicyPromotionStatus(ctx context.Context, accessToken, repository, class string, number int) (promote.Status, error) {
+	var out promote.Status
+	q := url.Values{"repository": {repository}, "class": {class}, "pr": {strconv.Itoa(number)}}
+	err := f.call(ctx, http.MethodGet, accessToken, "/v1/policy/promotion?"+q.Encode(), http.NoBody, &out)
+	return out, err
+}
+
+// PolicyDrillResult is a rollback drill's pull request.
+type PolicyDrillResult struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+}
+
+// PolicyDrill opens a labelled rollback-drill revert for a maintainer.
+func (f Factory) PolicyDrill(ctx context.Context, accessToken, repository string, number int) (PolicyDrillResult, error) {
+	body, err := json.Marshal(map[string]any{"repository": repository, "pullRequest": number})
+	if err != nil {
+		return PolicyDrillResult{}, err
+	}
+	var out PolicyDrillResult
+	err = f.call(ctx, http.MethodPost, accessToken, "/v1/policy/drill", bytes.NewReader(body), &out)
 	return out, err
 }
 

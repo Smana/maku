@@ -72,7 +72,7 @@ become labelled rows. Example captures: [desktop, light](../assets/web-ui/merge-
 |---|---|
 | A reader of the repository | Read everything above |
 | A maintainer (write on GitHub), under `central` authority | **Check** bindings and backtest edits: each binding resolved or refused, the `repository-<name>.yaml` manifest to copy and commit, and the pull requests whose decisions change. **Promote to live** an eligible shadow class. Ask an operator for an exception below the minimum, with a justification |
-| A maintainer, under `repository` authority | **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification. A not-migrated page keeps the exception requests: they are the broker's records |
+| A maintainer, under `repository` authority | **Promote to live** an eligible shadow class: with `gitops`, the factory opens the one-line pull request and the page links it; without, it shows the proposal and `gh pr create` command. A maintainer still merges. Records close from served live or an unmerged close, with no Merged or Abandon buttons. Ask an operator for an exception below the minimum, with a justification. A not-migrated page keeps the exception requests: they are the broker's records |
 | An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
 
 The **Workflows** row on a class card says which workflow the repository runs by default, the

@@ -1,4 +1,4 @@
-h1:iPmzCEKB/Rx3vfjpNZIQrfReYeqBNZCg1CXdpFBq2gA=
+h1:x+h3mL3npB+r1dV/Kc7K79M9hA8zC22TEq1x/+Raljk=
 20260927120000_rooms.sql h1:2iHh9ofAjF9QEjy2L4Nk4qPz6GPfyTyceOP/Lg2nitE=
 20260929120000_verdicts.sql h1:aat8qDZyfEMLP7P/FyvK90fwdXTcVbUIJte49wiEWNg=
 20261001120000_driver_queue.sql h1:nT+Seb7xn/lYr9A+WtDkWtuGeuR/5Qw7YvrF5ueKQ+k=
@@ -19,3 +19,4 @@ h1:iPmzCEKB/Rx3vfjpNZIQrfReYeqBNZCg1CXdpFBq2gA=
 20261120120000_github_links.sql h1:Lp7974e3jWrwpYP4qttNJOowOsJ9W5YqkuJLksVNTDo=
 20261121120000_handoffs.sql h1:PnGEXbDAuZmRwS7OwKMPrmBsoX00rn/MGLVQ1TSKBX0=
 20261123120000_query_indexes.sql h1:7Bjmt8mqsQQIwMkfSYOd9UomoIdlHftfLxpAvQxQR34=
+20261124120000_policy_promotion_pull_requests.sql h1:4QwS1PUUV9nZDDjHHpCcGoQFK8sbEe5snC78qb+kaTE=

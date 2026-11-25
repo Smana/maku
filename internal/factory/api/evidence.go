@@ -140,6 +140,9 @@ type PolicyEditor interface {
 	Timeline(ctx context.Context, repository string, pr int) (any, error)
 	Recent(ctx context.Context, repository, since string) (any, error)
 	Backtest(ctx context.Context, repository, kind, file string, bindings []config.Binding, policy string, spec *config.PolicySpec, since string) (any, error)
+	Promote(ctx context.Context, repository, class string, minimum int) (any, error)
+	PromotionStatus(ctx context.Context, repository, class string, number int) (any, error)
+	Drill(ctx context.Context, repository string, number int) (any, error)
 }
 
 // PolicySource is the class-shape MergePolicies the factory serves (B16); *evidence.Service

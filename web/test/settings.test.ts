@@ -80,7 +80,7 @@ describe("the repository page", () => {
   it("offers a maintainer the promotion of an eligible shadow class, and shows the proposal it gets", async () => {
     const calls: string[] = [];
     const proposal = { path: ".github/agent-factory.yaml", line: 6, file: "factory: aws-0\nclasses: {}\n", editURL: "https://github.com/Smana/cloud-native-ref/edit/main/.github/agent-factory.yaml" };
-    const get = fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/policy/promotions": { promotion: { id: "aaaaaaaa" }, proposal } }, calls);
+    const get = fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/policy/promotions": { promotion: { id: "aaaaaaaa" }, proposal, command: "gh pr create --repo Smana/cloud-native-ref" } }, calls);
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", get);
     expect(app.textContent).toContain("20 clean merges (20 needed)");
@@ -96,6 +96,24 @@ describe("the repository page", () => {
     expect(pre?.textContent).toBe(proposal.file);
     const edit = [...app.querySelectorAll("a")].find((a) => a.textContent === "edit the file on GitHub");
     expect(edit?.getAttribute("href")).toBe(proposal.editURL);
+    expect(app.querySelector("pre.proposal-command")?.textContent).toBe("gh pr create --repo Smana/cloud-native-ref");
+  });
+
+  it("links the pull request the factory opened and offers no manual state buttons", async () => {
+    const p = page();
+    const url = "https://github.com/Smana/cloud-native-ref/pull/91";
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({
+      "/api/policy/repositories/Smana/cloud-native-ref": p,
+      "/api/policy/promotions": { promotion: { id: "aaaaaaaa", pullRequestURL: url }, proposal: p.report.classes[0].proposal },
+    }));
+    [...app.querySelectorAll("button")].find((b) => b.textContent === "Promote to live")!.click();
+    await settle();
+    const opened = [...app.querySelectorAll("a")].find((a) => a.textContent === "Open the promotion pull request");
+    expect(opened?.getAttribute("href")).toBe(url);
+    expect(app.querySelector("pre.proposal-file")).toBeNull();
+    expect([...app.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Merged");
+    expect([...app.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Abandon");
   });
 
   it("links every settings page from its nav, approval memory included", async () => {

@@ -59,6 +59,23 @@ func TestPromotionMovesOnceToItsEnd(t *testing.T) {
 	}
 }
 
+func TestFactoryOpenedPromotionClosesOnlyAtItsEnd(t *testing.T) {
+	ctx := t.Context()
+	s, _, _, _ := open(t)
+	if _, err := s.RecordPromotion(ctx, Promotion{ID: "aaaaaaaa", Repository: canary, Class: "docs-links", Threshold: 20,
+		Evidence: snapshot, RequestedBy: "Smana"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.OpenPromotion(ctx, "aaaaaaaa", 42, "https://github.com/Smana/cloud-native-ref/pull/42", "factory/promote-Smana-cloud-native-ref-docs-links")
+	if err != nil || p.State != PromotionPROpened || p.PullRequestURL == "" || p.Branch == "" || p.ClosedBy != "" || p.ClosedAt != nil {
+		t.Fatalf("%+v %v", p, err)
+	}
+	p, err = s.MovePromotion(ctx, "aaaaaaaa", PromotionMerged, 0, "factory")
+	if err != nil || p.State != PromotionMerged || p.ClosedBy != "factory" || p.ClosedAt == nil || p.PullRequestURL == "" {
+		t.Fatalf("%+v %v", p, err)
+	}
+}
+
 // MP7's exception: requested with a justification, decided once by an operator, and only an
 // approved, unexpired exception of the class and minimum carries a promotion.
 func TestExceptionCarriesAPromotionOnlyWhileApproved(t *testing.T) {

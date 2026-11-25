@@ -111,6 +111,8 @@ export const REASONS: Record<string, { short: string; long: string; next: string
   "parent_not_split": { short: "the parent is no longer waiting", long: "its parent task is no longer waiting on its parts", next: "a maintainer reviews the task and chooses the next step" },
   "patch_too_large": { short: "exceeds the file or line limit", long: "it changes more files or lines than its class allows", next: "a maintainer reviews the task and chooses the next step" },
   "paused": { short: "merge policies are paused", long: "automatic policy decisions are paused by the repository operator", next: "a maintainer reads the pause reason, then resumes or merges by hand" },
+  "plan_review": { short: "waiting on plan approval", long: "the scoper proposed a plan and waits for the author or a maintainer to approve, revise, or split it", next: "comment `/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`" },
+  "plan_revision_limit": { short: "plan revised once; maintainer decides", long: "the plan was already revised once; a second revision goes to a maintainer", next: "a maintainer reviews the plan and chooses `/factory retry` or edits the issue" },
   "pod_lost": { short: "the sandbox was lost", long: "the sandbox was lost (spot reclaim or eviction)", next: "a maintainer reviews the task and chooses the next step" },
   "policy_absent": { short: "no merge policy evaluation reported", long: "the merge policy has not evaluated the pull request", next: "a maintainer reviews the task and chooses the next step" },
   "policy_invalid": { short: "the merge policy is invalid", long: "the repository's merge policy is invalid, so auto-merge is paused", next: "a maintainer reviews the task and chooses the next step" },

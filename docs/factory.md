@@ -852,7 +852,7 @@ the policy's meaning shown read-only. **Check** is the factory's: each binding r
 resolves it, or refused with its reason, and the `Repository` manifest to commit. A policy is edited
 on its own page, checked against every consumer the maintainer reads, and answers the
 `mergepolicy-<name>.yaml` to commit. Under repository authority the bindings are the file's, edited
-by pull request. Maku writes nothing ([the settings pages](merge-policies.md#the-settings-pages)).
+by pull request. Editors write nothing; a configured promotion or rollback drill opens a pull request through the factory App and never merges it ([the settings pages](merge-policies.md#the-settings-pages)).
 
 **The decision timeline.** For a pull request, each decision record the factory wrote renders in
 the gate's order: fixed base, author mode, class, the recorded conditions, deny, approval subset,

@@ -170,6 +170,8 @@ type Config struct {
 	// MergeDefaults are the merge settings a repository omits, key by key (Q8): each top-level key
 	// is taken whole, so a set breaker or list replaces the default's. Parse applies them.
 	MergeDefaults *Merge `json:"mergeDefaults,omitempty"`
+	// GitOps is Factory.spec.gitops, retained as written for policy-change pull requests.
+	GitOps json.RawMessage `json:"gitops,omitempty"`
 	// Policies are the accepted class-shape MergePolicies, by name, set by resources.Assemble: the
 	// stage-4 file and the settings pages resolve against the definitions the factory serves (PR17).
 	Policies map[string]ServedPolicy `json:"-"`

@@ -632,8 +632,9 @@ unknown fields refused (`400 bad_json`).
 | `POST /api/policy/policies/{name}/preview` | Any member | `{spec}` → `{valid, errors?, consumers: [{repository, mode, change, why?, resolves, reason?}], manifest, manifestPath}`: the `mergepolicy-<name>.yaml` to commit and each consumer's change, for the consumers the caller reads, live ones first. Nothing is written |
 | `GET /api/policy/repositories/{owner}/{name}/decisions` | A reader of it | `?since=YYYY-MM-DD` (or RFC3339): the repository's recent per-policy decisions, newest first, each `{at, pullRequest, head, outcome, policy, reason, rows, considered?, commentURL}`. `rows` has `counted`, `files`, `maxFiles`, `lines`, `maxLines`, `shape`, `holdout`, `oracle`, `age` and `reviewer`; `counted: false` means the diff was not read, not zero |
 | `GET /api/policy/repositories/{owner}/{name}/decisions/{pr}` | A reader of it | The pull request's [decision timeline](../factory.md#promotion): each record's stages, conditions, verdict and revisions, with the comment and policy links |
-| `POST /api/policy/promotions` | A maintainer (write) | `{repository, class, exceptionId?}` → `201 {promotion, proposal}`. `409 not_promotable` (not a shadow class of the repository's file), `evidence_pending` (the factory is still reading it), `not_eligible`, `promotion_open`, `exception_unusable`; `404 no_such_class` |
-| `POST /api/policy/promotions/{id}` | A maintainer | `{state: pr_opened \| merged \| abandoned, pullRequest?}`: `pr_opened` names the pull request; `409 already_moved` |
+| `POST /api/policy/promotions` | A maintainer (write), web or CLI | `{repository, class, exceptionId?}` → `201 {promotion, proposal, command?}`: the factory opens `factory/promote-<repository>-<policy>` with only the one-line mode change, records its URL and branch, and never merges it. Without `gitops`, `command` is the manual `gh pr create` fallback. A `requested` record resumes; `409 promotion_open` after the PR opens. `409 not_promotable`, `evidence_pending`, `exception_unusable`; `404 no_such_class`. `not_eligible` includes `blockers` and `counts: {clean, minimum, bad, drill}` |
+| `POST /api/policy/repositories/{owner}/{name}/drill` | A maintainer (write), web or CLI | `{pullRequest}` opens a revert of that merged pull request labelled `factory/drill`, and never merges it |
+| `POST /api/policy/promotions/{id}` | A maintainer, web only, legacy records | `{state: pr_opened \| merged \| abandoned, pullRequest?}` for the manual workflow. New records close from served live or an unmerged PR close, not from these buttons; `409 already_moved` |
 | `POST /api/policy/exceptions` | A maintainer | `{repository, class, minimum, justification}` → `201`: `minimum` below the configured one, a justification of 20 to 2,000 characters |
 | `POST /api/policy/exceptions/{id}` | An operator | `{decision: approved \| refused, note?}`: once; an approval lasts 14 days. `403 not_an_operator` |
 
@@ -1404,7 +1405,11 @@ bound repository's `spec.mergePolicies` (a maintainer's, as above), and `policy`
 spec}` checks a `MergePolicy` against every consumer the caller reads; any other kind is
 `400 kind_unknown`. With `backtest: true`, a repository and `since` (days or a date), the same
 route replays the edited `file`, `bindings`, or `policy`/`spec` over recorded diffs and returns the
-broker's changed-and-unknown backtest result. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
+broker's changed-and-unknown backtest result. `POST /v1/policy/promote {repository, class}` opens
+the one-line promotion PR for a maintainer and returns `{proposal, command?, pullRequest?,
+pullRequestURL?, branch?}`. `POST /v1/policy/drill {repository, pullRequest}` opens its labelled
+rollback revert. `GET /v1/policy/promotion?repository=&class=&pr=` returns `{pullRequestState,
+servedMode}` for the broker's automatic record close. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
 decision timeline from the factory's own comments, for a reader. With no `pr`, `since=<date>` returns
 that repository's recent per-policy decisions in the broker's shape, newest first. `GET /v1/policy/policies` and `GET
 /v1/policy/policies/{name}` answer the `MergePolicy` objects the caller reads a consumer

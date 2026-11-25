@@ -20,6 +20,7 @@ import (
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/policyview"
+	promotepkg "github.com/Smana/maku/internal/factory/promote"
 	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/store"
 )
@@ -33,6 +34,9 @@ type PolicyGateway interface {
 	PolicyDecisions(ctx context.Context, accessToken, repository string, pr int) (policyview.Timeline, error)
 	PolicyRecentDecisions(ctx context.Context, accessToken, repository, since string) (policyview.Recent, error)
 	PolicyBacktest(ctx context.Context, accessToken, repository string, request policyview.BacktestRequest, since string) (policyview.Backtest, error)
+	PolicyPromote(ctx context.Context, accessToken, repository, class string, minimum int) (promotepkg.Result, error)
+	PolicyPromotionStatus(ctx context.Context, accessToken, repository, class string, number int) (promotepkg.Status, error)
+	PolicyDrill(ctx context.Context, accessToken, repository string, number int) (runrequest.PolicyDrillResult, error)
 	// PolicyList, Policy and the two previews are the MergePolicies' pages (B16).
 	PolicyList(ctx context.Context, accessToken string) ([]evidence.PolicyReport, error)
 	Policy(ctx context.Context, accessToken, name string) (evidence.PolicyReport, error)
@@ -43,6 +47,7 @@ type PolicyGateway interface {
 // PolicyRecords is the promotion workflow's audit; *store.Store implements it.
 type PolicyRecords interface {
 	RecordPromotion(ctx context.Context, p store.Promotion) (store.Promotion, error)
+	OpenPromotion(ctx context.Context, id string, number int, url, branch string) (store.Promotion, error)
 	MovePromotion(ctx context.Context, id, state string, pullRequest int, by string) (store.Promotion, error)
 	Promotion(ctx context.Context, id string) (store.Promotion, error)
 	RequestException(ctx context.Context, e store.Exception) (store.Exception, error)
@@ -85,6 +90,7 @@ func (s *Server) policyRoutes(mux *http.ServeMux, index http.Handler) {
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}", s.policyRepository)
 	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/preview", s.policyPreview)
 	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/backtest", s.policyBacktest)
+	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/drill", s.policyDrill)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions", s.policyRecentDecisions)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions/{pr}", s.policyDecisions)
 	mux.HandleFunc("GET /api/policy/policies", s.policyList)
@@ -127,6 +133,26 @@ func (s *Server) policyWriter(w http.ResponseWriter, r *http.Request) (authn.Pri
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
 		refuseJSON(w, http.StatusUnsupportedMediaType, "unsupported_media_type")
 		return p, false
+	}
+	return p, true
+}
+
+// policyPromotionWriter admits the human CLI and the browser. Browser sessions retain the origin
+// check; a CLI token has none, but every caller must send JSON and prove maintainer access below.
+func (s *Server) policyPromotionWriter(w http.ResponseWriter, r *http.Request) (authn.Principal, bool) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return p, false
+	}
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		refuseJSON(w, http.StatusUnsupportedMediaType, "unsupported_media_type")
+		return p, false
+	}
+	if s.WebClient != nil && p.ClientID != "" && p.ClientID == s.WebClient() {
+		if want, o := origin(s.PublicURL), r.Header.Get("Origin"); want == "" || o == "" || origin(o) != want {
+			refuseJSON(w, http.StatusForbidden, "cross_origin")
+			return p, false
+		}
 	}
 	return p, true
 }
@@ -203,6 +229,7 @@ func (s *Server) policyRepository(w http.ResponseWriter, r *http.Request) {
 		refuseJSON(w, http.StatusServiceUnavailable, "records_unavailable")
 		return
 	}
+	ps = s.closePromotions(r, p, rep.Repository, ps)
 	who, err := s.rolesOn(r.Context(), p, rep.Repository)
 	if err != nil {
 		who = roles{} // the page still reads; every write asks again
@@ -214,6 +241,34 @@ func (s *Server) policyRepository(w http.ResponseWriter, r *http.Request) {
 		You        roles                `json:"you"`
 		Catalogue  *catalogue.Catalogue `json:"catalogue"`
 	}{rep, ps, es, who, s.catalogueFor(r.Context(), p, rep.Repository)})
+}
+
+func (s *Server) closePromotions(r *http.Request, p authn.Principal, repository string, records []store.Promotion) []store.Promotion {
+	for i, record := range records {
+		if record.PullRequest == 0 || (record.State != store.PromotionRequested && record.State != store.PromotionPROpened) {
+			continue
+		}
+		status, err := s.Policy.Factory.PolicyPromotionStatus(r.Context(), p.AccessToken, repository, record.Class, record.PullRequest)
+		if err != nil {
+			continue
+		}
+		state := ""
+		switch {
+		case status.ServedMode == config.ModeLive:
+			state = store.PromotionMerged
+		case status.PullRequestState == "CLOSED":
+			state = store.PromotionAbandoned
+		}
+		if state == "" {
+			continue
+		}
+		updated, err := s.Policy.Records.MovePromotion(r.Context(), record.ID, state, 0, "factory")
+		if err == nil {
+			records[i] = updated
+			s.policyChange(r.Context(), repository, record.Class, "promotion_"+state)
+		}
+	}
+	return records
 }
 
 // catalogueFor is what the repository offers at intake, for the page's Profiles rows (profile
@@ -266,12 +321,11 @@ type promotionSnapshot struct {
 	Line      int               `json:"line"`
 }
 
-// requestPromotion is POST /api/policy/promotions {repository, class, exceptionId?}: a maintainer's
-// request to promote a shadow class (MP7). The evidence is read again here, server side, and must
-// hold: the minimum (or an approved exception's), no bad mature outcome, a passed drill. The
-// answer is the recorded request and the one-line proposal; Maku opens no pull request.
+// requestPromotion opens the promotion pull request after re-reading eligibility. Without gitops,
+// it returns the command and one-line proposal instead. A requested record can be resumed; an open
+// pull request blocks a second request.
 func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.policyWriter(w, r)
+	p, ok := s.policyPromotionWriter(w, r)
 	if !ok {
 		return
 	}
@@ -303,7 +357,6 @@ func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
 		refuseJSON(w, http.StatusConflict, "evidence_pending")
 		return
 	}
-	// The class's own minimum, its policy's evidence level (MR4); the report's for older evidence.
 	threshold := classMinimum(rep, c)
 	if in.ExceptionID != "" {
 		e, err := s.Policy.Records.Exception(r.Context(), in.ExceptionID)
@@ -316,7 +369,7 @@ func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
 	}
 	ev := *c.Evidence
 	if ev.Clean < threshold || ev.Bad > 0 || ev.Drill != evidence.DrillPassed {
-		refuseJSON(w, http.StatusConflict, "not_eligible")
+		promotionRefusal(w, ev, threshold)
 		return
 	}
 	snap, err := json.Marshal(promotionSnapshot{ReadAt: *rep.EvidenceAt, Minimum: rep.Minimum, Threshold: threshold, Mode: c.Mode,
@@ -327,16 +380,61 @@ func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.Policy.Records.RecordPromotion(r.Context(), store.Promotion{ID: s.Policy.NewID(), Repository: rep.Repository,
 		Class: c.Class, Threshold: threshold, Evidence: snap, ExceptionID: in.ExceptionID, RequestedBy: who.Login})
+	if errors.Is(err, store.ErrPromotionOpen) {
+		out, err = s.promotionToResume(r, rep.Repository, c.Class)
+	}
 	if !s.recorded(w, err) {
 		return
 	}
-	s.policyChange(r.Context(), out.Repository, out.Class, "promotion_requested")
+	opened, err := s.Policy.Factory.PolicyPromote(r.Context(), p.AccessToken, rep.Repository, c.Class, threshold)
+	if err != nil {
+		refuseJSON(w, http.StatusServiceUnavailable, "promotion_unavailable")
+		return
+	}
+	if opened.PullRequest > 0 {
+		out, err = s.Policy.Records.OpenPromotion(r.Context(), out.ID, opened.PullRequest, opened.PullRequestURL, opened.Branch)
+		if !s.recorded(w, err) {
+			return
+		}
+	}
+	s.policyChange(r.Context(), out.Repository, out.Class, "promotion_"+out.State)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(struct {
 		Promotion store.Promotion   `json:"promotion"`
 		Proposal  evidence.Proposal `json:"proposal"`
-	}{out, *c.Proposal})
+		Command   string            `json:"command,omitempty"`
+	}{out, opened.Proposal, opened.Command})
+}
+
+func (s *Server) promotionToResume(r *http.Request, repository, class string) (store.Promotion, error) {
+	records, _, err := s.Policy.Records.PolicyAudit(r.Context(), repository)
+	if err != nil {
+		return store.Promotion{}, err
+	}
+	for _, p := range records {
+		if p.Class == class && p.State == store.PromotionRequested && p.PullRequest == 0 {
+			return p, nil
+		}
+	}
+	return store.Promotion{}, store.ErrPromotionOpen
+}
+
+func promotionRefusal(w http.ResponseWriter, ev evidence.Evidence, threshold int) {
+	var blockers []string
+	if ev.Clean < threshold {
+		blockers = append(blockers, "below_minimum")
+	}
+	if ev.Bad > 0 {
+		blockers = append(blockers, "bad_outcome")
+	}
+	if ev.Drill != evidence.DrillPassed {
+		blockers = append(blockers, "no_drill")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	writeJSON(w, map[string]any{"error": "not_eligible", "blockers": blockers,
+		"counts": map[string]any{"clean": ev.Clean, "minimum": threshold, "bad": ev.Bad, "drill": ev.Drill}})
 }
 
 // movePromotion is POST /api/policy/promotions/{id} {state, pullRequest?}: a maintainer names the
@@ -370,6 +468,37 @@ func (s *Server) movePromotion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.policyChange(r.Context(), out.Repository, out.Class, "promotion_"+out.State)
+	writeJSON(w, out)
+}
+
+// policyDrill opens a rollback-drill revert for a maintainer.
+func (s *Server) policyDrill(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		PullRequest int `json:"pullRequest"`
+	}
+	if !decodePolicy(w, r, &in) {
+		return
+	}
+	if in.PullRequest < 1 {
+		refuseJSON(w, http.StatusBadRequest, "pr_required")
+		return
+	}
+	repository := r.PathValue("owner") + "/" + r.PathValue("name")
+	rep, ok := s.report(w, r, p, repository)
+	if !ok {
+		return
+	}
+	if _, ok := s.maintainerOf(w, r, p, rep.Repository); !ok {
+		return
+	}
+	out, err := s.Policy.Factory.PolicyDrill(r.Context(), p.AccessToken, rep.Repository, in.PullRequest)
+	if !s.forwarded(w, err) {
+		return
+	}
 	writeJSON(w, out)
 }
 

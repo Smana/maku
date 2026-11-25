@@ -210,8 +210,9 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
       b.onclick = async () => {
         b.disabled = true;
         try {
-          const out = (await post("/api/policy/promotions", { repository: r.repository, class: c.class, ...(exc && !e.eligible ? { exceptionId: exc.id } : {}) }, ctx.get)) as { proposal: Proposal };
-          showProposal(ctx.main, out.proposal);
+          const out = (await post("/api/policy/promotions", { repository: r.repository, class: c.class, ...(exc && !e.eligible ? { exceptionId: exc.id } : {}) }, ctx.get)) as { promotion: Promotion; proposal: Proposal; command?: string };
+          if (out.promotion.pullRequestURL) showPromotionPR(ctx.main, out.promotion.pullRequestURL);
+          else showProposal(ctx.main, out.proposal, out.command);
         } catch (err) { ctx.say.textContent = explain(err instanceof Error ? err.message : String(err)); b.disabled = false; }
       };
       act.append(b);
@@ -241,13 +242,11 @@ function promotionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
     line.append(timeText(p.requestedAt, (ctx.now ?? Date.now)()), `: ${p.state === "pr_opened" ? "pull request opened" : p.state.replaceAll("_", " ")}`);
     if (p.pullRequest) {
       const a = el("a", ` #${p.pullRequest}`);
-      a.href = `https://github.com/${p.repository}/pull/${p.pullRequest}`;
+      a.href = p.pullRequestURL || `https://github.com/${p.repository}/pull/${p.pullRequest}`;
       line.append(a);
     }
     line.append(` (${p.exceptionId ? `under exception ${p.exceptionId}, ` : ""}threshold ${p.threshold})`);
-    const act = el("span", undefined, "class-actions");
-    if (ctx.page.you.maintainer && (p.state === "requested" || p.state === "pr_opened")) promotionActions(act, p, ctx);
-    box.append(line, act);
+    box.append(line);
   }
   return box;
 }
@@ -278,9 +277,8 @@ function exceptionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
   return box;
 }
 
-// showProposal shows the one-line change and where to submit it: GitHub's edit page takes no
-// prefilled content for an existing file, so the file is shown whole, its changed line named.
-export function showProposal(main: HTMLElement, p: Proposal) {
+// showProposal shows the one-line change and, without gitops, the command that opens it.
+export function showProposal(main: HTMLElement, p: Proposal, command = "") {
   const box = el("section", undefined, "proposal");
   box.append(el("h2", "Your promotion pull request"));
   const lead = el("p", `Change line ${p.line} of ${p.path} from mode: shadow to mode: live, as below, then propose it as a pull request`);
@@ -288,8 +286,9 @@ export function showProposal(main: HTMLElement, p: Proposal) {
     const a = el("a", "edit the file on GitHub");
     a.href = p.editURL;
     lead.append(": ", a);
-  } else lead.append(" to the repository Flux applies it from."); // a Repository manifest (B5)
+  } else lead.append(" to the repository Flux applies it from.");
   box.append(lead, el("pre", p.file, "proposal-file"));
+  if (command) box.append(el("pre", command, "proposal-command"));
   const copy = el("button", "Copy the file");
   copy.type = "button";
   copy.onclick = () => void navigator.clipboard?.writeText(p.file);
@@ -297,30 +296,15 @@ export function showProposal(main: HTMLElement, p: Proposal) {
   main.prepend(box);
 }
 
-function promotionActions(act: HTMLElement, p: Promotion, ctx: CardContext) {
-  const send = async (body: unknown) => {
-    try { await post(`/api/policy/promotions/${p.id}`, body, ctx.get); ctx.reload(); } catch (err) { ctx.say.textContent = explain(err instanceof Error ? err.message : String(err)); }
-  };
-  if (p.state === "requested") {
-    const n = el("input");
-    n.type = "number";
-    n.min = "1";
-    n.placeholder = "PR #";
-    n.setAttribute("aria-label", "pull request number");
-    const b = el("button", "Record the pull request");
-    b.type = "button";
-    b.onclick = () => void send({ state: "pr_opened", pullRequest: Number(n.value) });
-    act.append(n, b);
-  } else {
-    const m = el("button", "Merged");
-    m.type = "button";
-    m.onclick = () => void send({ state: "merged" });
-    act.append(m);
-  }
-  const a = el("button", "Abandon");
-  a.type = "button";
-  a.onclick = () => void send({ state: "abandoned" });
-  act.append(a);
+function showPromotionPR(main: HTMLElement, url: string) {
+  const box = el("section", undefined, "proposal");
+  box.append(el("h2", "Your promotion pull request"));
+  const lead = el("p");
+  const a = el("a", "Open the promotion pull request");
+  a.href = url;
+  lead.append(a, ". The factory opened it with the one-line mode change and its supporting decisions. A maintainer still merges it.");
+  box.append(lead);
+  main.prepend(box);
 }
 
 function exceptionForm(at: HTMLElement, repository: string, cls: string, minimum: number, ctx: CardContext) {
