@@ -64,7 +64,7 @@ func tiers() []string           { return []string{"light", "standard", "frontier
 func cohorts() []string         { return []string{"labeled", "control", "treatment", "rescue", "none"} }
 func harnesses() []string       { return []string{"openhands", "opencode"} }
 func intakeSources() []string   { return []string{"issue", "runlore", "schedule", "api", "adopt"} }
-func resumeReasons() []string   { return []string{"Disrupted", "PodLost"} }
+func resumeReasons() []string   { return []string{"Disrupted", "PodLost", "SandboxUnavailable"} }
 func overlapSources() []string  { return []string{"tasks", "runs", "rooms", "github"} }
 func overlapClassifications() []string {
 	return []string{v1alpha1.OverlapActiveDuplicate, v1alpha1.OverlapCompletedDuplicate, v1alpha1.OverlapPriorAttempt,
@@ -131,7 +131,7 @@ func stepUpModes() []string { return []string{"auto", "manual", "offered"} }
 // a lost or unresumable run, the pod the AgentRun read, and a run's terminal phase lowered.
 var handOffReasons = sync.OnceValue(func() []string {
 	out := slices.Concat(narrate.Reasons(), webhook.Reasons(), revocations(),
-		[]string{runs.ReasonDisrupted, runs.ReasonPodLost, runs.ReasonPodFailed, "run_lost", "resumes_exhausted",
+		[]string{runs.ReasonDisrupted, runs.ReasonPodLost, runs.ReasonPodFailed, runs.ReasonSandboxUnavailable, "run_lost", "resumes_exhausted",
 			"succeeded", "failed", "budgetexhausted", "revoked"})
 	slices.Sort(out)
 	return slices.Compact(out)

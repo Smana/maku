@@ -97,6 +97,9 @@ const (
 	ReasonDisrupted = "Disrupted"
 	ReasonPodLost   = "PodLost"
 	ReasonPodFailed = "PodFailed"
+	// ReasonSandboxUnavailable: the run-controller ended the run before its pod, the sandbox's nodes
+	// unavailable for its whole wait. The factory runs it again once.
+	ReasonSandboxUnavailable = "SandboxUnavailable"
 )
 
 // Scheme registers k's AgentRun as an unstructured kind (the XRD has no Go types). The portable

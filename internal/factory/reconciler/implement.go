@@ -798,7 +798,7 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	}
 	if reason == "pod_lost" {
 		switch run.Reason {
-		case runs.ReasonDisrupted, runs.ReasonPodLost, runs.ReasonPodFailed:
+		case runs.ReasonDisrupted, runs.ReasonPodLost, runs.ReasonPodFailed, runs.ReasonSandboxUnavailable:
 			reason = run.Reason // the broker's pod_lost reads the same for a drain, a deletion and a crash; the AgentRun read the pod
 		}
 	}
@@ -822,6 +822,10 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		default:
 			reason = why
 		}
+	}
+	if sandboxUnavailable(run) && r.sandboxRetry(t) {
+		r.retrySandbox(ctx, t, run)
+		return nil
 	}
 	if overlapScoperRun(t) {
 		return r.overlapScoperEnded(ctx, cfg, t)
@@ -1053,13 +1057,44 @@ func (r *Reconciler) resume(ctx context.Context, cfg *config.Config, t *v1alpha1
 	t.Status.Resumes++
 	n, why := int(t.Status.Resumes), run.Reason
 	record(ctx, func(ctx context.Context) { r.Metrics.Resumed(ctx, why) })
+	r.runAgain(t, run)
+	narrateLater(t, narrate.Resuming(t, run.ID, run.Role, n, cfg.Resume.MaxPerTask))
+}
+
+// runAgain queues a new run of run's role, on the same branch and in the same room.
+func (r *Reconciler) runAgain(t *v1alpha1.Task, run runs.Run) {
 	if run.Role == "reviewer" {
 		r.requestVerifier(t, cmp.Or(run.Persona, run.Role)) // no ReviewRounds++: the loss was the platform's, not the review's
 	} else {
 		t.Status.NextTrigger = "resume"
 		r.to(t, v1alpha1.PhaseQueued, "")
 	}
-	narrateLater(t, narrate.Resuming(t, run.ID, run.Role, n, cfg.Resume.MaxPerTask))
+}
+
+// sandboxUnavailable: the run-controller ended the run before creating its pod, the sandbox's nodes
+// unavailable for its whole wait (a pool scaling from zero that never came up). Nothing ran.
+func sandboxUnavailable(run runs.Run) bool {
+	return run.Phase == "Failed" && run.Revoked == "" && run.Reason == runs.ReasonSandboxUnavailable
+}
+
+// sandboxRetry: the task's current run is its first to end SandboxUnavailable, and the task's budget
+// holds one more run. A second escalates: a pool that stays down twice needs an operator.
+func (r *Reconciler) sandboxRetry(t *v1alpha1.Task) bool {
+	n := 0
+	for _, rec := range t.Status.Runs {
+		if rec.Reason == runs.ReasonSandboxUnavailable {
+			n++
+		}
+	}
+	return n == 1 && runFitsFor(t, current(t).Role)
+}
+
+// retrySandbox runs the task's current run again, once, on its own: it never started, so it spends
+// no resume (resume.maxPerTask counts runs lost while working).
+func (r *Reconciler) retrySandbox(ctx context.Context, t *v1alpha1.Task, run runs.Run) {
+	record(ctx, func(ctx context.Context) { r.Metrics.Resumed(ctx, runs.ReasonSandboxUnavailable) })
+	r.runAgain(t, run)
+	narrateLater(t, narrate.SandboxRetry(t, run.ID))
 }
 
 // cause is why the current implementer run's work exists: a resumed run carries on the run it

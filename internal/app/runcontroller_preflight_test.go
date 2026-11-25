@@ -28,6 +28,7 @@ func TestRunPathResults(t *testing.T) {
 		"a missing RuntimeClass":       {runctl.Result{State: runctl.PreflightFailed, Check: "runtimeClass", Message: "RuntimeClass \"gvisor\" not found"}, "", preflight.Fail, "run_path_runtimeclass"},
 		"an unfilled git Secret":       {runctl.Result{State: runctl.PreflightWaiting, Check: "gitSecrets", Message: "agent-git has no token"}, "", preflight.Fail, "run_path_git_secrets"},
 		"the CNI does not enforce":     {runctl.Result{State: runctl.PreflightFailed, Check: "network", Message: "the denied connection succeeded"}, runctl.NetworkPolicyKubernetes, preflight.Fail, "run_path_network"},
+		"no sandbox node in time":      {runctl.Result{State: runctl.PreflightFailed, Check: "network", Message: "the probe pod did not start", Sandbox: true}, runctl.NetworkPolicyKubernetes, preflight.Fail, "run_path_sandbox"},
 		"the gateway's token TTL":      {runctl.Result{State: runctl.PreflightFailed, Check: "gateway-token-ttl", Message: "ttl"}, "", preflight.Fail, "run_path_gateway"},
 		"nothing confines the network": {runctl.Result{State: runctl.PreflightPassed}, runctl.NetworkPolicyNone, preflight.Warn, "network_policy_none"},
 	} {

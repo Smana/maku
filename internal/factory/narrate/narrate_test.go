@@ -882,6 +882,7 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		"Retrying":             {Retrying(tk, "smana", ""), ClassChanged},
 		"TaskCapHolds":         {TaskCapHolds(tk, 99), ClassNeedsYou},
 		"Resuming":             {Resuming(tk, "r1", "implementer", 1, 2), ClassChanged},
+		"SandboxRetry":         {SandboxRetry(tk, "r1"), ClassChanged},
 		"ModelHeld":            {ModelHeld(tk, "r1", "model_unavailable_quota", 5*time.Minute, 1, 6), ClassChanged},
 		"ContractReady":        {ContractReady(tk, &v1alpha1.ContractStatus{IDs: []string{"T1"}, Files: []string{"a_test.go"}}), ClassChanged},
 		"NoContract":           {NoContract(tk, "skipped"), ClassChanged},

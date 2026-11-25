@@ -27,6 +27,7 @@ var runPathMessages = map[string]string{
 	"run_path_runtimeclass": "the runs' RuntimeClass is missing or unusable: see the run-controller's log",
 	"run_path_git_secrets":  "a git Secret the runs need is missing or not filled: see the run-controller's log",
 	"run_path_network":      "the CNI does not enforce the runs' NetworkPolicy: see the run-controller's log",
+	"run_path_sandbox":      "no sandbox node started the network probe in time (a pool scaling from zero, a node starting): see the run-controller's log",
 	"run_path_gateway":      "the model gateway's identity, aliases or token TTL refused the runs: see the run-controller's log",
 	preflight.Undecided:     "a run-controller preflight check refused the runs: see the run-controller's log",
 }
@@ -50,6 +51,9 @@ func runControllerResults(res runctl.Result, mode string) []preflight.Result {
 		}
 		if !ok {
 			code = preflight.Undecided
+		}
+		if res.Sandbox { // the probe never ran: the sandbox's nodes, not the CNI
+			code = "run_path_sandbox"
 		}
 		run.Outcome, run.Code, run.Message = preflight.Fail, code, runPathMessages[code]
 	default:

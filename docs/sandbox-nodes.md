@@ -19,6 +19,10 @@ with `runtimeHandler` renders one under the class's name. The preflight's `runti
 `runtimeclass_missing` when the class does not exist, and the run-controller refuses runs until it
 does ([operations](operations/failures.md#the-run-controllers-preflight)).
 
+A sandbox pool may scale from zero: the preflight's network probe is often the pod that wakes it,
+and it waits up to 10 minutes for a scale-up the cluster autoscaler triggered before it refuses runs
+([operations](operations/failures.md#the-run-controllers-preflight)).
+
 A cold sandbox node costs a run 1.5 to 3.5 minutes at start: the image pull and the sandbox's own
 boot land on the run's clock, before its clone. A low-priority placeholder pod that keeps the run
 images on one node removes most of it for the price of one idle pod. The nodes are yours,

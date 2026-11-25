@@ -28,9 +28,13 @@ const (
 // DefaultPreflightEvery is how often the preflight checks again after its first run.
 const DefaultPreflightEvery = 10 * time.Minute
 
-// Result is the preflight's latest outcome. Check and Message name the first failed check.
+// Result is the preflight's latest outcome. Check and Message name the first failed check. Sandbox
+// marks a failure of the sandbox's nodes rather than of the cluster's setup (the probe pod did not
+// start: no node of the sandbox class came up in time): the reconciler holds new runs a while on it,
+// then ends them SandboxUnavailable, which the factory runs again once.
 type Result struct {
 	State, Check, Message string
+	Sandbox               bool
 	At                    time.Time
 }
 
@@ -43,10 +47,10 @@ type check struct {
 
 // verdict is a decided check: refusal is empty when it passed. soon asks for the short retry on a
 // refusal that may cure itself (RBAC propagating right after install). waits makes the refusal hold
-// new runs Pending (Waiting) instead of failing them.
+// new runs Pending (Waiting) instead of failing them. sandbox is Result.Sandbox.
 type verdict struct {
-	refusal     string
-	soon, waits bool
+	refusal              string
+	soon, waits, sandbox bool
 }
 
 // Preflight proves, at start and every Every, that the cluster can run a sandboxed run (v4 D18):
@@ -62,9 +66,11 @@ type Preflight struct {
 	Now    func() time.Time
 	// Kube creates and deletes the network check's probe pod and its NetworkPolicy (kubernetes mode).
 	Kube client.Client
-	// ProbeStart is how long the probe pod may stay Pending (default 2 minutes); ProbePoll how often
-	// its phase is read (default 2 s).
-	ProbeStart, ProbePoll time.Duration
+	// ProbeStart is how long the probe pod may stay Pending with no sign of progress (default 2
+	// minutes); ProbeScaleUp how long it may while it is (default 10 minutes): the cluster autoscaler
+	// triggered a scale-up for it (a sandbox pool scaled to zero, which the probe itself wakes), or it
+	// is bound to a node that is starting it. ProbePoll is how often its phase is read (default 2 s).
+	ProbeStart, ProbeScaleUp, ProbePoll time.Duration
 	// ProbeSuffix names the probe pod (default 8 random characters of [a-z2-7]).
 	ProbeSuffix func() string
 	// Self is the run-controller's own pod, which the gateway-token-ttl check binds its token to.
@@ -227,7 +233,7 @@ func (p *Preflight) Tick(ctx context.Context) (retrySoon bool) {
 			if v.waits {
 				state = PreflightWaiting
 			}
-			next = Result{State: state, Check: c.name, Message: v.refusal, At: next.At}
+			next = Result{State: state, Check: c.name, Message: v.refusal, Sandbox: v.sandbox, At: next.At}
 			retrySoon = v.soon
 			break
 		}
@@ -236,7 +242,7 @@ func (p *Preflight) Tick(ctx context.Context) (retrySoon bool) {
 	prev := p.res
 	p.res = next
 	p.mu.Unlock()
-	if prev.State == next.State && prev.Check == next.Check && prev.Message == next.Message {
+	if prev.State == next.State && prev.Check == next.Check && prev.Message == next.Message && prev.Sandbox == next.Sandbox {
 		return retrySoon
 	}
 	switch next.State {
@@ -248,6 +254,13 @@ func (p *Preflight) Tick(ctx context.Context) (retrySoon bool) {
 		p.log().Error("preflight failed: "+next.Check+": "+next.Message, "check", next.Check)
 	}
 	return retrySoon
+}
+
+func (p *Preflight) now() time.Time {
+	if p.Now != nil {
+		return p.Now()
+	}
+	return time.Now()
 }
 
 func (p *Preflight) log() *slog.Logger {

@@ -3,6 +3,7 @@
 package runctl
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -40,8 +41,11 @@ func probeSuffix() string {
 //     runs are refused (D6), and checked again at the normal interval;
 //   - a positive control failing (the proxy or the broker still starting right after install) holds
 //     new runs Pending (Waiting) and is retried soon: no run starts unconfined either way;
-//   - a probe pod that does not start in ProbeStart (no sandbox runtime on the nodes, an image it cannot
-//     pull) is Failed, retried soon.
+//   - a probe pod that does not start is Failed with sandbox set, retried soon: within ProbeStart
+//     when nothing shows progress (no sandbox runtime on the nodes, an image it cannot pull, a
+//     scale-up the autoscaler declined), within ProbeScaleUp while something does (a scale-up
+//     triggered for it, from a sandbox pool at zero; a node bound and starting it). A node's startup
+//     taints (not-ready, uninitialized) are not tolerated: they clear, and the probe waits for them.
 func (p *Preflight) network(ctx context.Context) (verdict, error) {
 	if err := p.deleteProbes(ctx); err != nil {
 		return verdict{}, err
@@ -67,14 +71,18 @@ func (p *Preflight) network(ctx context.Context) (verdict, error) {
 		}
 		return verdict{}, fmt.Errorf("create the probe pod's NetworkPolicy: %w", err)
 	}
-	start, poll := p.ProbeStart, p.ProbePoll
+	start, scaleUp, poll := p.ProbeStart, p.ProbeScaleUp, p.ProbePoll
 	if start <= 0 {
 		start = 2 * time.Minute
 	}
+	if scaleUp <= 0 {
+		scaleUp = 10 * time.Minute
+	}
+	scaleUp = max(scaleUp, start)
 	if poll <= 0 {
 		poll = 2 * time.Second
 	}
-	began := time.Now()
+	began := p.now()
 	for {
 		var got corev1.Pod
 		if err := p.Client.Get(ctx, client.ObjectKeyFromObject(pod), &got); err != nil {
@@ -86,9 +94,15 @@ func (p *Preflight) network(ctx context.Context) (verdict, error) {
 		case corev1.PodFailed:
 			return probeFailed(&got), nil
 		case corev1.PodPending, "":
-			if time.Since(began) > start {
-				return verdict{refusal: fmt.Sprintf("the probe pod did not start under RuntimeClass %q: %s",
-					p.Cfg.RuntimeClassName, p.lastEvent(ctx, got.Name)), soon: true}, nil
+			if waited := p.now().Sub(began); waited > start {
+				ev := p.probeEvents(ctx, &got)
+				if bound := start; !ev.progressing || waited > scaleUp {
+					if ev.progressing {
+						bound = scaleUp
+					}
+					return verdict{refusal: fmt.Sprintf("the probe pod did not start under RuntimeClass %q within %s: %s",
+						p.Cfg.RuntimeClassName, bound, ev.last), soon: true, sandbox: true}, nil
+				}
 			}
 		}
 		// Running: netprobe ends itself; activeDeadlineSeconds ends it at worst, as Failed.
@@ -102,15 +116,14 @@ func (p *Preflight) network(ctx context.Context) (verdict, error) {
 	}
 }
 
-// probeFailed reads netprobe's termination message.
+// probeFailed reads netprobe's termination message. A pod that failed with none never ran netprobe
+// to its end (activeDeadlineSeconds on a node that could not start it, an eviction): sandbox.
 func probeFailed(pod *corev1.Pod) verdict {
-	msg := pod.Status.Reason
 	for _, cs := range pod.Status.ContainerStatuses {
 		if t := cs.State.Terminated; t != nil && t.Message != "" {
 			var r probeResult
 			if err := json.Unmarshal([]byte(t.Message), &r); err != nil {
-				msg = strings.TrimSpace(t.Message)
-				break
+				return verdict{refusal: "the probe pod failed: " + strings.TrimSpace(t.Message), soon: true}
 			}
 			if r.Kind == "unreachable" {
 				return verdict{refusal: r.Message, soon: true, waits: true}
@@ -118,10 +131,7 @@ func probeFailed(pod *corev1.Pod) verdict {
 			return verdict{refusal: r.Message}
 		}
 	}
-	if msg == "" {
-		msg = "no termination message"
-	}
-	return verdict{refusal: "the probe pod failed: " + msg, soon: true}
+	return verdict{refusal: "the probe pod failed: " + cmp.Or(pod.Status.Reason, "no termination message"), soon: true, sandbox: true}
 }
 
 // deleteProbes deletes every probe pod left over (by an earlier tick or process).
@@ -140,27 +150,53 @@ func (p *Preflight) deleteProbes(ctx context.Context) error {
 	return nil
 }
 
-// lastEvent is the latest event about the pod, "reason: message", for the refusal.
-func (p *Preflight) lastEvent(ctx context.Context, name string) string {
+// probeStart is what the probe pod's events say of its start: last is the latest, "reason:
+// message", for the refusal; progressing is that the pod is on its way, so a longer wait is worth it.
+type probeStart struct {
+	last        string
+	progressing bool
+}
+
+// The cluster autoscaler's events about a pending pod: it added a node for it, or it will not.
+const (
+	eventTriggeredScaleUp  = "TriggeredScaleUp"
+	eventNotTriggerScaleUp = "NotTriggerScaleUp"
+)
+
+// probeEvents reads the probe pod's events. It is progressing when the autoscaler's latest word on it
+// is TriggeredScaleUp (the node is coming: the scheduler's FailedScheduling meanwhile, against no
+// node or one still tainted not-ready, is expected), or when it is bound to a node whose latest event
+// is no warning (pulling the image, creating the sandbox). A later NotTriggerScaleUp (no node group
+// fits, or none may grow) or a warning on the bound node (FailedCreatePodSandBox: no runtime for
+// the class) is no progress.
+func (p *Preflight) probeEvents(ctx context.Context, pod *corev1.Pod) probeStart {
 	var evs corev1.EventList
 	if err := p.Client.List(ctx, &evs, client.InNamespace(p.Cfg.Namespace)); err != nil {
-		return "its events are unreadable: " + err.Error()
+		return probeStart{last: "its events are unreadable: " + err.Error()}
 	}
-	var last *corev1.Event
 	at := func(e *corev1.Event) time.Time {
 		if !e.EventTime.IsZero() {
 			return e.EventTime.Time
 		}
 		return e.LastTimestamp.Time
 	}
+	var last, scale *corev1.Event
 	for i := range evs.Items {
 		e := &evs.Items[i]
-		if e.InvolvedObject.Kind == "Pod" && e.InvolvedObject.Name == name && (last == nil || !at(e).Before(at(last))) {
+		if e.InvolvedObject.Kind != "Pod" || e.InvolvedObject.Name != pod.Name {
+			continue
+		}
+		if last == nil || !at(e).Before(at(last)) {
 			last = e
+		}
+		if (e.Reason == eventTriggeredScaleUp || e.Reason == eventNotTriggerScaleUp) && (scale == nil || !at(e).Before(at(scale))) {
+			scale = e
 		}
 	}
 	if last == nil {
-		return "no event"
+		return probeStart{last: "no event"}
 	}
-	return last.Reason + ": " + last.Message
+	scaling := scale != nil && scale.Reason == eventTriggeredScaleUp
+	starting := pod.Spec.NodeName != "" && last.Type != corev1.EventTypeWarning
+	return probeStart{last: last.Reason + ": " + last.Message, progressing: scaling || starting}
 }

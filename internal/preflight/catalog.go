@@ -80,7 +80,7 @@ var Catalog = []Check{
 	{ID: "secrets", Seams: []Seam{SeamSecrets}, RunsIn: []Where{InPod}, Fail: []string{"secret_missing", "secret_key_missing"},
 		What: "each Secret of the registry the values enable exists, with its documented keys", From: "D14"},
 	{ID: "run-path", Seams: []Seam{SeamNetwork, SeamSandbox}, RunsIn: []Where{InRunController},
-		Fail: []string{"run_path_runtimeclass", "run_path_git_secrets", "run_path_network", "run_path_gateway"},
+		Fail: []string{"run_path_runtimeclass", "run_path_git_secrets", "run_path_network", "run_path_sandbox", "run_path_gateway"},
 		Warn: []string{"network_policy_none"}, What: "the run-controller's preflight: RuntimeClass, git Secrets, the CNI probe, the gateway",
 		From: "D6, D18"},
 	{ID: "database", Seams: []Seam{SeamPostgres}, RunsIn: []Where{InBroker},
