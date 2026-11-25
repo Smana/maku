@@ -150,6 +150,7 @@ const makuUsage = `usage: maku <command>
                                   factory, which scores it (docs/drills.md); a missing hook exits 2
   mcp [--advanced]                Maku's six tools on stdio, for a local coding agent (maku setup registers it);
                                   --advanced also lists the rare tools
+  completion <bash|zsh|fish>      print a shell completion script: source <(maku completion bash)
   setup <claude|opencode|codex|gemini|cursor|copilot> [--advanced] [--project] [--print] [--restart-service]
                                   configure, sign in, register maku mcp as maku, install maku-handoff and /maku,
                                   and run doctor --client, skipping what is already done; --print writes nothing
@@ -291,6 +292,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.drill(ctx, args)
 	case "repo":
 		return r.repo(ctx, args)
+	case "completion":
+		return r.completion(args)
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
