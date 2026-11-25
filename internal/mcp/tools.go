@@ -219,20 +219,26 @@ func RoomTools(log Log, red Redactor, now func() time.Time) []Tool {
 				return appendAs(ctx, c, envelope.Handoff, p)
 			}},
 		{Name: "room_verdict", Roles: []string{"reviewer"}, Action: policy.Chat,
-			Description: "Record your review: approve or changes, a summary, and the commit you reviewed as its full 40-hex sha (git rev-parse HEAD, never an abbreviation). A verdict is not a merge.",
-			InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["verdict","summary","commit"],"properties":{"verdict":{"type":"string","enum":["approve","changes"]},"summary":{"type":"string","minLength":1,"maxLength":8192},"commit":{"type":"string","pattern":"^[0-9a-f]{40}$"}}}`),
+			Description: "Record your review: approve or changes, an optional summary (empty is complete on approve; required on changes), and the commit you reviewed as its full 40-hex sha (git rev-parse HEAD, never an abbreviation). A verdict is not a merge.",
+			InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["verdict","commit"],"properties":{"verdict":{"type":"string","enum":["approve","changes"]},"summary":{"type":"string","maxLength":8192},"commit":{"type":"string","pattern":"^[0-9a-f]{40}$"}}}`),
 			Call: func(ctx context.Context, c Caller, args json.RawMessage) (any, error) {
 				var a struct {
 					Verdict string `json:"verdict"`
 					Summary string `json:"summary"`
 					Commit  string `json:"commit"`
 				}
-				if mcpwire.DecodeArgs(args, &a) != nil || (a.Verdict != "approve" && a.Verdict != "changes") ||
-					!text(a.Summary, maxSummary) || !commitRE.MatchString(a.Commit) {
-					return nil, argError("verdict is approve or changes; summary 1 to 8192 bytes; commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
+				if mcpwire.DecodeArgs(args, &a) != nil || (a.Verdict != "approve" && a.Verdict != "changes") || !commitRE.MatchString(a.Commit) {
+					return nil, argError("verdict is approve or changes; summary at most 8192 bytes (required on changes); commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
+				}
+				if a.Verdict == "changes" {
+					if !text(a.Summary, maxSummary) {
+						return nil, argError("verdict is approve or changes; changes requires a summary of 1 to 8192 bytes; commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
+					}
+				} else if a.Summary != "" && !optionalText(a.Summary, maxSummary) {
+					return nil, argError("verdict is approve or changes; summary at most 8192 bytes with no control characters; commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
 				}
 				return appendAs(ctx, c, envelope.Message, envelope.MessagePayload{Kind: envelope.KindReviewVerdict,
-					Text: a.Summary, Verdict: a.Verdict, Commit: a.Commit, Delivery: envelope.DeliveryNone,
+					Text: strings.TrimSpace(a.Summary), Verdict: a.Verdict, Commit: a.Commit, Delivery: envelope.DeliveryNone,
 					PullRequest: pullRequestOf(prs, c.Run)})
 			}},
 	}
@@ -288,7 +294,14 @@ func pullRequestOf(prs *prpattern.Cache, r runwatch.Run) string {
 // character but tab, newline and carriage return: an escape sequence in a
 // terminal, or a NUL PostgreSQL refuses, is not room text.
 func text(s string, limit int) bool {
-	if strings.TrimSpace(s) == "" || len(s) > limit {
+	if strings.TrimSpace(s) == "" {
+		return false
+	}
+	return optionalText(s, limit)
+}
+
+func optionalText(s string, limit int) bool {
+	if len(s) > limit {
 		return false
 	}
 	for _, r := range s {

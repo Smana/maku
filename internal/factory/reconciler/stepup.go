@@ -205,9 +205,11 @@ func (r *Reconciler) stepUpBy(ctx context.Context, cfg *config.Config, t *v1alph
 		markHandled(t, handledID)
 	}
 	r.leaveSplit(ctx, t, SplitDeclined)
-	if t.Status.Reason == ReasonNeedsAuthor && t.Status.Scope != nil {
+	if t.Status.Reason == ReasonNeedsAuthor {
 		r.leaveBounce(ctx, t, "retry")
-		t.Status.Scope.State = "assumed"
+		if t.Status.Scope != nil {
+			t.Status.Scope.State = "assumed"
+		}
 	}
 	t.Status.Retries++
 	t.Status.RetriedBy = v1alpha1.Person(by)
