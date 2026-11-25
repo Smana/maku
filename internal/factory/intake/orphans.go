@@ -28,7 +28,7 @@ var agentBranch = regexp.MustCompile(`^agent/([a-z2-7]{8})$`)
 // orphaned is the one narration an orphaned pull request gets (R51). Its key is the lost task's
 // name, so the marker dedups any later scan of the same pull request.
 func orphaned(name string) narrate.Event {
-	return narrate.Event{Key: name, Body: fmt.Sprintf(
+	return narrate.Event{Key: name, Class: narrate.ClassNeedsYou, Body: fmt.Sprintf(
 		"The agent factory task `%s` this pull request was opened for was lost in a cluster rebuild. "+
 			"It is human-only now: re-label its issue `factory/ready` to start the work again.", name)}
 }

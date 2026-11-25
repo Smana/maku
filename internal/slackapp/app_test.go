@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
@@ -2314,4 +2315,240 @@ func TestTheThreadSaysAStepUpOnce(t *testing.T) {
 	if strings.Contains(posts[0].text, "<@") || !strings.Contains(posts[0].text, "from standard to careful") || !strings.Contains(posts[0].text, "$13.60") {
 		t.Fatalf("post = %q", posts[0].text)
 	}
+}
+
+// Task G6: every needs_you message mentions the one person who can act, states the recommended
+// action (button, reply, command, or room link), and names what happens if nothing is done.
+func TestANeedsYouMessageNamesTheDefault(t *testing.T) {
+	cases := []struct {
+		name        string
+		ch          Channel
+		sum         *summary.Summary
+		body        string
+		wantMention string
+		notMention  string
+		wantAction  string
+		wantDefault string
+	}{
+		{
+			name: "scoper question mentions author and names 24h stop",
+			ch:   Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2},
+			sum: func() *summary.Summary {
+				var s summary.Summary
+				s.Room = "aaaaaaaa"
+				s.Status.Phase = "Escalated"
+				s.Status.ReasonCode = "needs_author"
+				s.Status.Question = "Which check proves it?"
+				return &s
+			}(),
+			body:        `{"type":"room.waiting_for_human","room":"aaaaaaaa","reason":"needs_author"}`,
+			wantMention: "<@U01REQ>",
+			notMention:  "<@U02DEF>",
+			wantAction:  "Reply to answer.",
+			wantDefault: "If nothing is done, it stops in 24 hours.",
+		},
+		{
+			name: "merge hold mentions filer and says it stays parked",
+			ch:   Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2},
+			sum: func() *summary.Summary {
+				var s summary.Summary
+				s.Room = "aaaaaaaa"
+				s.Status.Phase = "AwaitingHuman"
+				s.Status.ReasonCode = "shadow_would_arm"
+				s.Status.PR = &envelope.PRFact{Number: 418}
+				s.Status.Policy = &summary.PolicyView{PolicyFact: envelope.PolicyFact{Name: "docs", Mode: envelope.PolicyShadow}}
+				return &s
+			}(),
+			body:        `{"type":"room.waiting_for_human","room":"aaaaaaaa","reason":"shadow_would_arm"}`,
+			wantMention: "<@U02DEF>",
+			notMention:  "<@U01REQ>",
+			wantAction:  "answer it on the room page",
+			wantDefault: "If nothing is done, it stays parked.",
+		},
+		{
+			name:        "non-card approval mentions filer and names deadline default",
+			ch:          Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2},
+			body:        `{"type":"room.waiting_for_human","room":"aaaaaaaa","reason":"approval"}`,
+			wantMention: "<@U02DEF>",
+			notMention:  "<@U01REQ>",
+			wantAction:  "answer it on the room page",
+			wantDefault: "If nothing is done, it stays parked until the deadline.",
+		},
+		{
+			name:        "escalated end without retry button names command and 24h stop",
+			ch:          Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2},
+			body:        `{"type":"room.ended","room":"aaaaaaaa","state":"failed","reason":"budget-task"}`,
+			wantMention: "<@U02DEF>",
+			notMention:  "<@U01REQ>",
+			wantAction:  "/factory retry",
+			wantDefault: "If nothing is done, it stops in 24 hours.",
+		},
+		{
+			name:        "escalated end with retry button names 24h stop",
+			ch:          Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2, IntentActions: []string{"retry"}},
+			body:        `{"type":"room.ended","room":"aaaaaaaa","state":"failed","reason":"stalled"}`,
+			wantMention: "<@U02DEF>",
+			notMention:  "<@U01REQ>",
+			wantAction:  "Ended: escalated",
+			wantDefault: "If nothing is done, it stops in 24 hours.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newAppRig(t, tc.ch)
+			rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001", Author: "U01REQ", Filer: "U02DEF"})
+			if tc.sum != nil {
+				rig.broker.summary = tc.sum
+			}
+			rig.webhook(tc.body)
+			posts := rig.posts()
+			if len(posts) != 1 {
+				t.Fatalf("posts = %+v, want 1", posts)
+			}
+			got := posts[0].text
+			if !strings.HasPrefix(got, tc.wantMention+" ") {
+				t.Errorf("text = %q, want prefix %q", got, tc.wantMention+" ")
+			}
+			if strings.Contains(got, tc.notMention) {
+				t.Errorf("text mentioned wrong actor %q: %q", tc.notMention, got)
+			}
+			if !strings.Contains(got, tc.wantAction) {
+				t.Errorf("text lacks action %q: %q", tc.wantAction, got)
+			}
+			if !strings.Contains(got, tc.wantDefault) {
+				t.Errorf("text lacks default %q: %q", tc.wantDefault, got)
+			}
+		})
+	}
+}
+
+// Task G6: every changed notification is one line in the thread and mentions nobody.
+func TestAChangedLineMentionsNobody(t *testing.T) {
+	ch := Channel{
+		Repositories: []string{"Smana/ai-native-ref"},
+		MaxCostUSD:   2,
+		Notify: []string{
+			"room.task_triaged",
+			"room.run_started",
+			"room.pr_opened",
+			"room.stepped_up",
+			"room.verdict_posted",
+			"room.budget_reached",
+			"room.approval_closed",
+		},
+	}
+	rig := newAppRig(t, ch)
+	rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001", Author: "U01REQ", Filer: "U02DEF"})
+
+	events := []struct {
+		typ  string
+		body string
+	}{
+		{"room.task_triaged", `{"type":"room.task_triaged","room":"aaaaaaaa"}`},
+		{"room.run_started", `{"type":"room.run_started","room":"aaaaaaaa"}`},
+		{"room.pr_opened", `{"type":"room.pr_opened","room":"aaaaaaaa","pr":12}`},
+		{"room.stepped_up", `{"type":"room.stepped_up","room":"aaaaaaaa","from":"standard","to":"careful","reason":"stalled","ceilingMicroUSD":13600000}`},
+		{"room.verdict_posted", `{"type":"room.verdict_posted","room":"aaaaaaaa","pr":12}`},
+		{"room.budget_reached", `{"type":"room.budget_reached","room":"aaaaaaaa","limit":"task"}`},
+		{"room.approval_closed", `{"type":"room.approval_closed","room":"aaaaaaaa","decision":"approved"}`},
+	}
+
+	for _, ev := range events {
+		if got := notificationClass(webhook.Event{Type: ev.typ}); got != narrate.ClassChanged {
+			t.Errorf("notificationClass(%s) = %q, want %q", ev.typ, got, narrate.ClassChanged)
+		}
+		rig.webhook(ev.body)
+	}
+
+	posts := rig.posts()
+	if len(posts) != len(events) {
+		t.Fatalf("got %d posts, want %d: %+v", len(posts), len(events), posts)
+	}
+	for i, p := range posts {
+		for _, forbidden := range []string{"<@", "@", "U01REQ", "U02DEF", "\n"} {
+			if strings.Contains(p.text, forbidden) {
+				t.Errorf("%s line contained %q: %q", events[i].typ, forbidden, p.text)
+			}
+		}
+	}
+}
+
+// Task G6: a done notification mentions the filer once across room.ended, room.merged, and
+// room.reverted updates, whichever arrives first.
+func TestDoneMentionsOnce(t *testing.T) {
+	countMentions := func(rig *appRig) int {
+		n := 0
+		for _, p := range rig.posts() {
+			n += strings.Count(p.text, "<@")
+		}
+		for _, u := range rig.slack.updatesMade() {
+			n += strings.Count(u.text, "<@")
+		}
+		return n
+	}
+
+	t.Run("ended then merged then reverted mentions once", func(t *testing.T) {
+		ch := Channel{
+			Repositories: []string{"Smana/ai-native-ref"},
+			MaxCostUSD:   2,
+			Notify:       []string{"room.ended", "room.reverted"},
+		}
+		rig := newAppRig(t, ch)
+		rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001", Author: "U01REQ", Filer: "U02DEF"})
+
+		rig.webhook(`{"type":"room.ended","room":"aaaaaaaa","state":"done"}`)
+		rig.webhook(`{"type":"room.merged","room":"aaaaaaaa","pr":418}`)
+		rig.webhook(`{"type":"room.merged","room":"aaaaaaaa","pr":418}`)
+		rig.webhook(`{"type":"room.reverted","room":"aaaaaaaa","pr":418}`)
+
+		if got := countMentions(rig); got != 1 {
+			t.Fatalf("total mentions = %d, want 1; posts=%+v updates=%+v", got, rig.posts(), rig.slack.updatesMade())
+		}
+		if !strings.HasPrefix(rig.posts()[0].text, "<@U02DEF> ") {
+			t.Fatalf("first done post = %q, want <@U02DEF> prefix", rig.posts()[0].text)
+		}
+		th, ok := rig.threads.get("aaaaaaaa")
+		if !ok || !th.DoneMentioned {
+			t.Fatalf("thread = %+v (ok=%v), want DoneMentioned=true", th, ok)
+		}
+	})
+
+	t.Run("merged arriving before ended mentions once", func(t *testing.T) {
+		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001", Author: "U01REQ", Filer: "U02DEF"})
+
+		rig.webhook(`{"type":"room.merged","room":"aaaaaaaa","pr":418}`)
+		rig.webhook(`{"type":"room.ended","room":"aaaaaaaa","state":"done"}`)
+
+		if got := countMentions(rig); got != 1 {
+			t.Fatalf("total mentions = %d, want 1; posts=%+v updates=%+v", got, rig.posts(), rig.slack.updatesMade())
+		}
+		if !strings.HasPrefix(rig.posts()[0].text, "<@U02DEF> Merged #418") {
+			t.Fatalf("first merged post = %q, want <@U02DEF> Merged #418", rig.posts()[0].text)
+		}
+	})
+
+	t.Run("escalated needs_you does not consume the done mention", func(t *testing.T) {
+		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001", Author: "U01REQ", Filer: "U02DEF"})
+
+		rig.webhook(`{"type":"room.ended","room":"aaaaaaaa","state":"failed","reason":"stalled"}`)
+		th, _ := rig.threads.get("aaaaaaaa")
+		if th.DoneMentioned {
+			t.Fatalf("escalated room.ended set DoneMentioned=true")
+		}
+
+		rig.webhook(`{"type":"room.merged","room":"aaaaaaaa","pr":418}`)
+		rig.webhook(`{"type":"room.ended","room":"aaaaaaaa","state":"done"}`)
+
+		th, _ = rig.threads.get("aaaaaaaa")
+		if !th.DoneMentioned {
+			t.Fatalf("done sequence did not set DoneMentioned=true")
+		}
+		// 1 mention for escalated (needs_you) + 1 mention for merged (done), 0 for trailing ended.
+		if got := countMentions(rig); got != 2 {
+			t.Fatalf("total mentions = %d, want 2 (1 needs_you + 1 done); posts=%+v updates=%+v", got, rig.posts(), rig.slack.updatesMade())
+		}
+	})
 }

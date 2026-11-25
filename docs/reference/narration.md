@@ -3,9 +3,22 @@
 
 ## Contents
 
+- [Notification classes](#notification-classes)
 - [Event comments, status comment and outbox](#event-comments-status-comment-and-outbox)
 - [Workflow pin refusals](#workflow-pin-refusals)
 - [When the factory waits for you](#when-the-factory-waits-for-you)
+
+## Notification classes
+
+Every narration event carries a `Class` (`needs_you`, `changed`, or `done`) that governs whether and how it mentions a person:
+
+| Class | Mention | Shape |
+|---|---|---|
+| `needs_you` | Yes, the one person who can act | What is asked, one recommended action (a button, reply, or command), and what happens if nothing is done (for example, "it stays parked" or "it stops in 24 hours") |
+| `changed` | No | A state transition with no mention (run start, workflow card, step-up, pull request opened, CI fix, resume, monitor verdict) |
+| `done` | Yes, once | The terminal end line (`Done`, `NoOp`, `Rejected`, `Closed`, `Stopped`, `Reverted`, or merged) |
+
+Escalated endings (`PhaseEscalated`, including `needs_author` and `split_proposed`) carry `needs_you` rather than `done`, because the task waits for a person to act before its escalation expires.
 
 ## Event comments, status comment and outbox
 

@@ -28,12 +28,36 @@ type Thread struct {
 	Channel string    `json:"channel"`
 	TS      string    `json:"ts"`
 	At      time.Time `json:"at"`
+	// Author is the Slack user id of the requester; Filer is the Slack user id of the maintainer
+	// who confirmed/filed the task (G6). Both are validated against userRE before any mention.
+	Author string `json:"author,omitempty"`
+	Filer  string `json:"filer,omitempty"`
 	// EndTS is the ts of the thread's one end line (UX7): posted on room.ended (or room.merged when it
 	// arrives first) and rewritten in place on a later merge or revert.
 	EndTS string `json:"endTS,omitempty"`
+	// DoneMentioned records that the thread's done notification has already mentioned once (G6),
+	// so later end-line updates (room.merged after room.ended, or a revert) do not mention again.
+	DoneMentioned bool `json:"doneMentioned,omitempty"`
 	// Coordination marks a coordination parent's thread (v4): its deliveries are recomputed against
 	// the channel at every event (projectCoordination), never posted as a single room's line.
 	Coordination bool `json:"coordination,omitempty"`
+}
+
+// actorFor returns the one Slack user id who can act on a notification in this thread, or "" when
+// none is recorded or valid. For a question to the issue's author (needs_author), the requester
+// comes first; for maintainer actions and done notifications, the filer comes first.
+func (t Thread) actorFor(reason string) string {
+	first, second := t.Filer, t.Author
+	if reason == "needs_author" {
+		first, second = t.Author, t.Filer
+	}
+	if userRE.MatchString(first) {
+		return first
+	}
+	if userRE.MatchString(second) {
+		return second
+	}
+	return ""
 }
 
 // Threads is the thread map, the ConfigMap factory-slack-threads in production.

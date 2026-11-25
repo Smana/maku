@@ -727,7 +727,7 @@ func TestSlackDecideRefusalsAreAnswered(t *testing.T) {
 const cardRoom = "aaaaaaaa"
 
 // waitLine is today's text for a wait: what every case that is not a card must still read.
-const waitLine = "Needs you (approval): answer it on the room page, https://rooms.example/r/aaaaaaaa. Nothing posted here reaches the run."
+const waitLine = "Needs you (approval): answer it on the room page, https://rooms.example/r/aaaaaaaa. Nothing posted here reaches the run. If nothing is done, it stays parked until the deadline."
 
 // waitBody is one room.waiting_for_human delivery with every field §5 draws a card from; mutate
 // changes or (with a nil value) drops one, so a case tests exactly that field.

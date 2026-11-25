@@ -37,10 +37,35 @@ const MaxNarrated = 512
 // roomPrefix marks a room message's key in status.narrated: room/<clientSeq>/<key>.
 const roomPrefix = "room/"
 
-// Event is one narration: its idempotency key and its markdown body.
+// Class is a narration event's notification class (Task G6):
+//   - ClassNeedsYou: mentions the one person who can act, names one recommended action, and says
+//     what happens if nothing is done.
+//   - ClassChanged: records a state change with no mention.
+//   - ClassDone: closes the task and mentions once.
+type Class string
+
+// The three notification classes a narration event may carry.
+const (
+	ClassNeedsYou Class = "needs_you"
+	ClassChanged  Class = "changed"
+	ClassDone     Class = "done"
+)
+
+// Valid reports whether c is one of the three notification classes.
+func (c Class) Valid() bool {
+	return c == ClassNeedsYou || c == ClassChanged || c == ClassDone
+}
+
+// Mentions reports whether an event of class c mentions a person.
+func (c Class) Mentions() bool {
+	return c == ClassNeedsYou || c == ClassDone
+}
+
+// Event is one narration: its idempotency key, its notification class, and its markdown body.
 type Event struct {
-	Key  string
-	Body string
+	Key   string
+	Class Class
+	Body  string
 }
 
 // commentPoster is the existing posting boundary; other factory intakes also satisfy it.
@@ -214,7 +239,7 @@ func Started(t *v1alpha1.Task, s runs.Spec, roomsURL string) Event {
 		"- Stop: apply the label `factory/stop`",
 		t.Name, persona, s.RunID, s.Branch, budget,
 		strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
-	return Event{Key: "run-" + s.RunID + "-started", Body: body}
+	return Event{Key: "run-" + s.RunID + "-started", Class: ClassChanged, Body: body}
 }
 
 // TaskCard announces the task's workflow, reason, path and ceiling once at triage, before the first
@@ -223,7 +248,7 @@ func Started(t *v1alpha1.Task, s runs.Spec, roomsURL string) Event {
 func TaskCard(t *v1alpha1.Task, cardText string) Event {
 	body := fmt.Sprintf("Maku task `%s`\n\n%s\n\nTo change it, a maintainer applies the label `workflow:<name>` before `factory/ready`.",
 		t.Name, strings.TrimSpace(cardText))
-	return Event{Key: "task-card", Body: body}
+	return Event{Key: "task-card", Class: ClassChanged, Body: body}
 }
 
 // ProposalReady narrates a finished triage on the task's issue: the proposal stays in the room
@@ -233,13 +258,13 @@ func TaskCard(t *v1alpha1.Task, cardText string) Event {
 // With starts, factory/publish also starts the fix (K6): the comment says so, and who pays.
 func ProposalReady(t *v1alpha1.Task, roomsURL string, starts bool) Event {
 	if starts {
-		return Event{Key: "proposal", Body: fmt.Sprintf("Agent factory task `%s`: the triager proposes a change. Read the "+
+		return Event{Key: "proposal", Class: ClassNeedsYou, Body: fmt.Sprintf("Agent factory task `%s`: the triager proposes a change. Read the "+
 			"proposal in the room, %s/r/%s (tailnet only). If it is safe to publish, label this issue `factory/publish`: "+
 			"the factory files the proposal as a new issue and the fix starts at once, charged to you. "+
 			"Nothing else starts from this finding.",
 			t.Name, strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)}
 	}
-	return Event{Key: "proposal", Body: fmt.Sprintf("Agent factory task `%s`: the triager proposes a change. Read the "+
+	return Event{Key: "proposal", Class: ClassNeedsYou, Body: fmt.Sprintf("Agent factory task `%s`: the triager proposes a change. Read the "+
 		"proposal in the room, %s/r/%s (tailnet only). If it is safe to publish, label this issue `factory/publish`: "+
 		"the factory files the proposal as a new issue, which you read before you label it `factory/ready`. "+
 		"Nothing else starts from this finding.",
@@ -249,7 +274,7 @@ func ProposalReady(t *v1alpha1.Task, roomsURL string, starts bool) Event {
 // PublishedStarted answers a factory/publish that filed the proposal and started its fix: the
 // issue, the Task and the class it runs under. Its key is Published's, so a replay posts nothing new.
 func PublishedStarted(issue int, by, task, class string) Event {
-	return Event{Key: fmt.Sprintf("published-%d", issue),
+	return Event{Key: fmt.Sprintf("published-%d", issue), Class: ClassChanged,
 		Body: fmt.Sprintf("Published as #%d by @%s. The fix started at once: agent factory task `%s`, class `%s`, charged to @%s.",
 			issue, by, task, class, by)}
 }
@@ -257,7 +282,7 @@ func PublishedStarted(issue int, by, task, class string) Event {
 // Published answers a factory/publish that filed the proposal, or one whose proposal was already
 // filed: the issue's number, and the next step.
 func Published(_, issue int, by string) Event {
-	return Event{Key: fmt.Sprintf("published-%d", issue),
+	return Event{Key: fmt.Sprintf("published-%d", issue), Class: ClassNeedsYou,
 		Body: fmt.Sprintf("Published as #%d by @%s. Read it, then label it `factory/ready` to start the fix.", issue, by)}
 }
 
@@ -274,14 +299,14 @@ func PublishRefused(n int, reason string, at time.Time) Event {
 	if !ok {
 		why = Reason(reason)
 	}
-	return Event{Key: fmt.Sprintf("publish-refused-%s-%d", reason, at.Unix()),
+	return Event{Key: fmt.Sprintf("publish-refused-%s-%d", reason, at.Unix()), Class: ClassChanged,
 		Body: fmt.Sprintf("The agent factory did not publish #%d's proposal: %s.", n, why)}
 }
 
 // PublishRejected answers a factory/publish on an issue whose task was rejected at admission: no run
 // ran, so there is no proposal, and the rejection's reason is what the maintainer needs.
 func PublishRejected(n int, task, reason string, at time.Time) Event {
-	return Event{Key: fmt.Sprintf("publish-refused-rejected-%s-%d", reason, at.Unix()),
+	return Event{Key: fmt.Sprintf("publish-refused-rejected-%s-%d", reason, at.Unix()), Class: ClassChanged,
 		Body: fmt.Sprintf("The agent factory did not publish #%d's proposal: its task `%s` was not accepted, so no run made one: %s.",
 			n, task, Reason(reason))}
 }
@@ -308,7 +333,7 @@ func NeedsAuthor(t *v1alpha1.Task, question, assumption string, maintainers []st
 	if len(maintainers) > 0 {
 		b.WriteString("\n\n@" + strings.Join(maintainers, " @") + ": this task waits on its author.")
 	}
-	return Event{Key: fmt.Sprintf("needs-author-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("needs-author-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // SplitProposed is the split's one comment on the parent issue (splitter design SL4): the plan, and
@@ -340,7 +365,7 @@ func SplitProposed(t *v1alpha1.Task, why string, parts, maintainers []string, ro
 		}
 	}
 	b.WriteString(tail.String())
-	return Event{Key: fmt.Sprintf("split-proposed-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("split-proposed-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // PlanProposed is the plan gate's comment on the issue (phase F3): the bounded task, expected
@@ -378,7 +403,7 @@ func PlanProposed(t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, room
 		"- `/factory plan revise <comment>` — run the scoper once more with your note\n"+
 		"- `/factory plan split` — approve the proposed split into parts\n\n"+
 		"Room: [the room](%s).", room)
-	return Event{Key: fmt.Sprintf("plan-proposed-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("plan-proposed-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // PlanParked is the one needs-you notification posted when a plan waits past planGateHours.
@@ -400,7 +425,7 @@ func PlanParked(t *v1alpha1.Task, hours int, maintainers []string, roomsURL stri
 	if len(mentions) > 0 {
 		b.WriteString("\n\n" + strings.Join(mentions, " ") + ": this plan needs you.")
 	}
-	return Event{Key: fmt.Sprintf("plan-parked-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("plan-parked-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // PlanRevisionLimit narrates that a second /factory plan revise escalated the task to a maintainer.
@@ -412,12 +437,12 @@ func PlanRevisionLimit(t *v1alpha1.Task, actor string, maintainers []string, roo
 	if len(maintainers) > 0 {
 		b.WriteString("\n\n@" + strings.Join(maintainers, " @") + ": this plan waits on a maintainer.")
 	}
-	return Event{Key: fmt.Sprintf("plan-revision-limit-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("plan-revision-limit-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // Revising says a maintainer's review sent the task back for another run (Δ5), once per round.
 func Revising(t *v1alpha1.Task, reviewer string) Event {
-	return Event{Key: fmt.Sprintf("revise-%d", len(t.Status.Runs)),
+	return Event{Key: fmt.Sprintf("revise-%d", len(t.Status.Runs)), Class: ClassChanged,
 		Body: fmt.Sprintf("Agent factory task `%s` is revising after @%s's review: the next run starts on the same branch, "+
 			"with the review in its brief.", t.Name, reviewer)}
 }
@@ -443,7 +468,7 @@ func Revised(t *v1alpha1.Task, rv Revision, roomsURL string) Event {
 	room := fmt.Sprintf("%s/r/%s (tailnet only)", strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
 	key := fmt.Sprintf("revised-%d", len(t.Status.Runs))
 	if rv.Head == "" || rv.Head == rv.From {
-		return Event{Key: key, Body: fmt.Sprintf("Agent factory task `%s`: the revision ended without a new commit; read the room for why: %s. "+
+		return Event{Key: key, Class: ClassNeedsYou, Body: fmt.Sprintf("Agent factory task `%s`: the revision ended without a new commit; read the room for why: %s. "+
 			"#%d is back with the maintainer as it was.", t.Name, room, rv.PR)}
 	}
 	short := rv.Head[:min(len(rv.Head), 7)]
@@ -466,10 +491,10 @@ func Revised(t *v1alpha1.Task, rv Revision, roomsURL string) Event {
 		fmt.Fprintf(&b, "\n\n**Scope changed:** the revision took %s out of the pull request, which the task names in its `## Files` "+
 			"section or its acceptance check. A maintainer must confirm the scope change before merging, or request changes again.",
 			codeList(rv.Dropped))
-		return Event{Key: key, Body: b.String()}
+		return Event{Key: key, Class: ClassNeedsYou, Body: b.String()}
 	}
 	b.WriteString(" The pull request is ready for the maintainer's re-review.")
-	return Event{Key: key, Body: b.String()}
+	return Event{Key: key, Class: ClassNeedsYou, Body: b.String()}
 }
 
 // codeList renders paths as code spans, comma-separated. A path is a filename an agent chose: a
@@ -501,7 +526,7 @@ func Reminder(t *v1alpha1.Task, maintainers []string, quietSince time.Time, appr
 		body = fmt.Sprintf("%s: the pull request of agent factory task `%s` is approved and has waited 48 hours for a merge. "+
 			"The factory never closes an approved pull request.", strings.Join(at, " "), t.Name)
 	}
-	return Event{Key: fmt.Sprintf("%s%d-%d", remindPrefix, len(t.Status.Runs), quietSince.Unix()), Body: body}
+	return Event{Key: fmt.Sprintf("%s%d-%d", remindPrefix, len(t.Status.Runs), quietSince.Unix()), Class: ClassNeedsYou, Body: body}
 }
 
 // RemindedSince is the latest quiet-spell start a reminder of the task's current stay was keyed
@@ -536,13 +561,13 @@ func Retrying(t *v1alpha1.Task, by, after string) Event {
 		body += " Its review rounds stay spent: the retry buys one more revision and one more review, and a further " +
 			"`changes` verdict, or a review without a verdict, escalates it again."
 	}
-	return Event{Key: fmt.Sprintf("retry-%d", t.Status.Retries), Body: body}
+	return Event{Key: fmt.Sprintf("retry-%d", t.Status.Retries), Class: ClassChanged, Body: body}
 }
 
 // TaskCapHolds answers a /factory retry of a task escalated at its cap (F-4): Queued would only
 // escalate it again, so the retry is not taken. Keyed by the command: each is answered once.
 func TaskCapHolds(t *v1alpha1.Task, command int64) Event {
-	return Event{Key: fmt.Sprintf("retry-refused-%d", command), Body: fmt.Sprintf("Agent factory task `%s` was not retried: %s, "+
+	return Event{Key: fmt.Sprintf("retry-refused-%d", command), Class: ClassNeedsYou, Body: fmt.Sprintf("Agent factory task `%s` was not retried: %s, "+
 		"and the task's cap is part of its spec: raise it on a new task.", t.Name, Reason("budget-task"))}
 }
 
@@ -554,7 +579,7 @@ func Resuming(t *v1alpha1.Task, runID, role string, n, limit int) Event {
 	if role == "reviewer" {
 		body += " The new review run uses no review round."
 	}
-	return Event{Key: fmt.Sprintf("resume-%d", n), Body: body}
+	return Event{Key: fmt.Sprintf("resume-%d", n), Class: ClassChanged, Body: body}
 }
 
 // ModelHeld says the model provider refused run runID and the task waits and runs again on its own, n
@@ -563,7 +588,7 @@ func ModelHeld(t *v1alpha1.Task, runID, reason string, delay time.Duration, n, l
 	body := fmt.Sprintf("Agent factory task `%s`: run `%s` stopped because %s. This is a platform condition, not the agent's error: "+
 		"the task is held and runs again in %s (%d/%d); it escalates after %d refusals in a row.",
 		t.Name, runID, Reason(reason), delay.Round(time.Minute), n, limit, limit)
-	return Event{Key: fmt.Sprintf("model-held-%d", n), Body: body}
+	return Event{Key: fmt.Sprintf("model-held-%d", n), Class: ClassChanged, Body: body}
 }
 
 // safePath is a contract file the narration may name: the tester wrote the trailer, so anything
@@ -587,14 +612,14 @@ func ContractReady(t *v1alpha1.Task, c *v1alpha1.ContractStatus) Event {
 	if len(c.Files) > len(files) {
 		more = fmt.Sprintf(" and %d more", len(c.Files)-len(files))
 	}
-	return Event{Key: "contract", Body: fmt.Sprintf("Agent factory task `%s`. The tester wrote a contract of %d tests: %s%s. "+
+	return Event{Key: "contract", Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s`. The tester wrote a contract of %d tests: %s%s. "+
 		"The implementer works to it, and the pull request may not change it.", t.Name, len(c.IDs), strings.Join(files, ", "), more)}
 }
 
 // NoContract says the tester left none, by its end's category only, and that the implementer
 // works without one (TO3).
 func NoContract(t *v1alpha1.Task, end string) Event {
-	return Event{Key: "contract", Body: fmt.Sprintf("Agent factory task `%s`. The tester left no contract (%s): the implementer works without one.", t.Name, oneWord(end))}
+	return Event{Key: "contract", Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s`. The tester left no contract (%s): the implementer works without one.", t.Name, oneWord(end))}
 }
 
 var oneWordRE = regexp.MustCompile(`^[a-z_]{1,40}$`)
@@ -609,14 +634,14 @@ func oneWord(s string) string {
 
 // PROpened announces the task's pull request.
 func PROpened(t *v1alpha1.Task, number int, url, runID string) Event {
-	return Event{Key: "pr-opened", Body: fmt.Sprintf("Run `%s` of task `%s` opened #%d: %s", runID, t.Name, number, url)}
+	return Event{Key: "pr-opened", Class: ClassChanged, Body: fmt.Sprintf("Run `%s` of task `%s` opened #%d: %s", runID, t.Name, number, url)}
 }
 
 // Armed announces the merge the gate issued on the decision (§5.1), naming the policy the diff
 // matched rather than the task's predicted class.
 func Armed(t *v1alpha1.Task, matched ...string) Event {
 	policy := cmp.Or(append(matched, t.Spec.PredictedClass)[0], t.Spec.PredictedClass)
-	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Body: fmt.Sprintf("Agent factory task `%s`: Merged automatically by policy `%s`, "+
+	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s`: Merged automatically by policy `%s`, "+
 		"at the decided head: GitHub re-checks that head at merge time and refuses a moved one. main's CI is watched after the merge.", t.Name, policy)}
 }
 
@@ -630,7 +655,7 @@ func WouldArm(t *v1alpha1.Task, class, head string, paused, capped bool, progres
 	} else {
 		body += "."
 	}
-	return Event{Key: fmt.Sprintf("would-arm-%d head=%s paused=%t capped=%t", len(t.Status.Runs), head, paused, capped), Body: body}
+	return Event{Key: fmt.Sprintf("would-arm-%d head=%s paused=%t capped=%t", len(t.Status.Runs), head, paused, capped), Class: ClassNeedsYou, Body: body}
 }
 
 // WouldArmAdopted is WouldArm for an adopted pull request (R46): the same key, so the same marker
@@ -662,9 +687,9 @@ func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paus
 func WaitingForHuman(t *v1alpha1.Task, reason string, policyBot ...bool) Event {
 	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, Reason(reason, policyBot...))
 	if pr := t.Status.PullRequest; pr != nil && pr.Number > 0 {
-		body += "\n\nTo merge: " + howAMaintainerMerges(t, reason, pr.Number) + "."
+		body += "\n\nTo merge: " + howAMaintainerMerges(t, reason, pr.Number) + ". Without maintainer activity, it stays parked and closes after 14 days."
 	}
-	return Event{Key: "human-" + reason + "-" + fmt.Sprint(len(t.Status.Runs)), Body: body}
+	return Event{Key: "human-" + reason + "-" + fmt.Sprint(len(t.Status.Runs)), Class: ClassNeedsYou, Body: body}
 }
 
 // howAMaintainerMerges is how a by-hand hand-off's pull request is merged, in the room's own words.
@@ -691,9 +716,9 @@ func WaitingForApproval(t *v1alpha1.Task, reason string) Event {
 	}
 	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, why)
 	if pr := t.Status.PullRequest; pr != nil && pr.Number > 0 {
-		body += "\n\nTo merge: approve this pull request (a GitHub review by a maintainer). The merger merges the approved head within a minute, or says why not."
+		body += "\n\nTo merge: approve this pull request (a GitHub review by a maintainer). The merger merges the approved head within a minute, or says why not. Without maintainer activity, it stays parked and closes after 14 days."
 	}
-	return Event{Key: "human-" + reason + "-" + fmt.Sprint(len(t.Status.Runs)), Body: body}
+	return Event{Key: "human-" + reason + "-" + fmt.Sprint(len(t.Status.Runs)), Class: ClassNeedsYou, Body: body}
 }
 
 // ArmedByApproval is Armed for a merge a maintainer's approval decided (AM1).
@@ -702,7 +727,7 @@ func ArmedByApproval(t *v1alpha1.Task, login string, policyBot ...bool) Event {
 	if len(policyBot) > 0 && policyBot[0] {
 		checked += ", policy-bot passed"
 	}
-	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Body: fmt.Sprintf("Agent factory task `%s`: %s and @%s approved this head, so it is merged now, at the approved head: GitHub re-checks that head at merge time and refuses "+
+	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s`: %s and @%s approved this head, so it is merged now, at the approved head: GitHub re-checks that head at merge time and refuses "+
 		"a moved one. It counts as a human merge: no automatic revert, the monitor watches it.", t.Name, checked, login)}
 }
 
@@ -729,7 +754,7 @@ func ApprovalShown(t *v1alpha1.Task, review int64, login, commit, stale string) 
 	if n > 0 && stale == "" {
 		body += "\n\nTo merge: " + howAMaintainerMerges(t, t.Status.Reason, n) + "."
 	}
-	return Event{Key: key, Body: body}
+	return Event{Key: key, Class: ClassNeedsYou, Body: body}
 }
 
 // ChecksNeverReported says the wait in AwaitingCI outlasted merge.awaitingCIFor (#182), naming
@@ -741,14 +766,14 @@ func ChecksNeverReported(t *v1alpha1.Task, waited time.Duration, missing []strin
 		head = pr.HeadSHA
 	}
 	waited = waited.Round(time.Minute)
-	return Event{Key: "ci-wait-expired-" + head, Body: fmt.Sprintf("Agent factory task `%s` waited %s for checks that had not reported as completed: %s. "+
+	return Event{Key: "ci-wait-expired-" + head, Class: ClassNeedsYou, Body: fmt.Sprintf("Agent factory task `%s` waited %s for checks that had not reported as completed: %s. "+
 		"Nothing was merged; a maintainer decides.", t.Name, waited, strings.Join(missing, ", "))}
 }
 
 // BackToGate says a transient hand-off returned to the merge gate (N1), and why. n is the task's
 // count of returns, so each one is posted once.
 func BackToGate(t *v1alpha1.Task, reason string, n int32, policyBot ...bool) Event {
-	return Event{Key: fmt.Sprintf("gate-%s-%d", reason, n),
+	return Event{Key: fmt.Sprintf("gate-%s-%d", reason, n), Class: ClassChanged,
 		Body: fmt.Sprintf("Agent factory task `%s` goes back to the merge gate: %s.", t.Name, Reason(reason, policyBot...))}
 }
 
@@ -757,7 +782,11 @@ func BackToGate(t *v1alpha1.Task, reason string, n int32, policyBot ...bool) Eve
 // the task's run count and retries, so a hold that changes shape — the other run ends and a
 // person keeps the driver — is said once, and the next wait for a run says it again.
 func Held(t *v1alpha1.Task, reason, roomsURL string) Event {
-	return Event{Key: fmt.Sprintf("hold-%d-%d", len(t.Status.Runs), t.Status.Retries),
+	class := ClassChanged
+	if reason == "waiting_human_driver" {
+		class = ClassNeedsYou
+	}
+	return Event{Key: fmt.Sprintf("hold-%d-%d", len(t.Status.Runs), t.Status.Retries), Class: class,
 		Body: fmt.Sprintf("Agent factory task `%s` waits: %s. Its next run starts once the room is free: %s/r/%s (tailnet only).",
 			t.Name, Reason(reason), strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)}
 }
@@ -766,14 +795,14 @@ func Held(t *v1alpha1.Task, reason, roomsURL string) Event {
 // conclusion ("name: state"). Once per fix run, as Revising is once per round: the key counts
 // every repair of the task, n the allowance, which an escalation step renews (R33).
 func CIFixing(t *v1alpha1.Task, pr int, head string, checks []string, n, limit int) Event {
-	return Event{Key: fmt.Sprintf("ci-fixing-%d", t.Status.FixRuns),
+	return Event{Key: fmt.Sprintf("ci-fixing-%d", t.Status.FixRuns), Class: ClassChanged,
 		Body: fmt.Sprintf("Agent factory task `%s`: CI is red on #%d at `%s` (%s); a run starts to fix it (%d/%d).",
 			t.Name, pr, head, strings.Join(checks, ", "), n, limit)}
 }
 
 // CIExhausted says the CI fix runs are spent and the named checks are still failing (§6.3).
 func CIExhausted(t *v1alpha1.Task, names []string) Event {
-	return Event{Key: fmt.Sprintf("ci-exhausted-%d", t.Status.FixRuns),
+	return Event{Key: fmt.Sprintf("ci-exhausted-%d", t.Status.FixRuns), Class: ClassNeedsYou,
 		Body: fmt.Sprintf("Agent factory task `%s` used its %d CI fix runs; still failing: %s.", t.Name, t.Status.FixRuns, strings.Join(names, ", "))}
 }
 
@@ -781,11 +810,11 @@ func CIExhausted(t *v1alpha1.Task, names []string) Event {
 // says the breaker does not count it (AM6).
 func RevertOpened(t *v1alpha1.Task, number int, why string, drill bool) Event {
 	if drill { // AM6: the breaker does not count a drill, so the class is not sent back to human review
-		return Event{Key: "revert", Body: fmt.Sprintf("Agent factory task `%s` opened #%d to revert this pull request: %s. "+
+		return Event{Key: "revert", Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s` opened #%d to revert this pull request: %s. "+
 			"The pull request carries `factory/drill`, so the revert is a drill: the class's breaker does not count it (AM6).",
 			t.Name, number, Reason(why))}
 	}
-	return Event{Key: "revert", Body: fmt.Sprintf("Agent factory task `%s` opened #%d to revert this pull request: %s. "+
+	return Event{Key: "revert", Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s` opened #%d to revert this pull request: %s. "+
 		"Auto-merge of the class `%s` goes back to human review until its recent merges pass without a revert (R41).",
 		t.Name, number, Reason(why), t.Spec.PredictedClass)}
 }
@@ -793,14 +822,14 @@ func RevertOpened(t *v1alpha1.Task, number int, why string, drill bool) Event {
 // ClassDrill goes to the control issue in ClassDemoted's place for a drill revert: the breaker does
 // not count it (AM6).
 func ClassDrill(t *v1alpha1.Task) Event {
-	return Event{Key: "drill-" + t.Name, Body: fmt.Sprintf("Agent factory: an auto-merge of `%s` was reverted as a drill "+
+	return Event{Key: "drill-" + t.Name, Class: ClassChanged, Body: fmt.Sprintf("Agent factory: an auto-merge of `%s` was reverted as a drill "+
 		"(task `%s`, #%d). The pull request carries `factory/drill`, so the class's breaker does not count the revert (AM6).",
 		t.Spec.PredictedClass, t.Name, t.Status.PullRequest.Number)}
 }
 
 // ClassDemoted goes to the control issue (Task 8.1a): a revert counts toward its class's breaker (R41).
 func ClassDemoted(t *v1alpha1.Task, window, maxReverts int) Event {
-	return Event{Key: "demoted-" + t.Name, Body: fmt.Sprintf("Agent factory: an auto-merge of `%s` was reverted "+
+	return Event{Key: "demoted-" + t.Name, Class: ClassChanged, Body: fmt.Sprintf("Agent factory: an auto-merge of `%s` was reverted "+
 		"(task `%s`, #%d). It counts toward the class's breaker: `%s` goes to human review while %d or more of its "+
 		"last %d merges are reverts, and maintainers' merges of the class count toward that window (R41).",
 		t.Spec.PredictedClass, t.Name, t.Status.PullRequest.Number, t.Spec.PredictedClass, maxReverts, window)}
@@ -809,7 +838,7 @@ func ClassDemoted(t *v1alpha1.Task, window, maxReverts int) Event {
 // RevertStalled announces the disarm of a revert that did not go green. Its key starts with
 // revert-end-, which ends the reconciler's revert watch.
 func RevertStalled(t *v1alpha1.Task, number int) Event {
-	return Event{Key: "revert-end-stalled", Body: fmt.Sprintf("The revert #%d of agent factory task `%s` did not go green "+
+	return Event{Key: "revert-end-stalled", Class: ClassNeedsYou, Body: fmt.Sprintf("The revert #%d of agent factory task `%s` did not go green "+
 		"in time, so its auto-merge is off: a maintainer merges or closes it.", number, t.Name)}
 }
 
@@ -828,7 +857,7 @@ func MonitorVerdict(t *v1alpha1.Task, n int, verdict string, why []string, contr
 			body += "\n\nbreaker.maxFollowUps is 0: this regression is recorded but not counted toward the breaker; nothing is reverted (MC7)."
 		}
 	}
-	return Event{Key: key, Body: body}
+	return Event{Key: key, Class: ClassChanged, Body: body}
 }
 
 // FollowUpMarker is the hidden line that lets the factory find the follow-up issue it filed for
@@ -854,7 +883,7 @@ func FollowUpFound(t *v1alpha1.Task, m, later int, control bool) Event {
 	if control {
 		key += " control"
 	}
-	return Event{Key: key, Body: fmt.Sprintf("#%d changed lines #%d introduced within the monitor's window (`%s`): counted as a follow-up fix (MC8).",
+	return Event{Key: key, Class: ClassChanged, Body: fmt.Sprintf("#%d changed lines #%d introduced within the monitor's window (`%s`): counted as a follow-up fix (MC8).",
 		later, m, t.Spec.PredictedClass)}
 }
 
@@ -868,7 +897,7 @@ func headlines() map[string]string {
 
 func hints() map[string]string {
 	return map[string]string{
-		v1alpha1.PhaseEscalated: "Comment `/factory retry` on this issue to run it again (a maintainer only), or push to the branch yourself.",
+		v1alpha1.PhaseEscalated: "Comment `/factory retry` on this issue to run it again (a maintainer only), or push to the branch yourself. Without either, it stops when its escalation expires.",
 		v1alpha1.PhaseNoOp:      "If there is work to do, add detail to the issue and re-apply `factory/ready`.",
 		v1alpha1.PhaseRejected:  "Fix what is described above and re-apply `factory/ready`.",
 	}
@@ -909,10 +938,12 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 		b.WriteString(usageLine + " so far: " + Tokens(t.Status.Usage.Tokens) + ".")
 	}
 	key := fmt.Sprintf(closingPrefix+"%s-%d", strings.ToLower(phase), len(t.Status.Runs))
+	class := ClassDone
 	if phase == v1alpha1.PhaseEscalated {
 		key += fmt.Sprintf("-%d", t.Status.Retries) // F-4: a retry that escalates again before a run is a new escalation
+		class = ClassNeedsYou
 	}
-	return Event{Key: key, Body: b.String()}
+	return Event{Key: key, Class: class, Body: b.String()}
 }
 
 // MergedUnverified is the end of an auto-merge whose merge commit got no result from main's CI
@@ -956,21 +987,21 @@ func Retotal(body string, tokens int64, incomplete bool) string {
 
 // StopIgnored answers a factory/stop the poller will not act on, once per label.
 func StopIgnored(number int, reason string, at time.Time) Event {
-	return Event{Key: fmt.Sprintf("stop-ignored-%s-%d", reason, at.Unix()),
+	return Event{Key: fmt.Sprintf("stop-ignored-%s-%d", reason, at.Unix()), Class: ClassChanged,
 		Body: fmt.Sprintf("The agent factory ignored `factory/stop` on #%d: %s.", number, Reason(reason))}
 }
 
 // Refused answers a factory/ready the poller will not act on; keyed by the label's time, so each
 // label is answered once.
 func Refused(number int, reason string, at time.Time) Event {
-	return Event{Key: fmt.Sprintf("refused-%s-%d", reason, at.Unix()),
+	return Event{Key: fmt.Sprintf("refused-%s-%d", reason, at.Unix()), Class: ClassChanged,
 		Body: fmt.Sprintf("The agent factory did not start a task for #%d: %s.", number, Reason(reason))}
 }
 
 // PersonOverBudget refuses a label whose labeller's day is spent (v2 per-person caps D4): no Task,
 // the person, their cap and the reset named, so re-labelling after it retries.
 func PersonOverBudget(number int, person string, capMicroUSD int64, at time.Time) Event {
-	return Event{Key: fmt.Sprintf("refused-person_budget_exhausted-%d", at.Unix()),
+	return Event{Key: fmt.Sprintf("refused-person_budget_exhausted-%d", at.Unix()), Class: ClassNeedsYou,
 		Body: fmt.Sprintf("The agent factory did not start a task for #%d: the daily budget of `%s` (%s) is spent. "+
 			"It resets at 00:00 UTC; re-apply the label after that to start it.", number, person, USD(capMicroUSD))}
 }
@@ -979,7 +1010,7 @@ func PersonOverBudget(number int, person string, capMicroUSD int64, at time.Time
 // SL11): the split keeps waiting, and the approver comments again after the reset. Re-labelling
 // would supersede the proposal, so it is not offered.
 func ApproverOverBudget(number int, person string, capMicroUSD int64, at time.Time) Event {
-	return Event{Key: fmt.Sprintf("refused-split_approver_budget-%d", at.Unix()),
+	return Event{Key: fmt.Sprintf("refused-split_approver_budget-%d", at.Unix()), Class: ClassNeedsYou,
 		Body: fmt.Sprintf("The agent factory did not split #%d: the daily budget of `%s` (%s) is spent, and every part is charged to the person who approves. "+
 			"It resets at 00:00 UTC; comment `/factory split` again after that. The proposal stays open.", number, person, USD(capMicroUSD))}
 }
@@ -1020,7 +1051,7 @@ func ChildIssue(t *v1alpha1.Task, k int32, sc *envelope.Scope, roomsURL string) 
 
 // SplitPart says on the parent issue that part k opened (SL7), once.
 func SplitPart(t *v1alpha1.Task, k int32, issue int) Event {
-	return Event{Key: fmt.Sprintf("split-part-%d", k), Body: fmt.Sprintf("Agent factory task `%s`: part %d of %d is #%d.",
+	return Event{Key: fmt.Sprintf("split-part-%d", k), Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s`: part %d of %d is #%d.",
 		t.Name, k, t.Status.Split.Of, issue)}
 }
 
@@ -1055,10 +1086,12 @@ func SplitEnded(t *v1alpha1.Task, phase, reason string, parts []Part, maintainer
 func PartReverted(t *v1alpha1.Task, revert int, parentClosed bool) Event {
 	p := t.Spec.Parent
 	tail := "This issue stays closed: reopen it if the work is not done."
+	class := ClassNeedsYou
 	if !parentClosed {
 		tail = "The parent issue is waiting on its parts: its family no longer counts this part as landed."
+		class = ClassChanged
 	}
-	return Event{Key: fmt.Sprintf("part-reverted-%d", revert), Body: fmt.Sprintf("Agent factory task `%s`, part %d of %d of this "+
+	return Event{Key: fmt.Sprintf("part-reverted-%d", revert), Class: class, Body: fmt.Sprintf("Agent factory task `%s`, part %d of %d of this "+
 		"issue (#%d), was reverted by #%d. %s", t.Name, p.Index, p.Of, t.Spec.Issue, revert, tail)}
 }
 
@@ -1069,7 +1102,7 @@ func USD(micro int64) string { return fmt.Sprintf("$%.2f", float64(micro)/1e6) }
 // a new review run starts (why is one of verdict_missing, verdict_stale, room_log_too_long). Once
 // per run.
 func NoVerdict(t *v1alpha1.Task, runID, why string) Event {
-	return Event{Key: "noverdict-" + runID, Body: fmt.Sprintf("The review run `%s` of agent factory task `%s` ended without a "+
+	return Event{Key: "noverdict-" + runID, Class: ClassChanged, Body: fmt.Sprintf("The review run `%s` of agent factory task `%s` ended without a "+
 		"verdict the factory can act on: %s. A new review run starts; each one uses a review round.", runID, t.Name, Reason(why))}
 }
 
@@ -1089,7 +1122,7 @@ func RoundsExhausted(t *v1alpha1.Task, v rooms.Verdict) Event {
 	if t.Spec.DataClass == "public" {
 		body = summary(v.Text, maxBody-len(head))
 	}
-	return Event{Key: fmt.Sprintf("rounds-%d-%d", t.Status.ReviewRounds, len(t.Status.Runs)), Body: head + body}
+	return Event{Key: fmt.Sprintf("rounds-%d-%d", t.Status.ReviewRounds, len(t.Status.Runs)), Class: ClassNeedsYou, Body: head + body}
 }
 
 // summary is an agent's text as an inert code block of at most budget bytes, clipped with a mark.
@@ -1131,18 +1164,18 @@ func ProfileChosen(t *v1alpha1.Task, name, source, reason, why string, run int) 
 		const prefix = "\n\nThe scoper's reason:\n\n"
 		body += prefix + summary(why, maxBody-len(body)-len(prefix))
 	}
-	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body}
+	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Class: ClassChanged, Body: body}
 }
 
 // ProfileRefused says a pinned workflow was not applied, in the closed refusal's one sentence (P12):
 // the task runs as if unpinned. One per task: triage decides a pin once.
 func ProfileRefused(name, sentence string) Event {
-	return Event{Key: "profile-refused", Body: fmt.Sprintf("Agent factory: the pinned workflow `%s` was not applied: %s", name, sentence)}
+	return Event{Key: "profile-refused", Class: ClassChanged, Body: fmt.Sprintf("Agent factory: the pinned workflow `%s` was not applied: %s", name, sentence)}
 }
 
 // TriageNote is triage's note i on the task (triage.Decision.Notes), said once.
 func TriageNote(i int, note string) Event {
-	return Event{Key: fmt.Sprintf("triage-note-%d", i), Body: "Agent factory: " + note}
+	return Event{Key: fmt.Sprintf("triage-note-%d", i), Class: ClassChanged, Body: "Agent factory: " + note}
 }
 
 func stepUpTriggerPhrase(trigger string) string {
@@ -1194,7 +1227,7 @@ func ProfileEscalated(from, to, trigger string, ceilingMicroUSD int64, run int, 
 		b.WriteString(". ")
 	}
 	b.WriteString("To stop it, apply the label `factory/stop`.")
-	return Event{Key: fmt.Sprintf("profile-escalated-%d", run), Body: b.String()}
+	return Event{Key: fmt.Sprintf("profile-escalated-%d", run), Class: ClassChanged, Body: b.String()}
 }
 
 // StepUpOffered tells a maintainer why Maku did not step a failed task up automatically and how to
@@ -1221,7 +1254,7 @@ func StepUpOffered(_ *v1alpha1.Task, from, to, trigger string, ceilingMicroUSD i
 	if ceilingMicroUSD > 0 {
 		ceil = fmt.Sprintf(" (up to %s)", formatMicroUSD(ceilingMicroUSD))
 	}
-	body := fmt.Sprintf("This task stopped under `%s`: %s. Maku did not step it up because %s. A maintainer can run it again deeper under `%s`%s: comment `/factory retry deeper`.",
+	body := fmt.Sprintf("This task stopped under `%s`: %s. Maku did not step it up because %s. A maintainer can run it again deeper under `%s`%s: comment `/factory retry deeper`. Without a retry, it stops when its escalation expires.",
 		from, stepUpTriggerPhrase(trigger), because, to, ceil)
-	return Event{Key: "step-up-offered", Body: body}
+	return Event{Key: "step-up-offered", Class: ClassNeedsYou, Body: body}
 }
