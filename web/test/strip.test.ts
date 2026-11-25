@@ -562,6 +562,15 @@ describe("the title strip", () => {
       expect(h.querySelector(".chip-run")).toBeNull(); // the facts' run is over: no ageing chip
       expect(h.querySelector(".chip-run-detail")).toBeNull();
     });
+    it("says the plan waits for approval while a plan-first task is in plan review (gcp-0, 2026-11-25)", () => {
+      const h = document.createElement("header");
+      const strip = mountStrip(h, at);
+      const base = summary();
+      const handed = { ...hi, text: "Scope handed off to the implementer" };
+      strip.update(input({ running: false, ran: true, now: handed, summary: { ...base, status: { ...base.status, reasonCode: "plan_review" } } }));
+      expect(h.querySelector(".now")?.textContent).toBe("No run · last: The scoper proposed a plan; it waits for approval · just now");
+      expect(h.querySelector(".now")?.textContent).not.toContain("handed off");
+    });
     it("links the last activity to its row", () => {
       const h = document.createElement("header");
       const strip = mountStrip(h, at);

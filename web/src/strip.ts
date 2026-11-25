@@ -84,6 +84,14 @@ function setNow(b: HTMLElement, n: Latest, t: number, present: boolean): void {
   b.replaceChildren(el("span", { className: "now-lead", textContent: lead }), el("span", { className: "now-text", textContent: text }), meta);
 }
 
+// planWaits stands in for the last activity while a plan-first task waits in plan review: the
+// scoper's own last words ("Scope handed off to the implementer") read as if the implementer had
+// started, when the plan waits for a maintainer's approval (gcp-0, 2026-11-25).
+function planWaits(n: Latest | undefined, s: Summary | undefined, present: boolean): Latest | undefined {
+  if (!n || present || s?.status.reasonCode !== "plan_review") return n;
+  return { ...n, text: "The scoper proposed a plan; it waits for approval", status: "ended" };
+}
+
 // nowLine says what the agent is doing: the latest activity, a button that takes the
 // reader to its row. With no agent present it says so: "No run yet" until one ever ran (a
 // human's message does not start one), then "No run" and the last activity; an owner or
@@ -92,7 +100,7 @@ function nowLine(i: StripInput, t: number, onNow: (seq: number) => void): HTMLEl
   const line = el("div", { className: "now" });
   const present = i.running ?? !!i.now;
   const ran = i.ran || !!i.summary?.status.run;
-  const n = present || ran ? i.now : undefined;
+  const n = present || ran ? planWaits(i.now, i.summary, present) : undefined;
   if (n) {
     const b = el("button", { type: "button", className: "now-link" });
     setNow(b, n, t, present);
