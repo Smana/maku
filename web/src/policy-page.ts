@@ -27,6 +27,12 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: 
 }
 
 function table(head: string[], rows: (string | Node)[][], cls: string): HTMLTableElement {
+  // A Why column with nothing in it would take half the width from the repository's name.
+  const why = head.indexOf("Why");
+  if (why >= 0 && rows.every((r) => !(r[why] instanceof Node) && !String(r[why] ?? "").trim())) {
+    head = head.filter((_, i) => i !== why);
+    rows = rows.map((r) => r.filter((_, i) => i !== why));
+  }
   const t = el("table", undefined, `rooms settings-table ${cls}`);
   const tr = el("tr");
   for (const h of head) tr.append(el("th", h));

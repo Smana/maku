@@ -36,9 +36,19 @@ describe("a class card's Workflows row", () => {
     expect([...row.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
       "Default review-floor: roles chosen at triage · The default · up to $5.10 · out of budget goes to review-frontier; not converged goes to review-frontier",
       "links-solo: roles implementer · One file of links · up to $5.10",
-      "review-frontier: roles implementer, reviewer · Several files · up to $13.60 · tests first",
+      "review-frontier: roles implementer → reviewer · Several files · up to $13.60 · tests first",
     ]);
     expect(row.textContent).not.toContain("tier ");
+  });
+  it("lists a list-form workflow's resolved stages, a scoper, a tester and a custom read role included", () => {
+    const cat = catalogue();
+    cat.profiles.thorough = { template: "pair", roles: ["implementer", "reviewer"], tier: "frontier", checks: true, testFirst: true, loop: "",
+      description: "Tests first, then two reviews", ceilingUSD: 13.60, offered: true,
+      path: ["scoper", "tester", "implementer", "reviewer", "security-reviewer", "CI", "merge gate"] };
+    cat.profiles["links-solo"].path = ["scoper", "implementer", "CI", "merge gate"];
+    const items = [...card(page(cat), 1).querySelectorAll(".class-profiles li")].map((li) => li.textContent);
+    expect(items).toContain("links-solo: roles scoper → implementer · One file of links · up to $5.10");
+    expect(items).toContain("thorough: roles scoper → tester → implementer → reviewer → security-reviewer · Tests first, then two reviews · up to $13.60 · tests first");
   });
   it("is the same on every class (WF4)", () => {
     const live = card(page(), 0).querySelector(".class-profiles")!;

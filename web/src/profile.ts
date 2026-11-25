@@ -78,6 +78,27 @@ function cardRow(label: string, value: string): HTMLElement {
   return row;
 }
 
+// costWords is the Cost row, as roomview.CostLine words it: a confirmed cost below the workflow's
+// own ceiling caps the task, and the row says so instead of showing a figure the task will not reach.
+// Under a confirmed cost a step-up runs only when its ceiling fits: one above it is offered, never
+// run (Maku #720). A step-up figure no higher than the ceiling is left out.
+export function costWords(p: ProfileInput, ceiling: number): string {
+  if (ceiling <= 0) return "";
+  const confirmed = p.confirmedMicroUSD ?? 0;
+  const capped = confirmed > 0 && ceiling <= confirmed;
+  let cost = `up to ${fmtDollars(ceiling)}`;
+  if (capped && (p.workflowCeilingMicroUSD ?? 0) > ceiling) {
+    cost = `capped at your confirmed ${fmtDollars(confirmed)} (${p.name}'s ceiling is ${fmtDollars(p.workflowCeilingMicroUSD!)})`;
+  }
+  const stepUp = p.stepUpCeilingMicroUSD ?? 0;
+  if (stepUp > 0 && capped && stepUp > confirmed) {
+    cost += ` \u00b7 a step-up${p.stepUpTo ? ` to ${p.stepUpTo}` : ""} (${fmtDollars(stepUp)}) is offered, not run`;
+  } else if (stepUp > ceiling && capped) cost += ` \u00b7 up to ${fmtDollars(stepUp)} if it steps up, within your ${fmtDollars(confirmed)}`;
+  else if (stepUp > 0 && capped) cost += ` \u00b7 a step-up stays within your ${fmtDollars(confirmed)}`;
+  else if (stepUp > ceiling) cost += ` \u00b7 up to ${fmtDollars(stepUp)} if it steps up`;
+  return cost;
+}
+
 // workflowCard renders the open Workflow card for the room header (WR3).
 export function workflowCard(
   profile: ProfileInput,
@@ -96,14 +117,8 @@ export function workflowCard(
     head.append(cardRow("Will run", path.join(" \u2192 ")));
   }
 
-  const ceiling = profile.ceilingMicroUSD || fallbackCeilingMicroUSD || 0;
-  if (ceiling > 0) {
-    let cost = `up to ${fmtDollars(ceiling)}`;
-    if (profile.stepUpCeilingMicroUSD && profile.stepUpCeilingMicroUSD > 0) {
-      cost += ` \u00b7 up to ${fmtDollars(profile.stepUpCeilingMicroUSD)} if it steps up`;
-    }
-    head.append(cardRow("Cost", cost));
-  }
+  const cost = costWords(profile, profile.ceilingMicroUSD || fallbackCeilingMicroUSD || 0);
+  if (cost) head.append(cardRow("Cost", cost));
 
   if (profile.requested && profile.refused) {
     head.append(el("p", {

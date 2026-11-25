@@ -15,7 +15,7 @@ import { focusRow } from "./chat";
 import type { Frame, Snapshot } from "./conn";
 import { act, approvalAnchor, approvalCard, button, confirmButton, el, keyed, named, rejection, type Sender } from "./controls";
 import type { RoomState } from "./room-state";
-import { inlineCode, needsItems, type Summary } from "./summary";
+import { inlineCode, needsItems, type ProposedPlan, type Summary } from "./summary";
 
 // routeEvery is how often the panel asks the route. refresh runs on every frame the page draws — the
 // ticker's one a second, and each event a replay delivers — and one read is a scan of every room the
@@ -162,7 +162,24 @@ function cardAct(n: NeedItem): string {
   }
 }
 
-export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void; roomActs?: ReadonlySet<string> }): HTMLLIElement {
+// planFold is the proposed plan a plan-review card folds under its sentence, so the reader sees what
+// Approve approves without leaving the room. Agent-written: every part enters the DOM as text.
+export function planFold(p: ProposedPlan): HTMLDetailsElement {
+  const d = el("details", { className: "need-plan" });
+  d.append(el("summary", { textContent: "The proposed plan" }), el("p", { className: "need-plan-task", textContent: p.task }));
+  const list = (heading: string, items: string[] | undefined, ordered = false) => {
+    if (!items?.length) return;
+    const l = el(ordered ? "ol" : "ul");
+    for (const it of items) l.append(el("li", { textContent: it }));
+    d.append(el("p", { className: "need-plan-head", textContent: heading }), l);
+  };
+  list("Steps", p.steps, true);
+  list("Expected files to touch", p.touches);
+  list("Acceptance checks", p.acceptance?.map((a) => `${a.check} — ${a.proves}`));
+  return d;
+}
+
+export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void; roomActs?: ReadonlySet<string>; plan?: ProposedPlan }): HTMLLIElement {
   const li = el("li", { className: "need" });
   li.dataset.kind = n.kind;
   const type = n.type || needType(n.kind);
@@ -172,6 +189,7 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
   what.append(...inlineCode(n.what));
   li.append(el("p", { className: "need-title", textContent: title }), what);
   if (n.why) li.append(el("p", { className: "need-why", textContent: `Why: ${n.why}` }));
+  if (n.kind === "plan_review" && ctx.plan?.task) li.append(planFold(ctx.plan));
   const bar = el("div", { className: "need-act" });
   const where = (text: string) => el("span", { className: "need-where", textContent: text });
   const a = n.action;
@@ -210,6 +228,7 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
       ctx.hands.plan!("revise", text);
     };
     note.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); revise(); } };
+    li.dataset.offers = "plan";
     bar.append(
       primary(button("Approve", "need-plan-approve", () => ctx.hands.plan!("approve"))),
       note,
@@ -262,7 +281,8 @@ function unreadLine(rooms: string[]): string {
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
   chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined,
   opts: { needs?: () => Promise<NeedsPage>; hands?: NeedHands; roomActs?: string[] | (() => Promise<string[]>) } = {}):
-  { refresh(): Promise<void>; onAck(f: Frame): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
+  { refresh(): Promise<void>; onAck(f: Frame): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void;
+    offers(act: string): boolean } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
   const approvals = el("ul", { className: "approvals" });
@@ -349,9 +369,11 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       hands: { ...(opts.hands ?? {}), retry, answer, split, plan },
       release: viewer?.driver ? () => { act(conn, state, { kind: "driver_give", to: "system:factory" }); } : undefined,
       roomActs: enabledActs,
+      plan: proposedPlan,
     };
   };
   let listedItems: NeedItem[] | undefined;
+  let proposedPlan: ProposedPlan | undefined;
   let summarisedItems: NeedItem[] = [];
   const cards = new Map<string, HTMLLIElement>();
 
@@ -439,7 +461,8 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     const c = ctx();
     const actSig = [...enabledActs].sort().join(",");
     const items = (listedItems ?? summarisedItems).map((n) => {
-      const key = JSON.stringify([n, !!c.release, !!c.hands.answer, !!c.hands.split, !!c.hands.plan, !!c.hands.retry, actSig]);
+      const key = JSON.stringify([n, !!c.release, !!c.hands.answer, !!c.hands.split, !!c.hands.plan, !!c.hands.retry, actSig,
+        n.kind === "plan_review" ? c.plan ?? null : null]);
       let li = cards.get(key);
       if (!li) cards.set(key, li = needCard(n, c));
       return li;
@@ -518,7 +541,13 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     },
     setSummary(s: Summary): void {
       summarisedItems = needsItems(s);
+      proposedPlan = s.status.proposedPlan;
       render();
+    },
+    // offers is whether a card here holds act's controls (the plan's Approve, Revise and Split), so
+    // the strip's Next line need not repeat them as commands.
+    offers(act: string): boolean {
+      return !root.hidden && [...other.querySelectorAll<HTMLElement>(":scope > li.need")].some((li) => li.dataset.offers === act);
     },
     // count is what needs this viewer: the approvals it may decide, then merges, answers and holds.
     count(): number { return panel.approvalCounts().mine + others; },

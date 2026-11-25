@@ -325,6 +325,10 @@ func offeredStepUp(f *envelope.TaskFacts) *DeeperOffer {
 	if su.Mode != "offered" || su.To == "" {
 		return nil
 	}
+	// A step-up above the cost confirmed for the task is refused (deeper_over_cap): no button for it.
+	if c := f.Profile.ConfirmedMicroUSD; c > 0 && su.CeilingMicroUSD > c {
+		return nil
+	}
 	return &DeeperOffer{Workflow: su.To, CeilingMicroUSD: su.CeilingMicroUSD}
 }
 

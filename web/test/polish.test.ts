@@ -365,3 +365,11 @@ describe("the rail at full size", () => {
     expect(outside).not.toMatch(/rail-arrive/);
   });
 });
+
+describe("the Workflow card lays its facts out as label and value columns (gcp-0, 2026-11-25)", () => {
+  it("is a two-column grid whose rows hand their label and value to it", () => {
+    expect(decl(outside, ".workflow-head")).toMatch(/display:\s*grid;[^]*grid-template-columns:\s*max-content minmax\(0, 1fr\)/);
+    expect(decl(outside, ".workflow-row")).toMatch(/display:\s*contents/);
+    expect(decl(outside, ".workflow-head > :not(.workflow-row)")).toMatch(/grid-column:\s*1 \/ -1/);
+  });
+});

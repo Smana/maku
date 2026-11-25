@@ -40,6 +40,19 @@ describe("a class card", () => {
     expect(card.querySelector(".policy-sentence")?.textContent).toBe("No extra policy restriction");
     expect(card.querySelector(".class-summary")).toBeNull();
   });
+  it("links a bound class's pill to its row in the Bindings editor (gcp-0, 2026-11-25)", () => {
+    const p = page();
+    p.report.repositoryObject = "r";
+    p.report.bindings = [{ name: "docs", parameters: { name: "docs", mode: "shadow" } }] as typeof p.report.bindings;
+    const badge = classCard(p.report.classes[0], ctx(p)).querySelector(".mode-badge")!;
+    expect(badge.tagName).toBe("A");
+    expect(badge.getAttribute("href")).toBe("#binding-docs");
+    expect(badge.textContent).toBe("Shadow");
+    // Bound in the repository's own file, or not migrated: no editor row to go to.
+    p.report.repositoryStatus = { status: { authority: "repository" } } as typeof p.report.repositoryStatus;
+    expect(classCard(p.report.classes[0], ctx(p)).querySelector(".mode-badge")?.tagName).toBe("SPAN");
+    expect(classCard(page().report.classes[0], ctx()).querySelector(".mode-badge")?.tagName).toBe("SPAN");
+  });
   it("shows the badge as the bare word for each mode", () => {
     for (const [mode, word] of [["live", "Live"], ["shadow", "Shadow"], ["off", "Off"]]) {
       const p = page();

@@ -35,6 +35,15 @@ describe("a policy's page", () => {
     expect(app.textContent).not.toContain("Generation 4");
   });
 
+  it("leaves out a Why column no repository fills (gcp-0, 2026-11-25)", async () => {
+    const quiet = structuredClone(deadLinks);
+    quiet.status.consumers = quiet.status.consumers.map((c) => ({ ...c, accepted: true, reason: undefined }));
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": quiet }));
+    expect([...app.querySelectorAll("table.consumers thead th")].map((th) => th.textContent)).toEqual(["Repository", "Mode", "Status"]);
+    expect([...app.querySelectorAll("table.consumers tbody tr")][0].children).toHaveLength(3);
+  });
+
   it("offers a shipped preset with YAML, essentials open and valid optional fields folded", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": deadLinks, "/api/policy/policies": { policies: [deadLinks] } }));

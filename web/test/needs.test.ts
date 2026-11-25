@@ -570,12 +570,14 @@ describe("room cards acting on the page (phase G2)", () => {
   });
 
   it("renders a plan_review card with Approve, Revise (with one-line note) and Split, and no GitHub link", async () => {
-    const { root, acts, refuse } = await mountWithActs([{
+    const { root, acts, refuse, panel } = await mountWithActs([{
       kind: "plan_review", type: "plan", act: "plan", id: "55",
       what: "the author or a maintainer reviews the proposed plan on issue #55",
       url: "https://github.com/o/r/issues/55",
       action: { kind: "plan", label: "review the plan on the issue", url: "https://github.com/o/r/issues/55" },
     }], ["plan"]);
+    expect(panel.offers("plan")).toBe(true); // the strip's Next folds its commands (gcp-0, 2026-11-25)
+    expect(panel.offers("retry")).toBe(false);
     const card = root.querySelector<HTMLElement>('li.need[data-kind="plan_review"]')!;
     expect(card.dataset.type).toBe("plan");
     expect(card.querySelector("a.need-go")).toBeNull();
@@ -892,5 +894,33 @@ describe("the dock never hides a decision", () => {
     expect(css).toMatch(/\.approval-decide \{ scroll-margin-bottom: calc\(var\(--dock-h/);
     expect(css).toMatch(/\.page-header, \.page-dock \{ position: sticky; \}/);
     expect(css).not.toContain("Static, not sticky");
+  });
+});
+
+describe("the plan-review card shows the proposed plan (gcp-0, 2026-11-25)", () => {
+  const item = { kind: "plan_review", type: "plan", act: "plan", id: "55", room: "3kq7x2ma",
+    what: "the author or a maintainer reviews the proposed plan on issue #55", url: "https://github.com/o/r/issues/55" } as NeedItem;
+  const plan = { task: "Fix the dead links in docs/", steps: ["Replace each link"], touches: ["docs/a.md"],
+    acceptance: [{ check: "task docs", proves: "every link resolves" }] };
+  it("folds the scoper's plan under the card's sentence, as text", () => {
+    const li = needCard(item, { hands: {}, plan: { ...plan, task: "<img src=x onerror=alert(1)>" } });
+    const fold = li.querySelector<HTMLDetailsElement>("details.need-plan")!;
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary")?.textContent).toBe("The proposed plan");
+    expect(fold.querySelector("img")).toBeNull();
+    expect(fold.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect([...fold.querySelectorAll("li")].map((x) => x.textContent)).toEqual(["Replace each link", "docs/a.md", "task docs — every link resolves"]);
+    expect(li.querySelector(".need-what")!.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it("takes the plan from the room's summary", () => {
+    const { root, needs } = mount();
+    const s = sum([{ kind: "plan_review", id: "55", what: item.what, url: item.url! }]);
+    s.status.proposedPlan = plan;
+    needs.setSummary(s);
+    expect(root.querySelector("li.need details.need-plan .need-plan-task")?.textContent).toBe("Fix the dead links in docs/");
+  });
+  it("shows no fold without a plan, nor on another kind", () => {
+    expect(needCard(item, { hands: {} }).querySelector("details.need-plan")).toBeNull();
+    expect(needCard({ ...item, kind: "question" }, { hands: {}, plan }).querySelector("details.need-plan")).toBeNull();
   });
 });

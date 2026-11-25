@@ -162,3 +162,36 @@ func TestTheCardNamesTheOutcome(t *testing.T) {
 		})
 	}
 }
+
+// A confirmed cost below the workflow's own ceiling caps the task: the Cost row says so, and a
+// step-up above it says it is offered, not run (gcp-0, 2026-11-25; Maku #720).
+func TestTheCardSaysAConfirmedCostCapsIt(t *testing.T) {
+	cases := []struct {
+		name string
+		c    WorkflowCard
+		want string
+	}{
+		{"capped", WorkflowCard{Workflow: "careful", CeilingUSD: 5.10, ConfirmedUSD: 5.10, WorkflowCeilingUSD: 13.60},
+			"capped at your confirmed $5.10 (careful's ceiling is $13.60)"},
+		{"capped, step-up", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 5.10, ConfirmedUSD: 5.10, WorkflowCeilingUSD: 5.10},
+			"up to $5.10 · a step-up stays within your $5.10"},
+		{"confirmed above the ceiling", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 13.60, ConfirmedUSD: 20, WorkflowCeilingUSD: 5.10},
+			"up to $5.10 · up to $13.60 if it steps up, within your $20.00"},
+		{"a step-up above the confirmed cost", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 13.60, StepUpTo: "careful", ConfirmedUSD: 5.10, WorkflowCeilingUSD: 5.10},
+			"up to $5.10 · a step-up to careful ($13.60) is offered, not run"},
+		{"a step-up above the confirmed cost, target unnamed", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 13.60, ConfirmedUSD: 5.10},
+			"up to $5.10 · a step-up ($13.60) is offered, not run"},
+		{"a step-up figure equal to the base", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 5.10},
+			"up to $5.10"},
+	}
+	for _, tc := range cases {
+		if got := CostLine(tc.c); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	card := CardOf(&envelope.TaskFacts{Profile: &envelope.ProfileFact{Name: "careful", Source: "label",
+		CeilingMicroUSD: 5_100_000, ConfirmedMicroUSD: 5_100_000, WorkflowCeilingMicroUSD: 13_600_000}}, "")
+	if got := CostLine(card); got != "capped at your confirmed $5.10 (careful's ceiling is $13.60)" {
+		t.Errorf("from facts: %q", got)
+	}
+}

@@ -67,9 +67,16 @@ type ProfileFact struct {
 	// By is the login of a pin's applier when Source is "label".
 	By string `json:"by,omitempty"`
 	// CeilingMicroUSD and StepUpCeilingMicroUSD are the task's budget ceilings in micro-USD.
-	CeilingMicroUSD       int64  `json:"ceilingMicroUSD,omitempty"`
-	StepUpCeilingMicroUSD int64  `json:"stepUpCeilingMicroUSD,omitempty"`
-	Description           string `json:"description,omitempty"`
+	CeilingMicroUSD       int64 `json:"ceilingMicroUSD,omitempty"`
+	StepUpCeilingMicroUSD int64 `json:"stepUpCeilingMicroUSD,omitempty"`
+	// StepUpTo names the workflow a step-up would run, beside StepUpCeilingMicroUSD.
+	StepUpTo string `json:"stepUpTo,omitempty"`
+	// ConfirmedMicroUSD is the cost a person confirmed for the task (its cap), and
+	// WorkflowCeilingMicroUSD the workflow's own ceiling: the card says the cap is why the task's
+	// ceiling sits below the workflow's.
+	ConfirmedMicroUSD       int64  `json:"confirmedMicroUSD,omitempty"`
+	WorkflowCeilingMicroUSD int64  `json:"workflowCeilingMicroUSD,omitempty"`
+	Description             string `json:"description,omitempty"`
 	// StepUp is the one step-up taken or offered on the task (WR4).
 	StepUp *StepUpFact `json:"stepUp,omitempty"`
 	// RequiredBy and RequiredStages name the merge class that added stages to the workflow (WR6).
@@ -126,6 +133,12 @@ func (p ProfileFact) validate() error {
 		return errors.New("ceilingMicroUSD is out of range")
 	case p.StepUpCeilingMicroUSD < 0 || p.StepUpCeilingMicroUSD > MaxMicroUSD:
 		return errors.New("stepUpCeilingMicroUSD is out of range")
+	case utf8.RuneCountInString(p.StepUpTo) > 63:
+		return errors.New("stepUpTo is at most 63 characters")
+	case p.ConfirmedMicroUSD < 0 || p.ConfirmedMicroUSD > MaxMicroUSD:
+		return errors.New("confirmedMicroUSD is out of range")
+	case p.WorkflowCeilingMicroUSD < 0 || p.WorkflowCeilingMicroUSD > MaxMicroUSD:
+		return errors.New("workflowCeilingMicroUSD is out of range")
 	case utf8.RuneCountInString(p.Description) > 120:
 		return errors.New("description is at most 120 characters")
 	}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test } from "vitest";
-import { workflowCard } from "../src/profile";
+import { costWords, workflowCard } from "../src/profile";
 
 test("the workflow card is open and says why and how much", () => {
   const card = workflowCard({
@@ -30,4 +30,20 @@ test("a refused pin is named on the card, not only in the details", () => {
   expect(card.querySelector(":scope > .workflow-head")!.textContent).toContain("quick was not applied");
   expect(card.querySelector(":scope > .workflow-head")!.textContent).toContain("workflow_conflict");
   expect(card.querySelector("details.workflow-details")?.textContent).not.toContain("Cohort:");
+});
+
+test("the Cost row says a confirmed cost caps the task, and whether a step-up runs within it or is offered", () => {
+  const base = { source: "label", cohort: "labeled" };
+  expect(costWords({ ...base, name: "careful", ceilingMicroUSD: 5_100_000, confirmedMicroUSD: 5_100_000, workflowCeilingMicroUSD: 13_600_000 }, 5_100_000))
+    .toBe("capped at your confirmed $5.10 (careful's ceiling is $13.60)");
+  expect(costWords({ ...base, name: "standard", confirmedMicroUSD: 5_100_000, workflowCeilingMicroUSD: 5_100_000, stepUpCeilingMicroUSD: 5_100_000 }, 5_100_000))
+    .toBe("up to $5.10 · a step-up stays within your $5.10");
+  expect(costWords({ ...base, name: "standard", confirmedMicroUSD: 5_100_000, stepUpCeilingMicroUSD: 13_600_000, stepUpTo: "careful" }, 5_100_000))
+    .toBe("up to $5.10 · a step-up to careful ($13.60) is offered, not run");
+  expect(costWords({ ...base, name: "standard", confirmedMicroUSD: 20_000_000, stepUpCeilingMicroUSD: 13_600_000 }, 5_100_000))
+    .toBe("up to $5.10 · up to $13.60 if it steps up, within your $20.00");
+  expect(costWords({ ...base, name: "standard", stepUpCeilingMicroUSD: 5_100_000 }, 5_100_000)).toBe("up to $5.10");
+  expect(costWords({ ...base, name: "standard", stepUpCeilingMicroUSD: 13_600_000 }, 5_100_000)).toBe("up to $5.10 · up to $13.60 if it steps up");
+  const card = workflowCard({ ...base, name: "careful", ceilingMicroUSD: 5_100_000, confirmedMicroUSD: 5_100_000, workflowCeilingMicroUSD: 13_600_000 }, { nodes: [] });
+  expect(card.querySelector(".workflow-head")!.textContent).toContain("capped at your confirmed $5.10 (careful's ceiling is $13.60)");
 });

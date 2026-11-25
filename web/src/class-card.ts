@@ -6,6 +6,7 @@
 // Runtime values come from settings-api.ts; settings.ts is imported for its types only, as it
 // imports this module.
 
+import { bindingAnchor } from "./binding-editor";
 import { modeMeaning } from "./policy-describe";
 import { patternDetails, policyWords } from "./policy-words";
 import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
@@ -100,12 +101,21 @@ function lastDecisionWords(code: string): string {
   return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
 }
 
+// rolesOf is the roles a workflow runs, in run order: its resolved path (a scoper, a tester, custom
+// read roles included; Maku #698, #704) without CI and the merge gate, else its template's roles
+// from a broker that predates the path.
+function rolesOf(p: CatalogueProfile): string[] {
+  if (p.path?.length) return p.path.filter((r) => r !== "CI" && r !== "merge gate");
+  return p.roles ?? [];
+}
+
 // profileLine is one workflow in words: its roles, description, ceiling and tests-first flag (no tier).
 // The text is set as text, never as markup: a description is a maintainer's.
 function profileLine(cat: Catalogue, name: string): string {
   const p = cat.profiles[name];
   if (!p) return `${name}: not in the factory's list of workflows`;
-  const parts = [p.offered && p.roles?.length ? `roles ${p.roles.join(", ")}` : "roles chosen at triage"];
+  const roles = rolesOf(p);
+  const parts = [p.offered && roles.length ? `roles ${roles.join(" \u2192 ")}` : "roles chosen at triage"];
   if (p.description) parts.push(p.description);
   if (p.ceilingUSD && p.ceilingUSD > 0) parts.push(`up to $${p.ceilingUSD.toFixed(2)}`);
   if (p.testFirst) parts.push("tests first");
@@ -146,13 +156,19 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const head = el("header", undefined, "class-card-head");
   const m = modeMeaning(c.mode);
   // The badge is the word; what it means is the page's legend, and this tooltip.
-  const badge = el("span", m.label, "mode-badge");
+  const r = ctx.page.report;
+  // A class bound in the page's Bindings editor: its pill is the way to change its mode there.
+  const editable = policyState(r) === "central" && !!r.bindings?.some((x) => x.name === c.class);
+  const badge = editable ? el("a", m.label, "mode-badge") : el("span", m.label, "mode-badge");
+  if (badge instanceof HTMLAnchorElement) {
+    badge.href = `#${bindingAnchor(c.class)}`;
+    badge.setAttribute("aria-label", `${m.label}: change ${c.class}'s mode in the Bindings editor`);
+  }
   badge.dataset.mode = c.mode;
-  badge.title = m.meaning;
+  badge.title = editable ? `${m.meaning} Change it in the Bindings editor.` : m.meaning;
   head.append(el("h3", c.class), badge);
   card.append(head);
 
-  const r = ctx.page.report;
   const binding = r.bindings?.find((x) => x.name === c.class)?.parameters;
   const spec = ctx.page.policySpecs?.[c.class] ?? {};
   card.append(el("p", policyWords(spec, binding), "policy-sentence"));

@@ -398,3 +398,30 @@ func TestAPlanToReviewIsANeed(t *testing.T) {
 		})
 	}
 }
+
+// A step-up offered above the cost confirmed for the task would be refused deeper_over_cap: the
+// recovery need offers no Run again deeper for it; one within the confirmed cost keeps it (Maku #720).
+func TestARecoveryOffersNoDeeperRunAboveTheConfirmedCost(t *testing.T) {
+	in := summary.NeedsIn{Room: "p1a2b3c4", URL: "https://rooms.example/r/p1a2b3c4", Repository: "Smana/maku", FactsRead: true,
+		Caller: summary.Caller{CanClose: true}}
+	deeper := func(confirmed int64) *summary.DeeperOffer {
+		in.Facts = &envelope.TaskFacts{Phase: "Escalated", Reason: "budget_reached",
+			Issue: &envelope.IssueFact{Number: 55, URL: "https://github.com/Smana/maku/issues/55"},
+			Profile: &envelope.ProfileFact{Name: "standard", Source: "repository", Cohort: "treatment", ConfirmedMicroUSD: confirmed,
+				StepUp: &envelope.StepUpFact{From: "standard", To: "careful", Trigger: "budget-run", Mode: "offered", CeilingMicroUSD: 13_600_000}}}
+		got := summary.Items(in)
+		if len(got) != 1 || got[0].Kind != summary.NeedRecovery {
+			t.Fatalf("items %+v", got)
+		}
+		return got[0].Deeper
+	}
+	if d := deeper(5_100_000); d != nil {
+		t.Fatalf("a deeper run above the confirmed cost is offered: %+v", d)
+	}
+	if d := deeper(20_000_000); d == nil || d.Workflow != "careful" {
+		t.Fatalf("a deeper run within the confirmed cost: %+v", d)
+	}
+	if d := deeper(0); d == nil {
+		t.Fatal("a task with no confirmed cost keeps its deeper run")
+	}
+}

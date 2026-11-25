@@ -543,6 +543,24 @@ describe("the title strip", () => {
     expect(h.textContent).not.toMatch(/undefined|driver:/);
   });
 
+  // gcp-0, 2026-11-25: the plan card's buttons are the move; Next does not repeat them as commands.
+  it("folds the plan's slash commands under one line when a card offers the acts", () => {
+    const next = "comment `/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`";
+    const st = (over: object) => { const b = summary(); return { ...b, status: { ...b.status, reason: "waiting on plan approval", next, reasonCode: "plan_review", ...over } }; };
+    const { h, strip } = mount();
+    strip.update(input({ summary: st({}), cardActs: ["plan"] }));
+    const line = h.querySelector(".strip-next .waiting")!;
+    expect(line.firstChild?.textContent).toBe("Waiting on plan approval → Approve, revise or split the plan on its card under Needs you");
+    const fold = line.querySelector<HTMLDetailsElement>("details.next-commands")!;
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary")?.textContent).toBe("or comment on the issue");
+    expect([...fold.querySelectorAll("code")].map((c) => c.textContent)).toEqual(["/factory plan approve", "/factory plan revise <comment>", "/factory plan split"]);
+    // Without the card's controls (a watcher, the act off), the commands are the way forward.
+    strip.update(input({ summary: st({}), cardActs: [] }));
+    expect(h.querySelector("details.next-commands")).toBeNull();
+    expect(h.querySelectorAll(".strip-next .waiting code").length).toBe(3);
+  });
+
   // Q2: after a run ends the page says so, and the Now line names the last activity.
   describe("with no agent present", () => {
     const hi = { seq: 3, text: "hi", status: "ok" as const, ts: "2026-10-04T13:59:58Z" };
@@ -561,6 +579,15 @@ describe("the title strip", () => {
       expect(h.querySelector(".now-hint")?.textContent).toBe("Start one under Session › Run");
       expect(h.querySelector(".chip-run")).toBeNull(); // the facts' run is over: no ageing chip
       expect(h.querySelector(".chip-run-detail")).toBeNull();
+    });
+    it("says the plan waits for approval while a plan-first task is in plan review (gcp-0, 2026-11-25)", () => {
+      const h = document.createElement("header");
+      const strip = mountStrip(h, at);
+      const base = summary();
+      const handed = { ...hi, text: "Scope handed off to the implementer" };
+      strip.update(input({ running: false, ran: true, now: handed, summary: { ...base, status: { ...base.status, reasonCode: "plan_review" } } }));
+      expect(h.querySelector(".now")?.textContent).toBe("No run · last: The scoper proposed a plan; it waits for approval · just now");
+      expect(h.querySelector(".now")?.textContent).not.toContain("handed off");
     });
     it("links the last activity to its row", () => {
       const h = document.createElement("header");

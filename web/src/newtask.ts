@@ -151,7 +151,7 @@ function renderPlanCard(checked: HandoffCheckResponse): HTMLElement {
   const stepUp = checked.plan?.budget?.stepUpCeilingUSD || choice?.stepUpCeilingUSD || 0;
   if (ceiling > 0) {
     let cost = `up to ${fmtUSD(ceiling)}`;
-    if (stepUp > 0) cost += ` \u00b7 up to ${fmtUSD(stepUp)} if it steps up`;
+    if (stepUp > ceiling) cost += ` \u00b7 up to ${fmtUSD(stepUp)} if it steps up`;
     head.append(cardRow("Cost", cost));
   }
   if (issue?.outcomeNote) {

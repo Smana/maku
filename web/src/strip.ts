@@ -36,7 +36,15 @@ export interface StripInput {
   // Undefined when nothing tracks it: the Now line then reads the latest activity as current.
   running?: boolean; ran?: boolean;
   dashboards?: Dashboard[]; // the operator's link templates (GET /api/roomctl); none, no group
+  // The room acts a Needs-you card offers as controls (needs.ts offers): Next then says so in one
+  // line, its slash commands folded under "or comment on the issue".
+  cardActs?: string[];
 }
+
+// The reason whose Next is a card's acts as slash commands, by the act the card offers.
+const CARD_ACT_REASON: Record<string, { act: string; line: string }> = {
+  plan_review: { act: "plan", line: "Approve, revise or split the plan on its card under Needs you" },
+};
 
 // fmtTokens reads a token count at a glance: 189093 → "189 k", 1500000 → "1.5 M". A count
 // that would round to "1000 k" reads "1 M", as roomctl's tokens() does.
@@ -84,6 +92,14 @@ function setNow(b: HTMLElement, n: Latest, t: number, present: boolean): void {
   b.replaceChildren(el("span", { className: "now-lead", textContent: lead }), el("span", { className: "now-text", textContent: text }), meta);
 }
 
+// planWaits stands in for the last activity while a plan-first task waits in plan review: the
+// scoper's own last words ("Scope handed off to the implementer") read as if the implementer had
+// started, when the plan waits for a maintainer's approval (gcp-0, 2026-11-25).
+function planWaits(n: Latest | undefined, s: Summary | undefined, present: boolean): Latest | undefined {
+  if (!n || present || s?.status.reasonCode !== "plan_review") return n;
+  return { ...n, text: "The scoper proposed a plan; it waits for approval", status: "ended" };
+}
+
 // nowLine says what the agent is doing: the latest activity, a button that takes the
 // reader to its row. With no agent present it says so: "No run yet" until one ever ran (a
 // human's message does not start one), then "No run" and the last activity; an owner or
@@ -92,7 +108,7 @@ function nowLine(i: StripInput, t: number, onNow: (seq: number) => void): HTMLEl
   const line = el("div", { className: "now" });
   const present = i.running ?? !!i.now;
   const ran = i.ran || !!i.summary?.status.run;
-  const n = present || ran ? i.now : undefined;
+  const n = present || ran ? planWaits(i.now, i.summary, present) : undefined;
   if (n) {
     const b = el("button", { type: "button", className: "now-link" });
     setNow(b, n, t, present);
@@ -423,13 +439,21 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
         const b = nowRow.querySelector<HTMLElement>(".now-link");
         if (b) setNow(b, latest, t, present);
       }
-      const tailKey = JSON.stringify([sealedBy, i.sealed, i.snap?.you.principal, st?.phase, i.phase, st?.reason, st?.next, own]);
+      const tailKey = JSON.stringify([sealedBy, i.sealed, i.snap?.you.principal, st?.phase, i.phase, st?.reason, st?.next, own, st?.reasonCode, i.cardActs]);
       if (tailKey !== shown.tail) {
         const lines: HTMLElement[] = [];
         if (sealedBy || i.sealed) lines.push(el("div", { className: "closed", textContent: sealedText(i) }));
         else if (st?.reason || st?.next) {
           const line = el("div", { className: "waiting" });
-          line.append(...withCode(cap([st.reason, st.next].filter(Boolean).join(" → "))));
+          const onCard = CARD_ACT_REASON[st.reasonCode ?? ""];
+          if (onCard && st.next && i.cardActs?.includes(onCard.act)) {
+            line.append(cap([st.reason, onCard.line].filter(Boolean).join(" → ")));
+            const fold = el("details", { className: "next-commands" });
+            const cmds = el("p");
+            cmds.append(...withCode(cap(st.next)));
+            fold.append(el("summary", { textContent: "or comment on the issue" }), cmds);
+            line.append(fold);
+          } else line.append(...withCode(cap([st.reason, st.next].filter(Boolean).join(" → "))));
           lines.push(line);
         }
         // A step no Needs-you card holds: say where to act, and link it on GitHub. What the

@@ -382,7 +382,7 @@ async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
     }
     // A row being read says so in its cells; the page says once that the evidence is being read.
     box.replaceChildren(...(cold().length ? [el("p", READING, "evidence-age")] : []), ...errors,
-      el("p", LADDER_LEGEND, "ladder-legend"), table(["Repository", "Class", "Mode", "Track record", "Blocks promotion"], rows));
+      el("p", LADDER_LEGEND, "ladder-legend"), table(["Repository", "Class", "Mode", "Track record", "Blocks promotion"], rows, "evidence-table"));
   };
   // cold is the repositories whose classes still lack evidence: a pod that had none cached is
   // reading it, so they are asked again until it lands, as the repository page does (#629).

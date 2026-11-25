@@ -83,10 +83,16 @@ function modeLadder(b: Binding, change: () => void): HTMLElement {
   return group;
 }
 
+// bindingAnchor is a binding's row in the editor: a class card's mode pill links to it.
+export function bindingAnchor(name: string): string {
+  return `binding-${name}`;
+}
+
 // bindingForm keeps the fields a binding needs in view and the valid optional fields in two folds.
 function bindingForm(b: Binding, meaning: Record<string, unknown> | undefined, change: () => void): HTMLFieldSetElement {
   const fs = el("fieldset", undefined, "binding-form");
   fs.dataset.binding = b.name;
+  fs.id = bindingAnchor(b.name);
   fs.append(el("legend", b.name), modeLadder(b, change));
   if (b.name !== "review") {
     const fields = BINDING_FIELDS.filter((f) => bindingFieldValid(f.key, meaning));

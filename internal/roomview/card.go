@@ -281,7 +281,7 @@ func (c *card) facts(s summary.Summary) {
 			}
 			rows = append(rows, [2]string{"Will run", strings.Join(parts, " → ")})
 		}
-		if cost := costLine(wc); cost != "" {
+		if cost := CostLine(wc); cost != "" {
 			rows = append(rows, [2]string{"Cost", cost})
 		}
 		if strip := summary.Strip(s.Flow); strip != "" {
