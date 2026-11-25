@@ -707,7 +707,9 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24em; overflow
 .members { margin: 0; padding-left: 18px; } .members li { overflow-wrap: anywhere; }
 .stop { margin: 0; }
 .task-cancel .hint { margin: 4px 0 0; color: var(--muted-foreground); font-size: var(--text-small); }
-.confirm { display: inline-flex; gap: 6px; }
+.confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.stop-discard { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-small); color: var(--brand-header-foreground); }
 button.destructive { color: var(--destructive-text); border-color: color-mix(in srgb, var(--destructive) 45%, var(--border)); }
 input, select, textarea {
   font: inherit;
@@ -749,6 +751,7 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .need-why { color: var(--muted-foreground); }
 .need-act { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 4px; }
 .need-act button { font-weight: 700; padding: 0 14px; }
+.need-act input[type="text"] { flex: 1 1 200px; min-width: 140px; }
 /* The link out reads as the card's button: the primary fill, a full target; its arrow says it leaves. */
 a.need-go {
   display: inline-flex; align-items: center; min-height: var(--hit); box-sizing: border-box; padding: 0 14px;

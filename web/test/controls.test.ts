@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Frame, Snapshot } from "../src/conn";
-import { confirmButton, hasControls, mountComposer, mountControls, rejection } from "../src/controls";
+import { confirmButton, hasControls, mountComposer, mountControls, mountStop, rejection } from "../src/controls";
 import { RoomState } from "../src/room-state";
 import { newRoomForm } from "../src/view";
 
@@ -456,44 +456,76 @@ describe("the control groups", () => {
     expect(c.root.querySelector<HTMLElement>(".group-room")!.hidden).toBe(true);
   });
 
-  it("cancels or discards a running task after a confirmation, owners only, and not once it ended (#644)", () => {
-    const o = setup(you("human:o", "owner"));
-    expect(o.btn("cancel_task")).toBeNull(); // no summary yet: no task to cancel
-    o.controls.setSummary({ status: { phase: "Implementing", issue: null } } as never);
-    o.btn("cancel_task")!.click();
-    expect(o.sent).toHaveLength(0); // the first click asks
-    expect(o.btn("cancel_task")!.textContent).toBe("confirm: cancel task");
-    o.btn("cancel_task")!.click();
-    o.btn("discard_task")!.click();
-    o.btn("discard_task")!.click();
-    expect(o.acts()).toEqual([{ kind: "cancel" }, { kind: "cancel", discard: true }]);
-    expect(o.root.querySelector(".task-cancel")!.textContent).toContain("cannot delete an issue");
-    o.controls.setSummary({ status: { phase: "Stopped", issue: null } } as never);
+  it("provides one Stop button with a discard checkbox inside its two-press confirm, and removes the factory/stop line from the owner fold", () => {
+    // Owner fold no longer carries the factory/stop label instruction or duplicate cancel/discard controls.
+    const o = mountOwner();
+    o.controls.setSummary({ status: { phase: "Implementing", issue: { number: 74, url: "https://github.com/Smana/x/issues/74" } } } as never);
+    expect(o.root.querySelector(".stop")).toBeNull();
+    expect(o.root.textContent).not.toContain("label the issue");
+    expect(o.root.textContent).not.toContain("factory/stop");
     expect(o.btn("cancel_task")).toBeNull();
     expect(o.btn("discard_task")).toBeNull();
-    for (const role of ["collaborator", "watcher"]) {
-      const c = setup(you("human:c", role));
-      c.controls.setSummary({ status: { phase: "Implementing", issue: null } } as never);
-      expect(c.btn("cancel_task")).toBeNull();
-    }
-    const sealed = setup(you("human:o", "owner"));
-    sealed.state.sealed = true;
-    sealed.controls.setSummary({ status: { phase: "Implementing", issue: null } } as never);
-    sealed.controls.refresh();
-    expect(sealed.btn("cancel_task")).toBeNull();
-    expect(rejection("not_maintainer")).toContain("owner or a maintainer");
-  });
 
-  it("says how to stop the task, with the issue's link, once the summary names one", () => {
-    const o = mountOwner();
-    expect(o.root.querySelector(".stop")).toBeNull();
-    o.controls.setSummary({ status: { issue: { number: 74, url: "https://github.com/Smana/x/issues/74" } } } as never);
-    const stop = o.root.querySelector(".group-room .stop")!;
-    expect(stop.textContent).toBe("Stop the task: label the issue #74 factory/stop");
-    expect(stop.querySelector("a")?.getAttribute("href")).toBe("https://github.com/Smana/x/issues/74");
-    expect(stop.querySelector("code")?.textContent).toBe("factory/stop");
-    o.controls.setSummary({ status: { issue: null } } as never);
-    expect(o.root.querySelector(".stop")).toBeNull();
+    // Header Stop control: one button behind two-press confirm with discard checkbox inside confirm.
+    const sent: Record<string, any>[] = [];
+    const state = new RoomState("human:a", 4);
+    const host = document.createElement("div");
+    let viewer = you("human:o", "owner");
+    let stopEnabled = false;
+    const stop = mountStop(host, { send: (f) => { sent.push(f); return true; } }, state, () => viewer, () => stopEnabled);
+    const stopBtn = () => [...host.querySelectorAll<HTMLButtonElement>('button[data-act="stop_task"]')].find(shown) ?? null;
+    expect(stopBtn()).toBeNull(); // no summary yet
+    stop.setSummary({ status: { phase: "Implementing", issue: null } } as never);
+    expect(stopBtn()!.textContent).toBe("Stop");
+    expect(host.querySelector('input[name="stopDiscard"]')).toBeNull();
+
+    // First click arms confirm and reveals the discard checkbox inside the confirm.
+    stopBtn()!.click();
+    expect(sent).toHaveLength(0);
+    expect(stopBtn()!.textContent).toBe("confirm: Stop");
+    const discard = host.querySelector<HTMLInputElement>('input[name="stopDiscard"]')!;
+    expect(discard).not.toBeNull();
+    expect(discard.checked).toBe(false);
+    expect(discard.getAttribute("aria-label")).toBeTruthy();
+
+    // Second click without discard sends cancel.
+    stopBtn()!.click();
+    expect(sent.map((f) => f.action)).toEqual([{ kind: "cancel" }]);
+    expect(stopBtn()!.textContent).toBe("Stop");
+    expect(host.querySelector('input[name="stopDiscard"]')).toBeNull();
+
+    // Arming again and checking discard sends discard: true (and uses kind: "stop" when stop roomAct is enabled).
+    stopEnabled = true;
+    stopBtn()!.click();
+    host.querySelector<HTMLInputElement>('input[name="stopDiscard"]')!.checked = true;
+    stopBtn()!.click();
+    expect(sent.map((f) => f.action)).toEqual([{ kind: "cancel" }, { kind: "stop", discard: true }]);
+
+    // Collaborator sees Stop when stop roomAct is enabled, not when disabled; watcher never sees it.
+    viewer = you("human:c", "collaborator");
+    stop.refresh();
+    expect(stopBtn()).not.toBeNull();
+    stopEnabled = false;
+    stop.refresh();
+    expect(stopBtn()).toBeNull();
+    viewer = you("human:w", "watcher");
+    stopEnabled = true;
+    stop.refresh();
+    expect(stopBtn()).toBeNull();
+
+    // Ended phase or sealed room hides Stop.
+    viewer = you("human:o", "owner");
+    stop.refresh();
+    expect(stopBtn()).not.toBeNull();
+    stop.setSummary({ status: { phase: "Stopped", issue: null } } as never);
+    expect(stopBtn()).toBeNull();
+    stop.setSummary({ status: { phase: "Implementing", issue: null } } as never);
+    state.sealed = true;
+    stop.refresh();
+    expect(stopBtn()).toBeNull();
+
+    expect(rejection("not_maintainer")).toContain("owner or a maintainer");
+    expect(rejection("act_not_enabled")).not.toBe("Refused: act_not_enabled");
   });
 });
 

@@ -376,3 +376,46 @@ describe("a coordination parent's row", () => {
     expect(rowCells(row, new Date()).phase).toBe("Coordinating · family v2: contract Merged, consumer Running (+1 restricted), recovery retry_child");
   });
 });
+
+describe("the five inbox types in the room list (phase G5)", () => {
+  const mk = (id: string, kind: string, type: string): RoomRow => ({
+    id, phase: "Active", owner: "human:a", driver: "system:factory", dataClass: "internal", lastSeq: 1,
+    repository: "o/a", issue: 1, title: id, task: "Escalated", needsYou: 1,
+    need: { kind, type, id: "1", what: kind },
+  });
+
+  it("sorts rooms that need you by the five inbox types: question, plan, review, blocked, failed", () => {
+    const rows = [
+      mk("failed01", "recovery", "failed"),
+      mk("blockd01", "hold", "blocked"),
+      mk("review01", "merge", "review"),
+      mk("plan0001", "plan_review", "plan"),
+      mk("quest001", "question", "question"),
+    ];
+    expect(sortRooms(rows).map((r) => r.id)).toEqual(["quest001", "plan0001", "review01", "blockd01", "failed01"]);
+  });
+
+  it("shows the need type on the pill and filters by type when needs me is checked", async () => {
+    const rows = [
+      mk("quest001", "question", "question"),
+      mk("plan0001", "plan_confirmation", "plan"),
+      mk("review01", "merge", "review"),
+    ];
+    const get = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
+    const root = document.createElement("div");
+    await listRooms(root, get as unknown as typeof fetch);
+    const pills = [...root.querySelectorAll<HTMLElement>("tbody .needs-pill")];
+    expect(pills.map((p) => [p.dataset.type, p.textContent])).toEqual([
+      ["question", "question"],
+      ["plan", "plan"],
+      ["review", "review"],
+    ]);
+    const typeSelect = root.querySelector<HTMLSelectElement>('select[name="needType"]')!;
+    expect(typeSelect.hidden).toBe(true);
+    (root.querySelector('input[name="needsMe"]') as HTMLInputElement).click();
+    await vi.waitFor(() => expect(typeSelect.hidden).toBe(false));
+    typeSelect.value = "plan";
+    typeSelect.dispatchEvent(new Event("change"));
+    expect([...root.querySelectorAll("tbody tr")].map((tr) => tr.querySelector(".room-id")?.textContent)).toEqual(["plan0001"]);
+  });
+});

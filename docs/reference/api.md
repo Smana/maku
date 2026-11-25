@@ -774,6 +774,7 @@ close frame. So is a peer that does not take a frame within 10 s (`write_timeout
 | `approval_expired` | The decision reached the broker after the approval's `expiresAt`; the approval closed as `expired` |
 | `four_eyes` | The room requires an approver who did not prompt the turn |
 | `access_unverified` | A digest-bound approval (a protected-path push), and GitHub could not say whether the approver writes to the room's repository: retry |
+| `act_not_enabled` | The room act is not enabled on this broker (`human.roomActs`) |
 
 A digest-bound approval, which holds a protected-path push for a maintainer, is decided on the
 room page only by an approver who writes to the room's repository on GitHub, the standing the

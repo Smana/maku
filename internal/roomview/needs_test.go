@@ -3,6 +3,7 @@
 package roomview
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -118,5 +119,48 @@ func TestNeedsSaysWhatItCouldNotRead(t *testing.T) {
 	}
 	if !strings.Contains(empty.String(), "nothing needs you") {
 		t.Errorf("%s", empty.String())
+	}
+}
+
+// Phase G5 golden: `maku needs` groups items by the five closed types (question, plan, review,
+// blocked, failed) with one entry per task (keeping each task's most urgent type).
+func TestNeedsGroupedByTypeGolden(t *testing.T) {
+	items := []summary.Need{
+		// Deliberately unsorted, plus a lower-priority duplicate on room q1111111 to prove dedup.
+		{Kind: summary.NeedRecovery, Type: summary.TypeFailed, ID: "budget_reached", Room: "f5555555",
+			What:   "a maintainer comments `/factory retry` on issue #55 to run it again, or closes the room",
+			URL:    "https://github.com/Smana/a/issues/55",
+			Action: summary.NeedAction{Kind: "retry", Label: "retry the task or close the room", URL: "https://rooms.test/r/f5555555"}},
+		{Kind: summary.NeedApproval, Type: summary.TypeBlocked, ID: "01J9A", Room: "q1111111",
+			What:   "push to agent/q1111111",
+			URL:    "https://rooms.test/r/q1111111#01J9A",
+			Action: summary.NeedAction{Kind: "decide", Label: "open the room page to decide", URL: "https://rooms.test/r/q1111111#01J9A"}},
+		{Kind: summary.NeedHold, Type: summary.TypeBlocked, ID: "waiting_human_driver", Room: "b4444444",
+			What:   "the factory's task waits while a person drives this room: hand the driver back to start its next run",
+			URL:    "https://rooms.test/r/b4444444",
+			Action: summary.NeedAction{Kind: "release", Label: "hand the driver back to the factory", URL: "https://rooms.test/r/b4444444"}},
+		{Kind: summary.NeedMerge, Type: summary.TypeReview, ID: "33", Room: "r3333333",
+			What:   "a maintainer approves PR #33: approve the head you read on the PR page; the merger merges that head",
+			URL:    "https://github.com/Smana/a/pull/33",
+			Action: summary.NeedAction{Kind: "merge", Label: "approve the head on the pull request", URL: "https://github.com/Smana/a/pull/33"}},
+		{Kind: summary.NeedPlanReview, Type: summary.TypePlan, ID: "22", Room: "p2222222",
+			What:   "the author or a maintainer reviews the proposed plan on issue #22, then approves, revises, or splits it",
+			URL:    "https://github.com/Smana/a/issues/22",
+			Action: summary.NeedAction{Kind: "plan", Label: "review the plan on the issue", URL: "https://github.com/Smana/a/issues/22"}},
+		{Kind: summary.NeedQuestion, Type: summary.TypeQuestion, ID: "11", Room: "q1111111",
+			What:   "@alice answers the scoper's question by editing issue #11",
+			URL:    "https://github.com/Smana/a/issues/11",
+			Action: summary.NeedAction{Kind: "answer", Label: "answer on issue #11", URL: "https://github.com/Smana/a/issues/11"}},
+	}
+	var got strings.Builder
+	if err := Needs(&got, items, nil, Options{Format: Text, Rooms: "https://rooms.test"}); err != nil {
+		t.Fatal(err)
+	}
+	wantBytes, err := os.ReadFile("testdata/needs_grouped.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != string(wantBytes) {
+		t.Fatalf("maku needs grouped output mismatch:\ngot:\n%s\nwant:\n%s", got.String(), string(wantBytes))
 	}
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { mountApprovalMemory } from "./approval-memory";
-import { fetchDashboards } from "./dashboards";
+import { fetchRoomctl } from "./dashboards";
 import { mountInstallBanner } from "./install-banner";
 import { mountRoom } from "./room";
 import { isSettings, mountSettings, settingsFrame } from "./settings";
@@ -18,7 +18,13 @@ const m = location.pathname.match(/^\/r\/([a-z2-7]{8})$/);
 // The install's unsafe settings, on the rooms list and every settings page (the room has its own
 // per-run "Not sandboxed" banner).
 if (!m) void mountInstallBanner(app, fetch);
-if (m) mountRoom(app, m[1], theme, { dashboards: () => fetchDashboards(fetch) });
+if (m) {
+  const setup = fetchRoomctl(fetch);
+  mountRoom(app, m[1], theme, {
+    dashboards: () => setup.then((s) => s.dashboards),
+    roomActs: () => setup.then((s) => s.roomActs),
+  });
+}
 // Approval memory is a settings section: the same header and tabs, its own page in main.
 else if (location.pathname === "/settings/approval-memory") mountApprovalMemory(settingsFrame(app, "Approval memory", "/settings/approval-memory", theme), fetch);
 else if (isSettings(location.pathname)) void mountSettings(app, location.pathname, fetch, theme);

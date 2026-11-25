@@ -1,0 +1,16 @@
+Needs across rooms · 5 needs you
+
+question
+- question — "@alice answers the scoper's question by editing issue #11" → answer on issue #11 (https://github.com/Smana/a/issues/11) · room q1111111 (https://rooms.test/r/q1111111)
+
+plan
+- plan_review — "the author or a maintainer reviews the proposed plan on issue #22, then approves, revises, or splits it" → review the plan on the issue (https://github.com/Smana/a/issues/22) · room p2222222 (https://rooms.test/r/p2222222)
+
+review
+- merge — "a maintainer approves PR #33: approve the head you read on the PR page; the merger merges that head" → approve the head on the pull request (https://github.com/Smana/a/pull/33) · room r3333333 (https://rooms.test/r/r3333333)
+
+blocked
+- hold — "the factory's task waits while a person drives this room: hand the driver back to start its next run" → hand the driver back to the factory (https://rooms.test/r/b4444444) · room b4444444 (https://rooms.test/r/b4444444)
+
+failed
+- recovery — "a maintainer comments `/factory retry` on issue #55 to run it again, or closes the room" → retry the task or close the room (https://rooms.test/r/f5555555) · room f5555555 (https://rooms.test/r/f5555555)

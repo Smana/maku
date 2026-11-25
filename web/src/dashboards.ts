@@ -41,17 +41,38 @@ export function expandDashboards(templates: Dashboard[] | undefined, ids: Dashbo
   return out;
 }
 
+export interface RoomctlSetup {
+  dashboards: Dashboard[];
+  roomActs: string[];
+}
+
+// fetchRoomctl reads GET /api/roomctl once for the room page's dashboard link templates and
+// enabled room acts (human.roomActs); empty lists when absent or unreadable.
+export async function fetchRoomctl(get: typeof fetch = fetch): Promise<RoomctlSetup> {
+  try {
+    const r = await api("/api/roomctl", {}, get);
+    if (!r.ok) return { dashboards: [], roomActs: [] };
+    const body = (await r.json()) as { dashboards?: unknown; roomActs?: unknown };
+    const dashboards = Array.isArray(body.dashboards)
+      ? body.dashboards.filter((d): d is Dashboard =>
+        typeof d?.label === "string" && typeof d?.url === "string").map((d) => ({ label: d.label, url: d.url }))
+      : [];
+    const roomActs = Array.isArray(body.roomActs)
+      ? body.roomActs.filter((a): a is string => typeof a === "string")
+      : [];
+    return { dashboards, roomActs };
+  } catch {
+    return { dashboards: [], roomActs: [] };
+  }
+}
+
 // fetchDashboards reads the templates once; none when the broker has none or cannot answer,
 // since the links are a convenience the page works without.
 export async function fetchDashboards(get: typeof fetch = fetch): Promise<Dashboard[]> {
-  try {
-    const r = await api("/api/roomctl", {}, get);
-    if (!r.ok) return [];
-    const body = (await r.json()) as { dashboards?: unknown };
-    if (!Array.isArray(body.dashboards)) return [];
-    return body.dashboards.filter((d): d is Dashboard =>
-      typeof d?.label === "string" && typeof d?.url === "string").map((d) => ({ label: d.label, url: d.url }));
-  } catch {
-    return [];
-  }
+  return (await fetchRoomctl(get)).dashboards;
+}
+
+// fetchRoomActs reads the enabled room acts (human.roomActs) once.
+export async function fetchRoomActs(get: typeof fetch = fetch): Promise<string[]> {
+  return (await fetchRoomctl(get)).roomActs;
 }

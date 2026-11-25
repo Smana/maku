@@ -10,13 +10,13 @@ import (
 	"github.com/Smana/maku/internal/summary"
 )
 
-// Needs writes the caller's needs as a list to show as it is (CD21, CD28): one line per item — its kind,
-// what it asks, and the one action's label, linked where that action happens — then the room it belongs
-// to; and one line for the rooms whose state could not be read, so a list never passes them off as quiet
-// (Review Focus 1). The items arrive in needs/v1's one order (summary.Ordered): this view never reorders
-// them, so the tool, the CLI and the panel read one list.
+// Needs writes the caller's needs grouped by the five closed inbox types (question, plan, review,
+// blocked, failed) in urgency order (phase G5): one line per item — its kind, what it asks, and the
+// one action's label, linked where that action happens — then the room it belongs to; and one line
+// for the rooms whose state could not be read, so a list never passes them off as quiet.
 func Needs(w io.Writer, items []summary.Need, unread []string, o Options) error {
 	c := &card{o: o}
+	items = summary.Inbox(items)
 	head := c.bold("Needs across rooms")
 	switch {
 	case len(items) == 0:
@@ -26,8 +26,34 @@ func Needs(w io.Writer, items []summary.Need, unread []string, o Options) error 
 		head += " · " + strconv.Itoa(len(items)) + " needs you"
 	}
 	c.line(head)
+	groups := make(map[string][]summary.Need)
+	var other []summary.Need
 	for _, n := range items {
-		c.line("- " + c.needItem(n))
+		t := n.Type
+		if t == "" {
+			t = summary.NeedType(n.Kind)
+		}
+		if t == "" {
+			other = append(other, n)
+			continue
+		}
+		groups[t] = append(groups[t], n)
+	}
+	for _, t := range summary.NeedTypes() {
+		if len(groups[t]) == 0 {
+			continue
+		}
+		c.line("")
+		c.line(c.bold(t))
+		for _, n := range groups[t] {
+			c.line("- " + c.needItem(n))
+		}
+	}
+	if len(other) > 0 {
+		c.line("")
+		for _, n := range other {
+			c.line("- " + c.needItem(n))
+		}
 	}
 	if len(unread) > 0 {
 		c.line("")

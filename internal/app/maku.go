@@ -936,7 +936,7 @@ func (r Maku) needs(ctx context.Context, c maku.Client, cursorsPath string, args
 		if _, err := fmt.Fprintln(r.Out, string(page.Raw())); err != nil {
 			return err
 		}
-	} else if err := roomview.Needs(r.Out, page.Items, page.Unread,
+	} else if err := roomview.Needs(r.Out, summary.Inbox(page.Items), page.Unread,
 		roomview.Options{Format: f, Now: time.Now(), Rooms: c.URL}); err != nil {
 		return err
 	}

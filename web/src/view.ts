@@ -6,6 +6,7 @@ import { mountBrand } from "./brand";
 import { timeEl } from "./duration";
 import { statusIcon } from "./icons";
 import { maxRows } from "./limits";
+import { NEED_TYPES, needType, needTypeRank } from "./needs";
 import { ago } from "./summary";
 import { mountThemeButton, type ThemeController } from "./theme";
 import { mountSettingsLink } from "./settingslink";
@@ -44,6 +45,7 @@ export class RoomLog {
 export interface RoomRow {
   id: string; phase: string; owner: string; driver: string; dataClass: string; lastSeq: number;
   repository?: string; issue?: number; title?: string; task?: string; pr?: number; needsYou?: number;
+  need?: { kind: string; type?: string; id: string; what: string; url?: string };
   lastEventAt?: string;
   // status is the room page's status line, computed by the broker (summary.StatusLine): fixed words
   // and numbers, never agent text. Absent from an older broker, or when it does not know the state.
@@ -70,10 +72,29 @@ function lastMs(row: RoomRow): number {
   return isNaN(t) || t < Date.UTC(2000, 0, 1) ? 0 : t;
 }
 
-// sortRooms puts the rooms that need a human first, then the most recent activity, then the id.
+function rowNeedType(row: RoomRow): string {
+  if (!row.need) return "";
+  return row.need.type || needType(row.need.kind);
+}
+
+// sortRooms puts the rooms that need a human first (in the five-type inbox urgency order when a
+// need is present: question, plan, review, blocked, failed), then the most recent activity, then id.
 export function sortRooms(rows: RoomRow[]): RoomRow[] {
-  return [...rows].sort((a, b) =>
-    (b.needsYou ?? 0) - (a.needsYou ?? 0) || lastMs(b) - lastMs(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return [...rows].sort((a, b) => {
+    const an = a.needsYou ?? 0;
+    const bn = b.needsYou ?? 0;
+    if ((an > 0) !== (bn > 0)) return bn > 0 ? 1 : -1;
+    if (an > 0 && bn > 0) {
+      const at = rowNeedType(a);
+      const bt = rowNeedType(b);
+      if (at || bt) {
+        const diff = needTypeRank(at) - needTypeRank(bt);
+        if (diff !== 0) return diff;
+      }
+      if (bn !== an) return bn - an;
+    }
+    return lastMs(b) - lastMs(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  });
 }
 
 // rowCells is a room's table cells as text: the task it works on when it has one, else the room alone (#50).
@@ -154,8 +175,15 @@ function roomRow(row: RoomRow, now: Date): HTMLTableRowElement {
   if (c.needs) {
     const pill = document.createElement("span");
     pill.className = "needs-pill";
-    pill.textContent = c.needs;
-    pill.title = `${c.needs} need you`;
+    const t = rowNeedType(row);
+    if (t) {
+      pill.dataset.type = t;
+      pill.textContent = t;
+      pill.title = `${t} · ${c.needs} need you`;
+    } else {
+      pill.textContent = c.needs;
+      pill.title = `${c.needs} need you`;
+    }
     needs.append(pill);
   }
   // The task link is stretched over its row in CSS (.task-link::after), so the whole row
@@ -232,8 +260,24 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   };
   const mine = check("mine", "mine", filters.mine);
   const needsMe = check("needsMe", "needs me", filters.needsMe);
+  const needTypeFilter = document.createElement("select");
+  needTypeFilter.name = "needType";
+  needTypeFilter.setAttribute("aria-label", "need type");
+  const allTypes = document.createElement("option");
+  allTypes.value = "";
+  allTypes.textContent = "all types";
+  needTypeFilter.append(allTypes);
+  for (const t of NEED_TYPES) {
+    const o = document.createElement("option");
+    o.value = o.textContent = t;
+    needTypeFilter.append(o);
+  }
   const closed = check("closed", "closed", filters.closed);
-  const setAside = () => { mine.input.disabled = needsMe.input.disabled = closed.input.checked; };
+  const setAside = () => {
+    mine.input.disabled = needsMe.input.disabled = closed.input.checked;
+    needTypeFilter.hidden = closed.input.checked || !needsMe.input.checked;
+    if (needTypeFilter.hidden) needTypeFilter.value = "";
+  };
   setAside();
   const repo = document.createElement("select");
   repo.name = "repo";
@@ -278,7 +322,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   notice.setAttribute("role", "status");
   // The filters on the left, then the refresh control, and New room, the page's one primary
   // act, at the row's end.
-  tools.append(mine.label, needsMe.label, closed.label, repo, notice);
+  tools.append(mine.label, needsMe.label, needTypeFilter, closed.label, repo, notice);
 
   const table = document.createElement("table");
   table.className = "rooms";
@@ -293,18 +337,22 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   // changes nothing leaves the DOM, and so the focus, alone. A rebuild puts the focus back on
   // the same room's link. The tab's title counts the rooms that need you, for a background tab.
   let shown = "";
+  let latestRows: RoomRow[] = first;
   const fill = (rows: RoomRow[]) => {
+    latestRows = rows;
     const needing = rows.filter((r) => (r.needsYou ?? 0) > 0).length;
     document.title = needing > 0 ? `(${needing}) Maku rooms` : "Maku rooms";
     const now = new Date();
-    const sorted = sortRooms(rows);
-    const filtered = mine.input.checked || needsMe.input.checked || !!repo.value;
-    const key = JSON.stringify([filtered, closed.input.checked, sorted.map((r) => [rowCells(r, now), r.status])]);
+    const chosenType = !needTypeFilter.hidden ? needTypeFilter.value : "";
+    const visible = chosenType ? rows.filter((r) => rowNeedType(r) === chosenType) : rows;
+    const sorted = sortRooms(visible);
+    const filtered = mine.input.checked || needsMe.input.checked || !!chosenType || !!repo.value;
+    const key = JSON.stringify([filtered, closed.input.checked, chosenType, sorted.map((r) => [rowCells(r, now), r.status, rowNeedType(r)])]);
     if (key === shown) return;
     shown = key;
     const focused = document.activeElement instanceof HTMLAnchorElement && tbody.contains(document.activeElement)
       ? document.activeElement.getAttribute("href") : null;
-    if (rows.length > 0) {
+    if (visible.length > 0) {
       tbody.replaceChildren(...sorted.map((r) => roomRow(r, now)));
       if (focused) [...tbody.querySelectorAll("a")].find((l) => l.getAttribute("href") === focused)?.focus();
       return;
@@ -332,7 +380,9 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   mountAutoRefresh(tools, refetch, refresh);
   tools.append(add, addTask);
   // click, not change: a checkbox's change event needs a connected element; click fires either way.
-  for (const e of [mine.input, needsMe.input]) e.addEventListener("click", () => void refetch());
+  mine.input.addEventListener("click", () => void refetch());
+  needsMe.input.addEventListener("click", () => { setAside(); void refetch(); });
+  needTypeFilter.addEventListener("change", () => fill(latestRows));
   closed.input.addEventListener("click", () => { setAside(); void refetch(); });
   repo.addEventListener("change", () => void refetch());
 

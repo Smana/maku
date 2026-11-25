@@ -162,7 +162,7 @@ webhooks:
 | Ask | Answer, from |
 |---|---|
 | `status`, `how is it going`, `where is it` | `State:`, the issue, `Budget: $X of $Y (Z %)` (`so far` until `spendFinal`), `Merge:` with the gate's decision once there is one, and the room link (`task`) |
-| `needs me`, `what needs me` | one line per need with its action and link, or `Nothing waits on this task right now.` (`inbox`) |
+| `needs me`, `what needs me` | one line per task ordered by the five inbox types (`question`, `plan`, `review`, `blocked`, `failed`) with its action and link, or `Nothing waits on this task right now.` (`inbox`) |
 | `what changed`, `what has changed` | the ten newest milestones, then `More: the room page` (`task`) |
 | `the pull request`, `pr`, `the pr` | its number and link, or `No pull request yet in this room.` (`task`) |
 | `stop`, `stop it`, `how do i stop it` | with `stop` in `intentActions`, a ten-minute confirmation (`@<user>: stop task #<issue>? Its run ends now and the pull request stays open.`) with `Stop the task` and `Cancel`; without it, ``I can't stop a run from here. Apply the `factory/stop` label on the issue, or use Stop on the room page: <link>`` and no broker call |

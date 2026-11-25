@@ -12,11 +12,10 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 )
 
-// The needs/v1 kinds, in the one order every surface lists them (spec CD21). The declared order is
-// kindRank's: a deadline first, then this order, then the room, so two surfaces cannot disagree.
+// The needs/v1 kinds. Each kind folds into one of the five closed inbox types below via NeedType.
 const (
 	NeedPlanConfirmation = "plan_confirmation" // a scoper's proposed split, for a maintainer to accept
-	NeedPlanReview       = "plan_review"       // a plan-first task waiting for plan approval, revision, or split (phase F6)
+	NeedPlanReview       = "plan_review"       // a plan-first task's proposed plan waiting on approval (phase F6)
 	NeedApproval         = "approval"          // a requested approval the caller may decide here
 	NeedQuestion         = "question"          // the issue's author answers the scoper (SC8)
 	NeedMerge            = "merge"             // a maintainer merges, or approves, the pull request
@@ -26,9 +25,59 @@ const (
 	NeedHold             = "hold"              // a person's hold on the room keeps the task Queued (N3)
 )
 
-// kindOrder is the constants' declared order: the second key of Ordered (CD21).
-var kindOrder = [...]string{NeedPlanConfirmation, NeedPlanReview, NeedApproval, NeedQuestion, NeedMerge, NeedReview,
-	NeedFailedCheck, NeedRecovery, NeedHold}
+// The five closed inbox types, in urgency order: question, plan, review, blocked, failed (phase G5).
+const (
+	TypeQuestion = "question"
+	TypePlan     = "plan"
+	TypeReview   = "review"
+	TypeBlocked  = "blocked"
+	TypeFailed   = "failed"
+)
+
+// typeOrder is the five inbox types' urgency order: the first key of Ordered and Inbox.
+var typeOrder = [...]string{TypeQuestion, TypePlan, TypeReview, TypeBlocked, TypeFailed}
+
+// kindOrder is the tie-break order within the same inbox type.
+var kindOrder = [...]string{NeedQuestion, NeedPlanConfirmation, NeedPlanReview, NeedMerge, NeedReview,
+	NeedApproval, NeedFailedCheck, NeedHold, NeedRecovery}
+
+// NeedKinds returns every needs/v1 kind this package derives.
+func NeedKinds() []string { return slices.Clone(kindOrder[:]) }
+
+// NeedTypes returns the five closed inbox types in urgency order.
+func NeedTypes() []string { return slices.Clone(typeOrder[:]) }
+
+// NeedType folds a needs/v1 kind into its closed inbox type, or "" for an unknown kind.
+func NeedType(kind string) string {
+	switch kind {
+	case NeedQuestion:
+		return TypeQuestion
+	case NeedPlanConfirmation, NeedPlanReview:
+		return TypePlan
+	case NeedMerge, NeedReview:
+		return TypeReview
+	case NeedHold, NeedFailedCheck, NeedApproval:
+		return TypeBlocked
+	case NeedRecovery:
+		return TypeFailed
+	default:
+		return ""
+	}
+}
+
+func typeRank(t string) int {
+	if i := slices.Index(typeOrder[:], t); i >= 0 {
+		return i
+	}
+	return len(typeOrder)
+}
+
+func effectiveType(n Need) string {
+	if n.Type != "" {
+		return n.Type
+	}
+	return NeedType(n.Kind)
+}
 
 // kindRank is a kind's place in kindOrder; a kind this package does not know sorts last.
 func kindRank(kind string) int {
@@ -37,6 +86,22 @@ func kindRank(kind string) int {
 	}
 	return len(kindOrder)
 }
+
+// terminalPhases are the task phases where the task has ended and no need may remain open.
+var terminalPhases = map[string]bool{
+	"Done":     true,
+	"NoOp":     true,
+	"Stopped":  true,
+	"Closed":   true,
+	"Rejected": true,
+	"Reverted": true,
+	"Sealed":   true,
+}
+
+// IsTerminalPhase reports whether phase is an ended task phase whose needs are stale.
+func IsTerminalPhase(phase string) bool { return terminalPhases[phase] }
+
+func taskEnded(f *envelope.TaskFacts) bool { return f != nil && terminalPhases[f.Phase] }
 
 // NeedsIn is one room, as the caller sees it (CD21). Sealed, and facts that cannot be read,
 // contribute nothing.
@@ -57,6 +122,10 @@ type NeedsIn struct {
 	// visible child's repository.
 	Coordination         *CoordinationNeeds
 	CoordinationStanding map[string]GitHubStanding
+	// PRClosed and QuestionAnswered drop stale needs whose pull request merged/closed or whose
+	// question was answered elsewhere (phase G5).
+	PRClosed         bool
+	QuestionAnswered bool
 }
 
 // GitHubStanding is the caller's standing where a merge, a review and an answer happen (CD26): their
@@ -100,7 +169,7 @@ type NeedSource struct {
 // whose state cannot be read, contribute nothing: no item's link may point at work that moved (Review
 // Focus 2). The items are not ordered here: Ordered is the only order (CD21).
 func Items(in NeedsIn) []Need {
-	if in.Sealed || !in.FactsRead {
+	if in.Sealed || !in.FactsRead || taskEnded(in.Facts) {
 		return nil
 	}
 	var out []Need
@@ -113,57 +182,61 @@ func Items(in NeedsIn) []Need {
 	return append(out, coordinationNeeds(in)...)
 }
 
+func isIssueAuthor(f *envelope.TaskFacts, login string) bool {
+	return f != nil && f.Issue != nil && f.Issue.Author != "" && login != "" && strings.EqualFold(f.Issue.Author, login)
+}
+
 // factsNeed is the one need a room's task facts imply: the phase and the reason say which, and the
 // caller's standing says whose it is. One room is one task, so its facts are at most one need; the
 // room's live approvals are the other source.
 func factsNeed(in NeedsIn) (Need, bool) {
 	f := in.Facts
 	switch {
-	case f == nil:
+	case f == nil || taskEnded(f):
 		return Need{}, false
 	// Split: a proposed split reached nobody: Merge needs a pull request and Answer needs needs_author,
 	// so the row had no need and no step (G4). A plan confirmation has no pull-request precondition,
 	// which is exactly what it needs (needs/v1).
 	case f.Phase == "Escalated" && f.Reason == "split_proposed":
 		return planConfirmationNeed(in, f), true
-	// Plan review (phase F6): a plan-first task waiting for its author or a maintainer to approve,
-	// revise, or split the scoper's plan.
-	case f.Phase == "AwaitingHuman" && f.Reason == "plan_review" && (in.Caller.CanClose || in.GitHub.MayWrite || in.Caller.RoomScoped ||
-		(f.Issue != nil && f.Issue.Author != "" && strings.EqualFold(f.Issue.Author, in.GitHub.Login))):
+	// Plan review (phase F6): a plan-first task waits for the issue's author or a maintainer to
+	// approve, revise, or split the proposed plan.
+	case f.Phase == "AwaitingHuman" && f.Reason == "plan_review" && (in.Caller.CanClose || in.GitHub.MayWrite || isIssueAuthor(f, in.GitHub.Login) || in.Caller.RoomScoped):
 		return planReviewNeed(in, f), true
 	// Review before merge: a requested reviewer is asked for the review the merge then follows, so one
 	// pull request is one item for them (CD26). It is GitHub's to decide, as a merge is, and it lives as
 	// long as the merge does: the facts keep their PR after it merged, so a phase other than
 	// AwaitingHuman's would hand a requested reviewer a review of work that already landed (Review
 	// Focus 2).
-	case f.Phase == "AwaitingHuman" && f.PR != nil && in.GitHub.Login != "" && slices.ContainsFunc(in.GitHub.Reviewers, func(l string) bool {
+	case !in.PRClosed && f.Phase == "AwaitingHuman" && f.PR != nil && in.GitHub.Login != "" && slices.ContainsFunc(in.GitHub.Reviewers, func(l string) bool {
 		return strings.EqualFold(l, in.GitHub.Login)
 	}):
 		return reviewNeed(in, f), true
 	// CD26: a merge is GitHub's, not the room's: whoever may write the repository sees it, whether or
 	// not they own the room the task's log lives in. The prose is waiting.go's MergeNeed, so Approve and
 	// "approve the current commit" come from one table (AM3).
-	case f.Phase == "AwaitingHuman" && f.PR != nil && (in.GitHub.MayWrite || in.Caller.RoomScoped):
+	case !in.PRClosed && f.Phase == "AwaitingHuman" && f.PR != nil && (in.GitHub.MayWrite || in.Caller.RoomScoped):
 		return mergeNeed(in, f)
 	// failed_check: a check the factory waited on is the one thing a person re-runs or the factory
 	// retries, and re-running it is GitHub's too.
-	case failedChecks()[f.Reason] && (in.GitHub.MayWrite || in.Caller.RoomScoped):
+	case (!in.PRClosed || f.PR == nil) && f.Phase != "Merged" && f.Phase != "Verifying" && failedChecks()[f.Reason] && (in.GitHub.MayWrite || in.Caller.RoomScoped):
 		return failedCheckNeed(in, f), true
 	// recovery: the run spent what it had, or the sandbox was lost as often as the factory resumes a
 	// task, or an escalated task offers a deeper step-up, so a maintainer decides whether to retry.
-	case (recoveries()[f.Reason] || offeredStepUp(f) != nil) && (in.Caller.CanClose || in.Caller.RoomScoped):
+	case f.Phase == "Escalated" && (recoveries()[f.Reason] || offeredStepUp(f) != nil) && (in.Caller.CanClose || in.Caller.RoomScoped):
 		return recoveryNeed(in, f), true
 	// hold: summary.Hold's two Queued reasons, for a caller the policy's StartRun lets release them.
 	case f.Phase == "Queued" && holds()[f.Reason] != "" && in.Caller.CanRelease:
 		return holdNeed(in, f), true
 	// question: the scoper bounced the task to its issue's author (SC8), and the room's owner is who
 	// can close the room over it.
-	case f.Phase == "Escalated" && f.Reason == "needs_author" && (in.Caller.CanClose || in.Caller.RoomScoped):
+	case !in.QuestionAnswered && f.Phase == "Escalated" && f.Reason == "needs_author" && (in.Caller.CanClose || isIssueAuthor(f, in.GitHub.Login) || in.Caller.RoomScoped):
 		n, ok := QuestionNeed(f)
 		if !ok {
 			return Need{}, false
 		}
 		n.Why, n.Issue = whyOf(f.Reason), issueNumber(f)
+		n.Act = "answer"
 		n.Action = NeedAction{Kind: "answer", Label: fmt.Sprintf("answer on issue #%s", n.ID), URL: n.URL}
 		return stamp(n, in, NeedSource{Kind: "facts", Reason: f.Reason}), true
 	}
@@ -173,7 +246,7 @@ func factsNeed(in NeedsIn) (Need, bool) {
 // planConfirmationNeed is a scoper's proposed split (G4): a maintainer comments to accept the parts, or
 // to run the task whole. Its sentence is nextStep's, so the need and the NEXT box say the same thing.
 func planConfirmationNeed(in NeedsIn, f *envelope.TaskFacts) Need {
-	n := Need{Kind: NeedPlanConfirmation, ID: number(issueNumber(f)), Issue: issueNumber(f),
+	n := Need{Kind: NeedPlanConfirmation, Act: "split", ID: number(issueNumber(f)), Issue: issueNumber(f),
 		Why: whyOf(f.Reason), URL: issueURL(in, f),
 		What: clipWhat("a maintainer reads the proposed parts on the issue, then comments `/factory split` to accept them, or `/factory retry` to run the task whole")}
 	if n.Issue > 0 {
@@ -183,20 +256,19 @@ func planConfirmationNeed(in NeedsIn, f *envelope.TaskFacts) Need {
 	return stamp(n, in, NeedSource{Kind: "facts", Reason: f.Reason})
 }
 
-// planReviewNeed is a plan-first task's plan gate (phase F6): the author or a maintainer approves,
-// revises, or splits the proposed plan on the issue.
+// planReviewNeed is a plan-first task's proposed plan waiting for approval, revision, or split (F6).
 func planReviewNeed(in NeedsIn, f *envelope.TaskFacts) Need {
 	id := number(issueNumber(f))
 	if id == "" {
 		id = "plan_review"
 	}
-	n := Need{Kind: NeedPlanReview, ID: id, Issue: issueNumber(f),
+	n := Need{Kind: NeedPlanReview, Act: "plan", ID: id, Issue: issueNumber(f),
 		Why: whyOf(f.Reason), URL: firstURL(issueURL(in, f), in.URL),
-		What: clipWhat("review the proposed plan and comment `/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`")}
+		What: clipWhat("the author or a maintainer reviews the proposed plan, then approves, revises, or splits it")}
 	if n.Issue > 0 {
-		n.What = clipWhat(fmt.Sprintf("review the proposed plan on issue #%d and comment `/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`", n.Issue))
+		n.What = clipWhat(fmt.Sprintf("the author or a maintainer reviews the proposed plan on issue #%d, then approves, revises, or splits it", n.Issue))
 	}
-	n.Action = NeedAction{Kind: "comment", Label: "review the plan on the issue", URL: n.URL}
+	n.Action = NeedAction{Kind: "plan", Label: "review the plan on the issue", URL: n.URL}
 	return stamp(n, in, NeedSource{Kind: "facts", Reason: f.Reason})
 }
 
@@ -259,7 +331,7 @@ func offeredStepUp(f *envelope.TaskFacts) *DeeperOffer {
 // recoveryNeed is a task nothing runs on any more (its budget is spent, or the sandbox was lost as
 // often as the factory resumes one): a maintainer decides whether to retry it or to close it.
 func recoveryNeed(in NeedsIn, f *envelope.TaskFacts) Need {
-	n := Need{Kind: NeedRecovery, ID: f.Reason, Issue: issueNumber(f), PR: prNumber(f),
+	n := Need{Kind: NeedRecovery, Act: "retry", ID: f.Reason, Issue: issueNumber(f), PR: prNumber(f),
 		Why: whyOf(f.Reason), URL: firstURL(issueURL(in, f), in.URL), Deeper: offeredStepUp(f)}
 	n.What = clipWhat("a maintainer decides whether the task is retried or closed: a retry is `/factory retry` on the issue")
 	if n.Issue > 0 {
@@ -312,11 +384,20 @@ func live(pending map[string]Approval, now time.Time) []Approval {
 	return out
 }
 
-// Ordered sorts items as CD21 states the one order: a deadline ascending (none last), then the kind,
-// then the room. No scoring, no routing, no expiry: two surfaces cannot disagree.
+// Ordered sorts items in the unified five-type urgency order (question, plan, review, blocked,
+// failed), then deadline ascending (none last), then kind within type, then room. Every surface
+// reads this order so two surfaces cannot disagree.
 func Ordered(items []Need) []Need {
 	out := slices.Clone(items)
+	for i := range out {
+		if out[i].Type == "" {
+			out[i].Type = NeedType(out[i].Kind)
+		}
+	}
 	slices.SortStableFunc(out, func(a, b Need) int {
+		if c := typeRank(effectiveType(a)) - typeRank(effectiveType(b)); c != 0 {
+			return c
+		}
 		az, bz := a.Deadline.IsZero(), b.Deadline.IsZero()
 		switch {
 		case az != bz: // a deadline sorts before none
@@ -334,6 +415,27 @@ func Ordered(items []Need) []Need {
 		}
 		return strings.Compare(a.Room, b.Room)
 	})
+	return out
+}
+
+// Inbox returns items in the unified five-type order with at most one entry per task (room),
+// keeping each task's most urgent need (phase G5). Items with an empty room are kept as-is.
+func Inbox(items []Need) []Need {
+	ordered := Ordered(items)
+	if len(ordered) == 0 {
+		return ordered
+	}
+	seen := make(map[string]bool, len(ordered))
+	out := make([]Need, 0, len(ordered))
+	for _, n := range ordered {
+		if n.Room != "" {
+			if seen[n.Room] {
+				continue
+			}
+			seen[n.Room] = true
+		}
+		out = append(out, n)
+	}
 	return out
 }
 
@@ -370,6 +472,9 @@ func recoveries() map[string]bool {
 // and where it came from. A clause that knows its own time (an approval's) keeps it.
 func stamp(n Need, in NeedsIn, src NeedSource) Need {
 	n.Room, n.Source = in.Room, src
+	if n.Type == "" {
+		n.Type = NeedType(n.Kind)
+	}
 	if n.At.IsZero() {
 		n.At = in.FactsAt
 	}

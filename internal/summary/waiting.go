@@ -90,7 +90,7 @@ func MergeNeed(f *envelope.TaskFacts) (Need, bool) {
 	if f == nil || f.Phase != "AwaitingHuman" || f.PR == nil || f.PR.Number <= 0 {
 		return Need{}, false
 	}
-	n := Need{Kind: NeedMerge, ID: fmt.Sprint(f.PR.Number), URL: f.PR.URL,
+	n := Need{Kind: NeedMerge, Type: TypeReview, ID: fmt.Sprint(f.PR.Number), URL: f.PR.URL,
 		What: MergeHow(repoOf(f), f.PR.Number, f.MergeByApproval)}
 	if f.MergeByApproval {
 		n.Approve = true
@@ -107,7 +107,7 @@ func QuestionNeed(f *envelope.TaskFacts) (Need, bool) {
 	if f.Issue.Author != "" {
 		who = "@" + f.Issue.Author
 	}
-	return Need{Kind: NeedQuestion, ID: fmt.Sprint(f.Issue.Number), URL: f.Issue.URL, Author: f.Issue.Author,
+	return Need{Kind: NeedQuestion, Type: TypeQuestion, Act: "answer", ID: fmt.Sprint(f.Issue.Number), URL: f.Issue.URL, Author: f.Issue.Author,
 		What: fmt.Sprintf("%s answers the scoper's question by editing issue #%d, then a maintainer re-applies `factory/ready`; or a maintainer comments `/factory retry` to proceed on its assumption", who, f.Issue.Number)}, true
 }
 
