@@ -649,8 +649,11 @@ type TaskStatus struct {
 	// +optional
 	Split *SplitStatus `json:"split,omitempty"`
 	// The verifier the task went back to Queued for (§3): the next reviewer or tester run starts
-	// there, behind the caps and the human-driver rule (C4). Cleared once that run exists.
-	// +kubebuilder:validation:Enum=reviewer;tester
+	// NextRole is the verifier role Queued will start next (reviewer or a declared custom read role).
+	// Set when a run finishes and hands off to the next verifier so it passes through Queued,
+	// behind the caps and the human-driver rule (C4). Cleared once that run exists.
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
 	// +optional
 	NextRole string `json:"nextRole,omitempty"`
 	// GitHub review and comment ids already acted on (Δ5, commands). The reconciler trims the oldest.
@@ -687,7 +690,8 @@ type TaskStatus struct {
 
 // StageRecord is one stage's runs, spend, and effect on a Task (WR5).
 type StageRecord struct {
-	// +kubebuilder:validation:Enum=ask;plan;tests;implement;search;judge;review;split;step_up
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-_a-z0-9]{0,61}[a-z0-9])?$"
 	Stage string `json:"stage"`
 	// +kubebuilder:validation:Minimum=0
 	Runs int32 `json:"runs"`
@@ -852,8 +856,9 @@ type RunRecord struct {
 	ID string `json:"id"`
 	// +kubebuilder:validation:Enum=implementer;reviewer;tester;triager
 	Role string `json:"role"`
-	// Persona is the run's human-facing role when it differs from Role (e.g. scoper on a triager run).
-	// +kubebuilder:validation:MaxLength=32
+	// Persona is the run's human-facing role when it differs from Role (e.g. scoper on a triager run,
+	// or a custom read role on a reviewer run).
+	// +kubebuilder:validation:MaxLength=63
 	// +optional
 	Persona string `json:"persona,omitempty"`
 	// Why the run exists.

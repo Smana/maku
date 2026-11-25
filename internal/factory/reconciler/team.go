@@ -3,7 +3,9 @@
 package reconciler
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -29,17 +31,62 @@ import (
 // task escalates: the verdict is there, and only the room holds it.
 const roomLogPatience = 30 * time.Minute
 
-// nextVerifier is the template's next reviewer after role, or "" when none follows. The tester is
-// the test writer since v3 feature 4 (TO1): a template that still lists it loads without it.
+// compiledStagesForTask returns the ordered stages for t from its workflow's compiled stage list,
+// adding any stage forced on this task outside the workflow definition (such as plan-first outcome,
+// class requires, or legacy template-only tests).
+func (r *Reconciler) compiledStagesForTask(cfg *config.Config, t *v1alpha1.Task) []config.StageDef {
+	rc := r.repo(cfg, t)
+	wf := r.workflow(cfg, t)
+	list := slices.Clone(cfg.CompiledStages(rc, wf))
+	hasRole := func(role string) bool {
+		return slices.ContainsFunc(list, func(s config.StageDef) bool { return s.Role == role })
+	}
+	if len(list) == 0 {
+		if scoperDue(t) {
+			list = append(list, config.StageDef{Role: "scoper"})
+		}
+		if r.testerDue(cfg, t) {
+			list = append(list, config.StageDef{Role: "tester"})
+		}
+		list = append(list, config.StageDef{Role: "implementer"})
+		if slices.Contains(cfg.Templates[t.Spec.Template].Roles, "reviewer") {
+			list = append(list, config.StageDef{Role: "reviewer", MaxRounds: cfg.Templates[t.Spec.Template].MaxReviewRounds})
+		}
+		return list
+	}
+	if scoperDue(t) && !hasRole("scoper") {
+		list = append([]config.StageDef{{Role: "scoper"}}, list...)
+	}
+	if r.testerDue(cfg, t) && !hasRole("tester") {
+		implIdx := slices.IndexFunc(list, func(s config.StageDef) bool { return s.Role == "implementer" })
+		if implIdx < 0 {
+			implIdx = 0
+		}
+		list = slices.Insert(list, implIdx, config.StageDef{Role: "tester"})
+	}
+	if slices.Contains(cfg.Templates[t.Spec.Template].Roles, "reviewer") && !hasRole("reviewer") {
+		implIdx := slices.IndexFunc(list, func(s config.StageDef) bool { return s.Role == "implementer" })
+		rev := config.StageDef{Role: "reviewer", MaxRounds: cfg.Templates[t.Spec.Template].MaxReviewRounds}
+		if implIdx >= 0 {
+			list = slices.Insert(list, implIdx+1, rev)
+		} else {
+			list = append(list, rev)
+		}
+	}
+	return list
+}
+
+// nextVerifier is the next post-implementer read-only stage (built-in reviewer or declared custom
+// read role) after role in the compiled stage list, or "" when none follows (WR11).
 func (r *Reconciler) nextVerifier(cfg *config.Config, t *v1alpha1.Task, after string) string {
-	roles := cfg.Templates[t.Spec.Template].Roles
-	i := slices.Index(roles, after)
+	stages := r.compiledStagesForTask(cfg, t)
+	i := slices.IndexFunc(stages, func(s config.StageDef) bool { return s.Role == after })
 	if i < 0 {
 		return ""
 	}
-	for _, role := range roles[i+1:] {
-		if role == "reviewer" {
-			return role
+	for _, s := range stages[i+1:] {
+		if s.Role == "reviewer" || cfg.IsCustomReadRole(s.Role) {
+			return s.Role
 		}
 	}
 	return ""
@@ -137,15 +184,66 @@ func (r *Reconciler) ready(_ context.Context, t *v1alpha1.Task) error {
 	return nil
 }
 
-// maxRounds is the workflow's (or template's) bound on review rounds: every revision a verdict
-// asks for, and every review run that has to start again, uses one.
-func (r *Reconciler) maxRounds(cfg *config.Config, t *v1alpha1.Task) int32 {
-	return cfg.MaxReviewRoundsFor(r.workflow(cfg, t), t.Spec.Template)
+// stageMaxRounds returns the round cap for verifier stage role (built-in reviewer or custom read
+// role) from the compiled stage list, falling back to the task template for built-in reviewer.
+func (r *Reconciler) stageMaxRounds(cfg *config.Config, t *v1alpha1.Task, role string) int32 {
+	fallback := ""
+	if role == "reviewer" {
+		fallback = t.Spec.Template
+	}
+	return cfg.StageMaxRoundsFor(r.repo(cfg, t), r.workflow(cfg, t), role, fallback)
 }
 
-// reviewing waits for the reviewer run to end, then acts on its own verdict: an approve
-// of the pull request's unmoved head goes to the next verifier or to ready; changes send the task
-// back to Queued for a revision, until the rounds run out; anything else is no verdict.
+// priorRoleChanges counts how many earlier runs of custom read role on t already asked for changes.
+func priorRoleChanges(t *v1alpha1.Task, role string) int32 {
+	var n int32
+	for i := 0; i < len(t.Status.Runs)-1; i++ {
+		rec := t.Status.Runs[i]
+		if cmp.Or(rec.Persona, rec.Role) == role && rec.Verdict == "changes" {
+			n++
+		}
+	}
+	return n
+}
+
+// roleFindingsText extracts the final message or handoff text from the current custom role run
+// when it finished without emitting a room_verdict event.
+func (r *Reconciler) roleFindingsText(ctx context.Context, t *v1alpha1.Task) string {
+	if r.Rooms == nil {
+		return ""
+	}
+	cur := current(t)
+	evs, _, err := r.roomTail(ctx, t.Status.RoomRef, cur.StartSeq, func(e envelope.Event) bool {
+		return e.RunID == cur.ID && (e.Type == envelope.Message || e.Type == envelope.Handoff)
+	})
+	if err != nil {
+		return ""
+	}
+	var text string
+	for _, e := range evs {
+		switch e.Type {
+		case envelope.Message:
+			var p envelope.MessagePayload
+			if json.Unmarshal(e.Payload, &p) == nil && strings.TrimSpace(p.Text) != "" {
+				if p.Kind == envelope.KindProgress || p.Kind == envelope.KindReviewVerdict || p.Kind == envelope.KindChat {
+					text = p.Text
+				}
+			}
+		case envelope.Handoff:
+			var p envelope.HandoffPayload
+			if json.Unmarshal(e.Payload, &p) == nil && strings.TrimSpace(p.Summary) != "" {
+				text = p.Summary
+			}
+		}
+	}
+	return text
+}
+
+// reviewing waits for the reviewer or custom read-role run to end, then acts on its verdict:
+// built-in reviewer approve of an unmoved head advances to the next verifier or ready, and changes
+// send the task back to Queued until rounds run out. A custom read role posts its findings as a PR
+// comment, never writes Task.status.verdict (which the merge gate reads from built-in reviewer
+// only), and sends changes back to the implementer only when its stage declares maxRounds > 0.
 func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	run, found, err := r.observe(ctx, t)
 	if err != nil {
@@ -172,6 +270,9 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 	}
 	cur := current(t)
 	cur.Reason = reason
+	stageRole := cmp.Or(cur.Persona, cur.Role)
+	isCustom := stageRole != "reviewer"
+	maxR := r.stageMaxRounds(cfg, t, stageRole)
 	r.interventions(ctx, cfg, t)
 	v, why, err := r.verdict(ctx, t)
 	if err != nil {
@@ -186,7 +287,26 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 			// As a lost implementer: noVerdict would narrate a review run that queued() then refuses.
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "resume_budget")
 		}
+		if isCustom && maxR == 0 {
+			cur.Verdict = "none"
+			if text := r.roleFindingsText(ctx, t); strings.TrimSpace(text) != "" {
+				if t.Status.PullRequest != nil {
+					narrateOn(t, t.Status.PullRequest.Number, narrate.RoleFindings(t, stageRole, cur.ID, "comment", text))
+				}
+				r.noteStage(t, stageRole, "findings_posted")
+			} else {
+				r.noteStage(t, stageRole, "no_verdict")
+			}
+			if next := r.nextVerifier(cfg, t, stageRole); next != "" {
+				r.requestVerifier(t, next)
+				return nil
+			}
+			return r.ready(ctx, t)
+		}
 		return r.noVerdict(ctx, cfg, t, why)
+	}
+	if isCustom && strings.TrimSpace(v.Text) != "" && t.Status.PullRequest != nil {
+		narrateOn(t, t.Status.PullRequest.Number, narrate.RoleFindings(t, stageRole, cur.ID, v.Verdict, v.Text))
 	}
 	if v.Verdict == "approve" {
 		// A pull request merged or closed meanwhile ends the task through ready's AwaitingCI, or
@@ -198,19 +318,51 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 		// Never approve a moved head: the verdict names the commit the run was given, which is
 		// still the pull request's head. An adopted run's head is "", which no commit prefixes.
 		if pr.HeadSHA != cur.HeadSHA || !strings.HasPrefix(cur.HeadSHA, v.Commit) {
+			if isCustom && maxR == 0 {
+				cur.Verdict = "none"
+				r.noteStage(t, stageRole, "verdict_stale")
+				if next := r.nextVerifier(cfg, t, stageRole); next != "" {
+					r.requestVerifier(t, next)
+					return nil
+				}
+				return r.ready(ctx, t)
+			}
 			return r.noVerdict(ctx, cfg, t, "verdict_stale")
 		}
-		cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
-		r.noteReviewStage(t, false)
-		if next := r.nextVerifier(cfg, t, cur.Role); next != "" {
+		cur.Verdict = v.Verdict
+		if !isCustom {
+			t.Status.Verdict = v.Verdict
+			r.noteReviewStage(t, false)
+		} else {
+			r.noteStage(t, stageRole, "approve")
+		}
+		if next := r.nextVerifier(cfg, t, stageRole); next != "" {
 			r.requestVerifier(t, next)
 			return nil
 		}
 		return r.ready(ctx, t)
 	}
-	cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
+	cur.Verdict = v.Verdict
+	if isCustom {
+		r.noteStage(t, stageRole, v.Verdict)
+		if maxR == 0 {
+			if next := r.nextVerifier(cfg, t, stageRole); next != "" {
+				r.requestVerifier(t, next)
+				return nil
+			}
+			return r.ready(ctx, t)
+		}
+		if priorRoleChanges(t, stageRole) >= maxR {
+			return r.roundsExhausted(ctx, cfg, t, v)
+		}
+		t.Status.ReviewRounds++
+		t.Status.NextTrigger = "review"
+		r.to(t, v1alpha1.PhaseQueued, "")
+		return nil
+	}
+	t.Status.Verdict = v.Verdict
 	r.noteReviewStage(t, false)
-	if t.Status.ReviewRounds >= r.maxRounds(cfg, t) {
+	if t.Status.ReviewRounds >= maxR {
 		return r.roundsExhausted(ctx, cfg, t, v)
 	}
 	t.Status.ReviewRounds++
@@ -258,9 +410,16 @@ func (r *Reconciler) verdict(ctx context.Context, t *v1alpha1.Task) (rooms.Verdi
 // escalates.
 func (r *Reconciler) noVerdict(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, why string) error {
 	cur := current(t)
-	cur.Verdict, t.Status.Verdict = "none", "none"
-	r.noteReviewStage(t, false)
-	if t.Status.ReviewRounds >= r.maxRounds(cfg, t) {
+	stageRole := cmp.Or(cur.Persona, cur.Role)
+	isCustom := stageRole != "reviewer"
+	cur.Verdict = "none"
+	if !isCustom {
+		t.Status.Verdict = "none"
+		r.noteReviewStage(t, false)
+	} else {
+		r.noteStage(t, stageRole, "no_verdict")
+	}
+	if t.Status.ReviewRounds >= r.stageMaxRounds(cfg, t, stageRole) {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "no_verdict")
 	}
 	t.Status.ReviewRounds++
@@ -269,7 +428,7 @@ func (r *Reconciler) noVerdict(ctx context.Context, cfg *config.Config, t *v1alp
 	if runFitsFor(t, cur.Role) || !cfg.Budgets.EnforceTask {
 		narrateLater(t, narrate.NoVerdict(t, cur.ID, why))
 	}
-	r.requestVerifier(t, cur.Role)
+	r.requestVerifier(t, stageRole)
 	return nil
 }
 

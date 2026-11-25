@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/factory/stages"
 	"github.com/Smana/maku/internal/githubapps"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/maku"
@@ -91,6 +92,8 @@ const makuUsage = `usage: maku <command>
   plan revise <task> "<comment>"  ask the planner to revise a proposed plan once with your one-line comment
   stages [--repository owner/name] [--class c] [--json]
                                   per-stage cost and effect report for ended tasks of a repository
+  workflow dry-run <name> [--file definition.yaml] [--repository owner/name] [--last 20] [--json]
+                                  simulate a workflow definition over recent ended tasks and estimate cost (stores nothing)
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
   install --print --out DIR [--answers FILE] [--force] [--no-wait]
                                   ask the install's questions (or read them from FILE) and write the values,
@@ -291,7 +294,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "workflow", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -367,6 +370,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.needs(ctx, c, filepath.Join(r.Dir, "cursors.json"), args)
 	case "stages":
 		return r.stages(ctx, c, args)
+	case "workflow":
+		return r.workflow(ctx, c, args)
 	case "status":
 		return r.status(ctx, c, args)
 	case "changes":
@@ -1566,6 +1571,148 @@ func (r Maku) stages(ctx context.Context, c maku.Client, args []string) error {
 		}
 	}
 	return nil
+}
+
+func (r Maku) workflow(ctx context.Context, c maku.Client, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: maku workflow dry-run <name> [--file definition.yaml] [--repository owner/name] [--last 20] [--json]")
+	}
+	switch args[0] {
+	case "dry-run":
+		return r.workflowDryRun(ctx, c, args[1:])
+	default:
+		return fmt.Errorf("workflow: unknown subcommand %q (expected dry-run)", args[0])
+	}
+}
+
+func (r Maku) workflowDryRun(ctx context.Context, c maku.Client, args []string) error {
+	fs := flag.NewFlagSet("workflow dry-run", flag.ContinueOnError)
+	var filePath, repo string
+	var last int
+	var asJSON bool
+	fs.StringVar(&filePath, "file", "", "candidate workflow definition YAML file (validated and compiled by the factory, never stored)")
+	fs.StringVar(&repo, "repository", "", "only tasks of this repository, owner/name")
+	fs.IntVar(&last, "last", stages.DefaultDryRunLast, "newest ended tasks to simulate (default 20)")
+	fs.BoolVar(&asJSON, "json", false, "print the dry-run JSON as is")
+	pos, err := flags(fs, args)
+	if err != nil || len(pos) != 1 {
+		return fmt.Errorf("workflow dry-run <name> [--file definition.yaml] [--repository owner/name] [--last 20] [--json]: %w", errors.Join(err, errors.New("one workflow name")))
+	}
+	if last <= 0 {
+		return errors.New("workflow dry-run: --last must be positive")
+	}
+	req := stages.DryRunRequest{
+		Workflow:   pos[0],
+		Repository: repo,
+		Last:       last,
+	}
+	if filePath != "" {
+		raw, rerr := os.ReadFile(filePath) //nolint:gosec // explicit --file path passed by the CLI user
+		if rerr != nil {
+			return fmt.Errorf("workflow dry-run: %w", rerr)
+		}
+		req.Definition = string(raw)
+	}
+	ctx, cancel := context.WithTimeout(ctx, makuTimeout)
+	defer cancel()
+	res, err := c.WorkflowDryRun(ctx, req)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		enc := json.NewEncoder(r.Out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	return formatDryRun(r.Out, res)
+}
+
+func formatDryRun(w io.Writer, res stages.DryRunResult) error {
+	if res.Tasks == 0 {
+		_, err := fmt.Fprintln(w, "0 tasks: no ended tasks to dry-run")
+		return err
+	}
+	ranHeader := "RAN"
+	sharedWf := ""
+	for i, row := range res.Rows {
+		if i == 0 {
+			sharedWf = row.RanWorkflow
+		} else if row.RanWorkflow != sharedWf {
+			sharedWf = ""
+			break
+		}
+	}
+	if sharedWf != "" {
+		ranHeader = fmt.Sprintf("RAN (%s)", maku.SafeText(sharedWf))
+	}
+	wouldHeader := fmt.Sprintf("WOULD RUN (%s)", maku.SafeText(res.Workflow))
+
+	type line struct {
+		task, class, ran, would, cost, est string
+	}
+	rows := make([]line, len(res.Rows))
+	wTask, wClass, wRan, wWould, wCost := len("TASK"), len("CLASS"), len(ranHeader), len(wouldHeader), len("COST")
+	for i, row := range res.Rows {
+		ranStr := strings.Join(row.Ran, " → ")
+		if ranStr == "" {
+			ranStr = "—"
+		}
+		wouldStr := strings.Join(row.WouldRun, " → ")
+		if wouldStr == "" {
+			wouldStr = "—"
+		}
+		estStr := "?"
+		if !row.Unknown && row.EstimateUSD != nil {
+			estStr = roomview.Dollars(*row.EstimateUSD)
+		}
+		l := line{
+			task:  maku.SafeText(row.Task),
+			class: maku.SafeText(row.Class),
+			ran:   maku.SafeText(ranStr),
+			would: maku.SafeText(wouldStr),
+			cost:  roomview.Dollars(row.CostUSD),
+			est:   estStr,
+		}
+		rows[i] = l
+		wTask = max(wTask, len(l.task))
+		wClass = max(wClass, len(l.class))
+		wRan = max(wRan, len([]rune(l.ran)))
+		wWould = max(wWould, len([]rune(l.would)))
+		wCost = max(wCost, len(l.cost))
+	}
+	pad := func(s string, width int) string {
+		n := len([]rune(s))
+		if n >= width {
+			return s
+		}
+		return s + strings.Repeat(" ", width-n)
+	}
+	if _, err := fmt.Fprintf(w, "%s  %s  %s  %s  %s  ESTIMATE\n",
+		pad("TASK", wTask), pad("CLASS", wClass), pad(ranHeader, wRan), pad(wouldHeader, wWould), pad("COST", wCost)); err != nil {
+		return err
+	}
+	for _, l := range rows {
+		if _, err := fmt.Fprintf(w, "%s  %s  %s  %s  %s  %s\n",
+			pad(l.task, wTask), pad(l.class, wClass), pad(l.ran, wRan), pad(l.would, wWould), pad(l.cost, wCost), l.est); err != nil {
+			return err
+		}
+	}
+	wf := maku.SafeText(res.Workflow)
+	switch {
+	case res.UnknownCount == 0:
+		_, err := fmt.Fprintf(w, "%d tasks: %s as run · about %s under %s · %d of %d estimates use a class median\n",
+			res.Tasks, roomview.Dollars(res.ActualUSD), roomview.Dollars(res.EstimatedUSD), wf, res.MedianUsed, res.Tasks)
+		return err
+	case res.EstimatedOf == 0:
+		_, err := fmt.Fprintf(w, "%d tasks: %s as run · ? under %s · %d of %d unknown\n",
+			res.Tasks, roomview.Dollars(res.ActualUSD), wf, res.UnknownCount, res.Tasks)
+		return err
+	default:
+		_, err := fmt.Fprintf(w, "%d tasks: %s as run · about %s under %s (%d of %d estimated; %d unknown) · %d of %d estimates use a class median\n",
+			res.Tasks, roomview.Dollars(res.ActualUSD), roomview.Dollars(res.EstimatedUSD), wf,
+			res.EstimatedOf, res.Tasks, res.UnknownCount, res.MedianUsed, res.EstimatedOf)
+		return err
+	}
 }
 
 // opencodeServiceStart is when OpenCode's background service started, read from its process

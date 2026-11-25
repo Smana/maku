@@ -31,6 +31,9 @@ func stageOf(run v1alpha1.RunRecord) string {
 	case "implementer":
 		return "implement"
 	case "reviewer":
+		if run.Persona != "" && run.Persona != "reviewer" {
+			return run.Persona
+		}
 		return "review"
 	}
 	return ""
@@ -232,7 +235,7 @@ func (r *Reconciler) noteReviewStage(t *v1alpha1.Task, merged bool) {
 	lastApproveIdx := -1
 	lastApproveHead := ""
 	for i, rec := range t.Status.Runs {
-		if rec.Role != "reviewer" {
+		if !isBuiltInReviewer(rec) {
 			continue
 		}
 		hasReviewer = true
@@ -246,7 +249,7 @@ func (r *Reconciler) noteReviewStage(t *v1alpha1.Task, merged bool) {
 		if rec.Verdict == "changes" && !commitAfterChanges {
 			for j := i + 1; j < len(t.Status.Runs); j++ {
 				later := t.Status.Runs[j]
-				if later.Role == "reviewer" && later.HeadSHA != "" && rec.HeadSHA != "" && later.HeadSHA != rec.HeadSHA {
+				if isBuiltInReviewer(later) && later.HeadSHA != "" && rec.HeadSHA != "" && later.HeadSHA != rec.HeadSHA {
 					commitAfterChanges = true
 					break
 				}

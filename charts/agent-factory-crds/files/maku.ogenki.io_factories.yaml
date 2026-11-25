@@ -736,6 +736,10 @@ spec:
                         description: StageDef is one stage in a workflow's ordered
                           list (WR11).
                         properties:
+                          allowed:
+                            description: Allowed marks this stage optional for repositories
+                              to opt into via Repository.spec.workflow.addStages (WR12).
+                            type: boolean
                           checks:
                             type: boolean
                           gate:

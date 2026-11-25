@@ -284,8 +284,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /assets/{file...}", withCSP(assets))
 	mux.Handle("GET /assets", withCSP(http.NotFoundHandler())) // not the mux's redirect to /assets/
 	mux.HandleFunc("GET /api/rooms", s.listRooms)
-	if s.Stages != nil { // WR5: per-stage cost and effect report forwarded from the factory.
+	if s.Stages != nil { // WR5, WR11: per-stage report and workflow dry-run forwarded from the factory.
 		mux.HandleFunc("GET /api/stages", s.stagesRoute)
+		mux.HandleFunc("POST /api/workflows/dry-run", s.workflowDryRunRoute)
 	}
 	if s.Needs { // needs/v1's human door (CD28; human.needs.enabled). Off, /api/needs is a 404.
 		mux.HandleFunc("GET /api/needs", s.needsRoute)

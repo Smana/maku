@@ -297,3 +297,111 @@ func TestAPlatformsWorkflowKeepsItsEscalation(t *testing.T) {
 		t.Fatal("escalation's groups are no longer read")
 	}
 }
+
+func TestARepositoryMayLowerTheBudget(t *testing.T) {
+	// standard has budget: standard; repository narrows it to light.
+	c := mustParse(t, repoWith("workflow: {default: standard, budget: light}"))
+	repo := &c.Repos()[0]
+	if repo.Workflow.Budget != "light" {
+		t.Fatalf("repo.Workflow.Budget = %q, want light", repo.Workflow.Budget)
+	}
+	if got := c.EffectiveBudgetTier(repo, WorkflowStandard); got != "light" {
+		t.Fatalf("EffectiveBudgetTier = %q, want light", got)
+	}
+
+	// careful has budget: frontier; repository narrows it to standard.
+	c2 := mustParse(t, repoWith("workflow: {default: careful, budget: standard}"))
+	if got := c2.EffectiveBudgetTier(&c2.Repos()[0], WorkflowCareful); got != "standard" {
+		t.Fatalf("EffectiveBudgetTier(careful) = %q, want standard", got)
+	}
+
+	// Equal budget (standard == standard) is also accepted.
+	mustParse(t, repoWith("workflow: {default: standard, budget: standard}"))
+}
+
+func TestARepositoryMayNotRaiseTheBudget(t *testing.T) {
+	// standard has budget: standard; raising to frontier must be refused with standard in the message (WR12).
+	_, err := Parse([]byte(repoWith("workflow: {default: standard, budget: frontier}")))
+	if err == nil {
+		t.Fatal("expected refusal when repository raises budget above workflow's budget")
+	}
+	if !strings.Contains(err.Error(), "frontier") || !strings.Contains(err.Error(), "standard") {
+		t.Fatalf("error = %q, want both requested (frontier) and workflow budget (standard)", err.Error())
+	}
+
+	// A custom workflow with budget: light refuses standard with light in the message.
+	raw := repoWith("workflow: {default: lean, budget: standard}") + `workflows:
+  lean:
+    budget: light
+    stages:
+      - {role: implementer, stall: true}
+`
+	_, err = Parse([]byte(raw))
+	if err == nil {
+		t.Fatal("expected refusal when repository raises budget from light to standard")
+	}
+	if !strings.Contains(err.Error(), "light") {
+		t.Fatalf("error = %q, want workflow's own budget \"light\" in message", err.Error())
+	}
+}
+
+func TestARepositoryMayNotRemoveAStage(t *testing.T) {
+	// Removing or replacing stages via stages / removeStages on Repository.spec.workflow is refused (WR12).
+	for _, y := range []string{
+		"workflow: {stages: [{role: implementer}]}",
+		"workflow: {removeStages: [reviewer]}",
+	} {
+		if _, err := Parse([]byte(repoWith(y))); err == nil || !strings.Contains(err.Error(), "may not remove or reorder") {
+			t.Fatalf("%s: got %v, want WR12 stage removal refusal", y, err)
+		}
+	}
+
+	// Adding a stage not marked allowed is refused, naming the workflow's own allowed stages.
+	withRoles := `roles:
+  security-reviewer:
+    capability: read
+    brief: roles/security-reviewer.md
+  perf-reviewer:
+    capability: read
+    brief: roles/perf-reviewer.md
+workflows:
+  guarded:
+    budget: standard
+    stages:
+      - {role: implementer, stall: true}
+      - {role: reviewer, maxRounds: 2}
+      - {role: security-reviewer, allowed: true}
+      - {role: perf-reviewer, allowed: true}
+`
+	// Valid opt-in to allowed stages in declared order succeeds.
+	c := mustParse(t, repoWith("workflow: {default: guarded, addStages: [security-reviewer, perf-reviewer]}")+withRoles)
+	compiled := c.CompiledStages(&c.Repos()[0], "guarded")
+	var roles []string
+	for _, s := range compiled {
+		roles = append(roles, s.Role)
+	}
+	if !slices.Equal(roles, []string{"implementer", "reviewer", "security-reviewer", "perf-reviewer"}) {
+		t.Fatalf("compiled stages with addStages = %v", roles)
+	}
+	// Without addStages, allowed stages stay inactive.
+	baseCompiled := c.CompiledStages(nil, "guarded")
+	var baseRoles []string
+	for _, s := range baseCompiled {
+		baseRoles = append(baseRoles, s.Role)
+	}
+	if !slices.Equal(baseRoles, []string{"implementer", "reviewer"}) {
+		t.Fatalf("compiled stages without addStages = %v", baseRoles)
+	}
+
+	// Reordering allowed stages is refused with the workflow's stage order in the message.
+	if _, err := Parse([]byte(repoWith("workflow: {default: guarded, addStages: [perf-reviewer, security-reviewer]}") + withRoles)); err == nil ||
+		!strings.Contains(err.Error(), "out of order") || !strings.Contains(err.Error(), "security-reviewer -> perf-reviewer") {
+		t.Fatalf("reordering addStages: got %v, want out of order with workflow stages", err)
+	}
+
+	// Naming a stage not marked allowed (e.g. reviewer, which is already required, or an unknown role) is refused.
+	if _, err := Parse([]byte(repoWith("workflow: {default: guarded, addStages: [reviewer]}") + withRoles)); err == nil ||
+		!strings.Contains(err.Error(), "not marked allowed") || !strings.Contains(err.Error(), "security-reviewer") {
+		t.Fatalf("adding non-allowed stage: got %v, want not marked allowed naming allowed stages", err)
+	}
+}

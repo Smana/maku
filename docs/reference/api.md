@@ -1550,6 +1550,61 @@ Query parameters:
 
 `typicalUSD` and `p90USD` are present only once a class has at least 30 merged tasks in the window.
 The broker proxies this route at `GET /api/stages` for `maku stages`.
+
+### `POST /v1/workflows/dry-run`
+
+Simulates a workflow definition over recent ended `Task` objects readable by the caller without
+mutating configuration or storing anything (`Cache-Control: no-store`). Requires a human token with
+the member role (`403 not_permitted` with no role, `403 human_only` for non-human callers,
+`400 workflow_required` without `workflow`, `400 bad_last` for negative `last`,
+`400 invalid_definition` when `definition` YAML fails validation or compilation,
+`404 unknown_workflow` when `definition` is omitted and `workflow` is not defined).
+
+Request body (at most 128 KiB):
+
+```json
+{
+  "workflow": "thorough",
+  "definition": "budget: frontier\nstages:\n  - {role: implementer, stall: true}\n  - {role: reviewer, maxRounds: 2}\n  - {role: security-reviewer}\n",
+  "repository": "owner/repo",
+  "last": 20
+}
+```
+
+- `workflow` (required): workflow name to simulate (or key inside `definition.workflows`).
+- `definition` (optional): raw candidate YAML validated and compiled in memory by the factory and never stored.
+- `repository` (optional): restrict simulation to one `owner/name` readable by the caller; omitted spans all served repositories the caller can read.
+- `last` (optional): newest ended tasks to return (default `20`, cap `500`); class medians are computed across all readable ended tasks in scope.
+
+Response `200`:
+
+```json
+{
+  "workflow": "thorough",
+  "tasks": 20,
+  "actualUSD": 9.80,
+  "estimatedUSD": 11.90,
+  "estimatedOf": 20,
+  "medianUsed": 14,
+  "rows": [
+    {
+      "task": "3buqdlot",
+      "repository": "owner/repo",
+      "class": "docs",
+      "ranWorkflow": "standard",
+      "ran": ["implementer", "reviewer"],
+      "wouldRun": ["implementer", "reviewer", "security-reviewer"],
+      "costUSD": 0.54,
+      "estimateUSD": 0.63,
+      "usedMedian": true
+    }
+  ]
+}
+```
+
+An added stage with fewer than 5 recorded runs in the task's class sets `"unknown": true`, omits
+`estimateUSD`, and is excluded from `estimatedUSD` (`unknownCount` reports how many rows were
+unknown). The broker proxies this route at `POST /api/workflows/dry-run` for `maku workflow dry-run`.
 - **`mode`:** `live`, `shadow` or `off`; `unarmed` for every class while the merge gate is off for the
   whole factory. `approveToMerge` is true only with the gate on and `merge.approveToMerge` set.
 - **`ceilingUSD`:** the task cap of the tier the class's floor profile runs at, else of the factory's

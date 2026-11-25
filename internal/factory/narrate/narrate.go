@@ -1125,6 +1125,22 @@ func RoundsExhausted(t *v1alpha1.Task, v rooms.Verdict) Event {
 	return Event{Key: fmt.Sprintf("rounds-%d-%d", t.Status.ReviewRounds, len(t.Status.Runs)), Class: ClassNeedsYou, Body: head + body}
 }
 
+// RoleFindings posts a custom read role's findings as a pull-request comment, once per run (WR11).
+// Untrusted agent text is sanitised and quoted inert via summary for public tasks; on non-public
+// tasks the findings stay in the room (C7).
+func RoleFindings(t *v1alpha1.Task, role, runID, verdict, text string) Event {
+	head := fmt.Sprintf("Agent factory `%s` findings (task `%s`, run `%s`", role, t.Name, runID)
+	if verdict != "" && verdict != "comment" {
+		head += fmt.Sprintf(", verdict `%s`", verdict)
+	}
+	head += "):\n\n"
+	body := "_The findings stay in the room: the task's data class is not public._"
+	if t.Spec.DataClass == "public" {
+		body = summary(text, maxBody-len(head))
+	}
+	return Event{Key: "role-findings-" + runID, Body: head + body}
+}
+
 // summary is an agent's text as an inert code block of at most budget bytes, clipped with a mark.
 func summary(text string, budget int) string {
 	s, _ := sanitize.Text(text)

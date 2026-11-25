@@ -994,3 +994,38 @@ func HandoffLabels(checked HandoffCheckResponse) []string {
 func IssueNumber(issueURL, repo string) (int, error) {
 	return issueNumber(issueURL, repo)
 }
+
+// WorkflowDryRun posts POST /api/workflows/dry-run to the broker (WR11).
+func (c Client) WorkflowDryRun(ctx context.Context, in stages.DryRunRequest) (stages.DryRunResult, error) {
+	var out stages.DryRunResult
+	h, err := c.header(ctx)
+	if err != nil {
+		return out, err
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		return out, fmt.Errorf("workflow dry-run: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/api/workflows/dry-run", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	h.Set("Content-Type", "application/json")
+	req.Header = h
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("workflow dry-run: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return out, refusal("workflow dry-run", resp)
+	}
+	raw, err := httpx.ReadBody(resp.Body, maxRoomsBody)
+	if err != nil {
+		return out, fmt.Errorf("workflow dry-run: %w", err)
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, fmt.Errorf("workflow dry-run: %w", err)
+	}
+	return out, nil
+}

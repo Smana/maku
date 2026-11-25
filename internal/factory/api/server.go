@@ -243,6 +243,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(catalogueRoute, s.catalogue)
 	// WR5: per-stage cost and effect report.
 	mux.HandleFunc(stagesRoute, s.stagesReport)
+	// WR11: workflow dry-run over recent ended tasks (in-memory only, never stores).
+	mux.HandleFunc(workflowDryRunRoute, s.workflowDryRun)
 	// v4 D3: the banner's factory codes, for any signed-in human.
 	mux.HandleFunc(InstallRoute, s.install)
 	// stage 6: off lists no policy route, so each is a 404.
