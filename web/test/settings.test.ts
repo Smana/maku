@@ -258,6 +258,34 @@ describe("the index and evidence pages", () => {
     expect(from).toEqual(["-", "-"]);
   });
 
+  // gcp-0, 2026-11-25: every settings page waited on each repository's decisions, a GitHub search
+  // of up to 10 s; the overview and the evidence page show none of them, so they never ask.
+  it("reads no decisions for the overview or the evidence page", async () => {
+    for (const path of ["/settings", "/settings/evidence"]) {
+      const calls: string[] = [];
+      await mountSettings(document.createElement("div"), path, fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
+        "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/approval-memory/grants": { grants: [] } }, calls));
+      expect(calls.filter((c) => c.includes("/decisions"))).toEqual([]);
+    }
+  });
+
+  it("draws the repository table before its decision counts, then fills them", async () => {
+    let answer!: (r: Response) => void;
+    const routes = { "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] }, "/api/policy/repositories/Smana/cloud-native-ref": page() };
+    const base = fakeFetch(routes);
+    const get = (async (input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith("/decisions")
+      ? new Promise<Response>((res) => { answer = res; }) : base(input, init)) as typeof fetch;
+    const app = document.createElement("div");
+    const done = mountSettings(app, "/settings/merge-policies", get);
+    for (let n = 0; n < 20 && !answer; n++) await settle();
+    const cells = () => [...app.querySelectorAll("table.repo-table tbody tr")[0].children].map((td) => td.textContent);
+    expect(cells()).toEqual(["Smana/cloud-native-ref", "\u2026", "\u2026", "\u2026", "docs-links 20 (20 needed)"]);
+    answer(new Response(JSON.stringify({ repository: "Smana/cloud-native-ref", since: "2026-10-26", decisions: [
+      { at: new Date().toISOString(), pullRequest: 7, head: "a", outcome: "shadow", policy: "docs-links", reason: "shadow_would_arm", rows: { counted: false, files: 0, maxFiles: 0, lines: 0, maxLines: 0 }, commentURL: "" }] })));
+    await done;
+    expect(cells()).toEqual(["Smana/cloud-native-ref", "0", "1", "0", "docs-links 20 (20 needed)"]);
+  });
+
   it("counts a report's classes by mode", () => {
     expect(modeCounts(page().report)).toEqual({ live: 1, shadow: 1 });
   });

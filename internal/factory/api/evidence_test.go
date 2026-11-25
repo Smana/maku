@@ -38,7 +38,10 @@ func (readAccess) CanRead(_ context.Context, p authn.Principal, repository strin
 	return (p.ID == "human:291" || p.ID == "human:5") && repository == coordPrimary, nil
 }
 
-type fakeEditor struct{ previews, timelines, recents, backtests int }
+type fakeEditor struct {
+	previews, timelines, recents, backtests int
+	backtestErr                             error
+}
 
 func (f *fakeEditor) Preview(context.Context, string, string) (any, error) {
 	f.previews++
@@ -67,6 +70,9 @@ func (f *fakeEditor) Recent(_ context.Context, repo, since string) (any, error) 
 
 func (f *fakeEditor) Backtest(_ context.Context, repo, _, _ string, _ []config.Binding, _ string, _ *config.PolicySpec, since string) (any, error) {
 	f.backtests++
+	if f.backtestErr != nil {
+		return nil, f.backtestErr
+	}
 	return map[string]any{"valid": true, "repository": repo, "since": since}, nil
 }
 

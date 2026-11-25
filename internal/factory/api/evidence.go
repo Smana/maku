@@ -97,9 +97,7 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 	rep, err := s.Evidence.Report(r.Context(), repo)
 	if err != nil {
-		if s.Log != nil {
-			s.Log.WarnContext(r.Context(), "policy evidence unread", "repository", repo, "reason", evidence.Reason(err), "error", err)
-		}
+		s.policyWarn(r, "policy evidence unread", "repository", repo, err)
 		refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
 		return
 	}
@@ -108,6 +106,13 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 		rep.Hardening = &h
 	}
 	reply(w, http.StatusOK, rep)
+}
+
+// policyWarn logs a settings read that failed, with its bounded reason; the caller sees only a 503.
+func (s *Server) policyWarn(r *http.Request, msg, key, subject string, err error) {
+	if s.Log != nil {
+		s.Log.WarnContext(r.Context(), msg, key, subject, "reason", evidence.Reason(err), "error", err)
+	}
 }
 
 // policyRepositories is GET /v1/policy/repositories: the configured repositories the caller reads.
@@ -305,10 +310,16 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 			refuse(w, http.StatusForbidden, "not_a_maintainer")
 			return
 		}
+		start := time.Now()
 		pv, err := s.Editor.Backtest(r.Context(), repo, in.Kind, in.File, in.Bindings, in.Policy, in.Spec, s.policySince(in.Since))
 		if err != nil {
+			s.policyWarn(r, "policy backtest unread", "repository", repo, err)
 			refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
 			return
+		}
+		if cerr := r.Context().Err(); cerr != nil && s.Log != nil { // the caller left: its reads were cut short
+			s.Log.WarnContext(r.Context(), "policy backtest outlived its caller", "repository", repo,
+				"reason", evidence.Reason(cerr), "elapsed", time.Since(start).Round(time.Millisecond).String())
 		}
 		reply(w, http.StatusOK, pv)
 		return
@@ -325,6 +336,7 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		readable := func(repo string) bool { can, err := s.reads(r.Context(), p, repo); return err == nil && can }
 		pv, err := s.Editor.PreviewPolicy(r.Context(), in.Policy, *in.Spec, readable)
 		if err != nil {
+			s.policyWarn(r, "policy preview unread", "policy", in.Policy, err)
 			refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
 			return
 		}
@@ -354,6 +366,7 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		pv, err = s.Editor.Preview(r.Context(), repo, in.File)
 	}
 	if err != nil {
+		s.policyWarn(r, "policy preview unread", "repository", repo, err)
 		refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
 		return
 	}
@@ -382,6 +395,7 @@ func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
 		}
 		recent, err := s.Editor.Recent(r.Context(), repo, since)
 		if err != nil {
+			s.policyWarn(r, "policy decisions unread", "repository", repo, err)
 			refuse(w, http.StatusServiceUnavailable, "decisions_unavailable")
 			return
 		}
@@ -395,6 +409,7 @@ func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
 	}
 	tl, err := s.Editor.Timeline(r.Context(), repo, pr)
 	if err != nil {
+		s.policyWarn(r, "policy decisions unread", "repository", repo, err)
 		refuse(w, http.StatusServiceUnavailable, "decisions_unavailable")
 		return
 	}

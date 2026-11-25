@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,5 +98,45 @@ func TestBacktestReplaysTheProposedMode(t *testing.T) {
 		fakeBacktestSource{lines: map[int]int{1: 12, 2: 5, 3: 5}})
 	if got.Counts.Changed != 2 || got.Rows[0].After.Verdict != "arm" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// slowBacktestSource is fakeBacktestSource with a GitHub-like latency per read, counting the
+// reads in flight at once.
+type slowBacktestSource struct {
+	fakeBacktestSource
+	inFlight, peak atomic.Int32
+}
+
+func (s *slowBacktestSource) wait() {
+	n := s.inFlight.Add(1)
+	for {
+		p := s.peak.Load()
+		if n <= p || s.peak.CompareAndSwap(p, n) {
+			break
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+	s.inFlight.Add(-1)
+}
+
+func (s *slowBacktestSource) PullRequest(ctx context.Context, n int) (forge.PR, error) {
+	s.wait()
+	return s.fakeBacktestSource.PullRequest(ctx, n)
+}
+
+// A backtest reads its pull requests replayParallel at once, never one after another: read in
+// turn, ai-native-ref's 17 outlasted the broker's 15 s call (gcp-0, 2026-11-25).
+func TestBacktestReadsPullRequestsInParallel(t *testing.T) {
+	cfg, recent := replayFixture(t)
+	spec := cfg.Policies["docs"].Spec
+	spec.MaxModifiedLines = 10
+	source := &slowBacktestSource{fakeBacktestSource: fakeBacktestSource{lines: map[int]int{1: 12, 2: 5, 3: 5}}}
+	got := Replay(t.Context(), cfg, &cfg.Repositories[0], evidence.Report{}, BacktestRequest{Kind: "policy", Policy: "docs", Spec: &spec}, recent, source)
+	if got.Counts != (BacktestCounts{Considered: 3, Changed: 1, Unchanged: 1, Unknown: 1, Matched: 1}) {
+		t.Fatalf("the parallel read changed the answer: %+v", got)
+	}
+	if p := source.peak.Load(); p < 2 || p > replayParallel {
+		t.Fatalf("%d reads at once, want 2..%d", p, replayParallel)
 	}
 }

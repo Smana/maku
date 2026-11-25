@@ -224,24 +224,29 @@ const countsText = (n: Record<string, number>) =>
   ["live", "shadow", "off"].filter((m) => n[m]).map((m) => `${n[m]} ${m}`).join(" · ") || "no class";
 
 // readAll reads each repository's page, at most limit at a time; a failed read is its Error, in place.
+// It never waits on the recent decisions, a GitHub search of seconds per repository: the pages
+// that show them read them after drawing, with readRecent.
 export async function readAll(repos: string[], get: typeof fetch, limit = 4): Promise<(RepositoryPage | Error)[]> {
   const out: (RepositoryPage | Error)[] = new Array(repos.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < repos.length) {
-      const i = next++;
-      try {
-        const page = await read<RepositoryPage>(`/api/policy/repositories/${repos[i]}`, get);
-        page.recent = await read<Recent>(`/api/policy/repositories/${repos[i]}/decisions`, get).catch(() => {
-          page.recentUnavailable = true;
-          return undefined;
-        });
-        out[i] = page;
-      } catch (e) { out[i] = e instanceof Error ? e : new Error(String(e)); }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, repos.length) }, worker));
+  await eachLimited(repos.length, limit, async (i) => {
+    try { out[i] = await read<RepositoryPage>(`/api/policy/repositories/${repos[i]}`, get); }
+    catch (e) { out[i] = e instanceof Error ? e : new Error(String(e)); }
+  });
   return out;
+}
+
+// readRecent reads a repository's recent decisions into page; one the factory cannot answer marks
+// the page recentUnavailable.
+export async function readRecent(page: RepositoryPage, repository: string, get: typeof fetch): Promise<void> {
+  try { page.recent = await read<Recent>(`/api/policy/repositories/${repository}/decisions`, get); }
+  catch { page.recentUnavailable = true; }
+}
+
+// eachLimited runs fn for 0..n-1, at most limit at a time.
+async function eachLimited(n: number, limit: number, fn: (i: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => { while (next < n) await fn(next++); };
+  await Promise.all(Array.from({ length: Math.min(limit, n) }, worker));
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -312,6 +317,7 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       return;
     }
     const pages = await readAll(repositories, get);
+    const reading = () => { const s = el("span", "\u2026", "reading"); s.title = "The factory is reading this repository's decisions from GitHub."; return s; };
     const repoTable = table(["Repository", "Merged on its own", "Would have merged", "Waited (7 days)", "Closest to going live"], repositories.map((repo, i) => {
       const p = pages[i];
       if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-", "-"];
@@ -320,16 +326,23 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       name.append(link(`/settings/merge-policies/${repo}`, repo));
       const health = bindingHealth(r);
       if (health) name.append(el("p", health, "repository-health"));
-      const counts = p.recent ? decisionCounts(p.recent) : undefined;
       const best = r.classes.filter((c) => c.mode === "shadow" && c.evidence).sort((x, y) => y.evidence!.clean - x.evidence!.clean)[0];
-      return [name, counts ? String(counts.automatic) : "-", counts ? String(counts.wouldMerge) : "-", counts ? String(counts.waited) : "-",
-        best ? `${best.class} ${cleanCount(best.evidence!, true)}` : "-"];
+      return [name, reading(), reading(), reading(), best ? `${best.class} ${cleanCount(best.evidence!, true)}` : "-"];
     }), "repo-table");
     pages.forEach((p, i) => { if (!(p instanceof Error)) repoTable.tBodies[0].rows[i].dataset.object = p.report.repositoryObject ?? ""; });
     const { box } = filterField({ label: "Filter repositories", noun: ["repository", "repositories"],
       items: () => [...repoTable.tBodies[0].rows], text: (tr) => `${tr.cells[0].textContent} ${tr.dataset.object ?? ""}` });
     main.append(box, repoTable);
     tail();
+    // The decision counts fill in per repository once the table is on screen.
+    await eachLimited(repositories.length, 4, async (i) => {
+      const p = pages[i];
+      if (p instanceof Error) return;
+      await readRecent(p, repositories[i], get);
+      const counts = p.recent ? decisionCounts(p.recent) : undefined;
+      const cells = repoTable.tBodies[0].rows[i].cells;
+      [counts?.automatic, counts?.wouldMerge, counts?.waited].forEach((n, j) => { cells[j + 1].replaceChildren(n === undefined ? "-" : String(n)); });
+    });
   } catch (e) { failed(main, e); }
 }
 
@@ -398,14 +411,19 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
     page.policySpecs = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get)
       .then((x) => Object.fromEntries(x.policies.map((p) => [p.name, p.spec])), () => ({}));
   } catch (e) { failed(main, e); return; }
+  // The recent decisions, a GitHub search of seconds, fill their section once the page is drawn.
+  const recent = readRecent(page, repository, get);
   const reload = () => void repositoryPage(app, repository, get, theme);
   const say = el("p", "", "notice");
   const r = page.report;
   const state = policyState(r);
   main.append(el("h2", "Recent decisions"));
-  if (page.recent?.decisions.length) main.append(recentDecisions(page.recent));
-  else if (page.recentUnavailable) main.append(el("p", "Recent decisions are not available from this factory. The policies below still work.", "notice"));
-  else main.append(el("p", "No decision was recorded in this window."));
+  const decisions = el("p", "Reading recent decisions\u2026", "reading");
+  main.append(decisions);
+  const filled = recent.then(() => decisions.replaceWith(
+    page.recent?.decisions.length ? recentDecisions(page.recent)
+      : page.recentUnavailable ? el("p", "Recent decisions are not available from this factory. The policies below still work.", "notice")
+        : el("p", "No decision was recorded in this window.")));
   main.append(policyHeader(r), modeLegend(), say);
   const file = fileLine(r);
   const fl = el("p", file.text, "file-line");
@@ -463,12 +481,12 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   };
   main.append(tl);
 
-  if (state === "not-migrated") return;
   if (state === "repository") {
     main.append(el("h2", "Bindings"), el("p", "The bindings are in .github/agent-factory.yaml, which decides the policies: edit them there, by pull request.", "editor-footer"));
-    return;
+  } else if (state !== "not-migrated") {
+    main.append(el("h2", "Bindings editor"), bindingEditor(r, page.policySpecs ?? {}, page.you.maintainer, get));
   }
-  main.append(el("h2", "Bindings editor"), bindingEditor(r, page.policySpecs ?? {}, page.you.maintainer, get));
+  await filled;
 }
 
 // policyHeader keeps health out of the way unless it needs an operator's action.

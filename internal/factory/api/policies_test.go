@@ -3,8 +3,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -122,6 +125,28 @@ func TestPreviewKinds(t *testing.T) {
 			t.Fatalf("%d %s", w.Code, w.Body)
 		}
 	})
+}
+
+// A backtest whose read failed says why in the factory's log: the caller sees only a 503 (gcp-0,
+// 2026-11-25: ai-native-ref's backtest answered evidence_unavailable and the factory logged nothing).
+func TestABacktestFailureIsLogged(t *testing.T) {
+	s := policiesServer(true)
+	var log bytes.Buffer
+	s.Log = slog.New(slog.NewJSONHandler(&log, nil))
+	s.Editor = &fakeEditor{backtestErr: errors.New("policyview: forge: search pull request records: rate limit exceeded")}
+	body := `{"kind":"binding","repository":"` + coordPrimary + `","bindings":[],"backtest":true,"since":"2026-11-01"}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/policy/preview", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer human")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "evidence_unavailable") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	for _, want := range []string{`"msg":"policy backtest unread"`, `"repository":"` + coordPrimary + `"`, `"reason":"rate_limited"`, `rate limit exceeded`} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("log lacks %s: %s", want, log.String())
+		}
+	}
 }
 
 // Review of #546: a repository whose own file binds the policy (stage 4) is a consumer for its

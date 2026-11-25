@@ -774,12 +774,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				return nil, false
 			}
 			return commentReader(c.gh), true
-		}, RecentReader: func(ctx context.Context, repo, since string) ([]evidence.PR, error) {
+		}, RecentReader: func(ctx context.Context, repo, filter string) ([]evidence.PR, error) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, evidence.ErrUnknownRepository
 			}
-			return evidenceSource{c.gh}.MergedRecords(ctx, "merged:>="+since)
+			return evidenceSource{c.gh}.MergedRecords(ctx, filter)
 		}, BacktestReader: func(repo string) (policyview.BacktestSource, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
