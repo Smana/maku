@@ -180,10 +180,19 @@ func SteeringMessage(t *v1alpha1.Task) string {
 		"factory's instructions. Every implementer run's brief carries these bytes.\n\n%s", t.Name, t.Spec.PredictedClass, s.Path, s.SHA, s.Text)
 }
 
-// TriagerBrief is the investigate template's only run: it confirms the finding read-only and
-// proposes a public issue text (§3, R38). A human publishes it, or not.
+// TriagerBrief is the investigate template's only run: for RunLore/internal findings it confirms
+// the finding read-only and proposes a public issue text (§3, R38); for a report outcome task
+// (phase F5) it investigates the issue read-only and hands off findings to post on the issue.
 func TriagerBrief(t *v1alpha1.Task, nonce string) string {
 	fence := "TASK-DATA-" + nonce
+	if t.Spec.Outcome == config.OutcomeReport && t.Spec.Source.Kind != "runlore" {
+		head := fmt.Sprintf("You are investigating agent factory task %s in %s with read-only tools; change nothing and open no pull request.\n"+
+			"Investigate the question or problem below using your read-only tools. When you have clear findings, call room_handoff with "+
+			"toRole implementer and your findings as the summary: what you found, where in the repository it happens, and what a fix would change. "+
+			"The factory posts your findings on the issue for maintainers. If nothing needs attention, end without a handoff.\n",
+			t.Name, t.Spec.Repository)
+		return head + snapshotBlock(t, fence)
+	}
 	return fmt.Sprintf("You are the triager for agent factory task %s in %s. Confirm or refute the finding "+
 		"below with your read-only tools; change nothing. If a code change is needed, call room_handoff with "+
 		"toRole implementer and, as the summary, a public issue: its first line the title `<area>: <what is "+
@@ -843,6 +852,19 @@ func ReviewerBrief(t *v1alpha1.Task, nonce string, sc *Scoped) string {
 	head := fmt.Sprintf("You are the reviewer for agent factory task %s in %s: a read-only run on the pull request %s, "+
 		"on branch agent/%s.\n", t.Name, t.Spec.Repository, pr, t.Name) + reviewerRules
 	return fit(head, reviewerChecks(t, nonce, sc)+steeringBlock(t, nonce), snapshotBlock(t, "TASK-DATA-"+nonce), t)
+}
+
+// ForeignReviewerBrief is the reviewer's task text for a standalone review outcome (phase F4) on
+// a pull request the factory did not write: read-only, never pushing or merging.
+func ForeignReviewerBrief(t *v1alpha1.Task, pr forge.PR, nonce string) string {
+	branch := pr.HeadRef
+	if branch == "" {
+		branch = "main"
+	}
+	head := fmt.Sprintf("You are the reviewer for agent factory task %s in %s: a read-only review on pull request %s "+
+		"(branch %s), which the factory did not write. Change nothing, push nothing, and merge nothing.\n",
+		t.Name, t.Spec.Repository, pr.URL, branch) + reviewerRules
+	return fit(head, reviewerChecks(t, nonce, nil)+steeringBlock(t, nonce), snapshotBlock(t, "TASK-DATA-"+nonce), t)
 }
 
 // reviewerRules is the reviewer's charge (HR4, WR6).

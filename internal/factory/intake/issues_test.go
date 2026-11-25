@@ -844,3 +844,48 @@ func TestADrillIssueMakesADrillTask(t *testing.T) {
 		})
 	}
 }
+
+func TestAnOutcomeLabelSetsTheOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		want  string
+	}{
+		{label: LabelPlanFirst, want: config.OutcomePlanFirst},
+		{label: LabelReport, want: config.OutcomeReport},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			f := forgetest.NewFake()
+			labelled(f, 7, "Smana")
+			f.SetIssue(forge.Issue{Number: 7, Title: "Investigate issue", Body: "Details.", Labels: []string{"factory/ready", tc.label}})
+			p, c := poller(t, f)
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			ts := tasks(t, c)
+			if len(ts) != 1 || ts[0].Spec.Outcome != tc.want {
+				t.Fatalf("got %d tasks (%+v), want outcome %q", len(ts), ts, tc.want)
+			}
+			if len(f.Comments(7)) != 0 {
+				t.Fatalf("unexpected comments: %v", f.Comments(7))
+			}
+		})
+	}
+}
+
+func TestTwoOutcomeLabelsConflict(t *testing.T) {
+	f := forgetest.NewFake()
+	labelled(f, 7, "Smana")
+	f.SetIssue(forge.Issue{Number: 7, Title: "Ambiguous", Body: "Details.", Labels: []string{"factory/ready", LabelPlanFirst, LabelReport}})
+	p, c := poller(t, f)
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := tasks(t, c)
+	if len(ts) != 1 || ts[0].Spec.Outcome != config.OutcomeChange {
+		t.Fatalf("expected 1 task running as change, got %+v", ts)
+	}
+	cs := f.Comments(7)
+	if len(cs) != 1 || !strings.Contains(cs[0], "outcome_conflict") {
+		t.Fatalf("expected outcome_conflict comment, got %v", cs)
+	}
+}

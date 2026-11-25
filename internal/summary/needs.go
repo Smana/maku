@@ -16,6 +16,7 @@ import (
 // kindRank's: a deadline first, then this order, then the room, so two surfaces cannot disagree.
 const (
 	NeedPlanConfirmation = "plan_confirmation" // a scoper's proposed split, for a maintainer to accept
+	NeedPlanReview       = "plan_review"       // a plan-first task waiting for plan approval, revision, or split (phase F6)
 	NeedApproval         = "approval"          // a requested approval the caller may decide here
 	NeedQuestion         = "question"          // the issue's author answers the scoper (SC8)
 	NeedMerge            = "merge"             // a maintainer merges, or approves, the pull request
@@ -26,7 +27,7 @@ const (
 )
 
 // kindOrder is the constants' declared order: the second key of Ordered (CD21).
-var kindOrder = [...]string{NeedPlanConfirmation, NeedApproval, NeedQuestion, NeedMerge, NeedReview,
+var kindOrder = [...]string{NeedPlanConfirmation, NeedPlanReview, NeedApproval, NeedQuestion, NeedMerge, NeedReview,
 	NeedFailedCheck, NeedRecovery, NeedHold}
 
 // kindRank is a kind's place in kindOrder; a kind this package does not know sorts last.
@@ -125,6 +126,11 @@ func factsNeed(in NeedsIn) (Need, bool) {
 	// which is exactly what it needs (needs/v1).
 	case f.Phase == "Escalated" && f.Reason == "split_proposed":
 		return planConfirmationNeed(in, f), true
+	// Plan review (phase F6): a plan-first task waiting for its author or a maintainer to approve,
+	// revise, or split the scoper's plan.
+	case f.Phase == "AwaitingHuman" && f.Reason == "plan_review" && (in.Caller.CanClose || in.GitHub.MayWrite || in.Caller.RoomScoped ||
+		(f.Issue != nil && f.Issue.Author != "" && strings.EqualFold(f.Issue.Author, in.GitHub.Login))):
+		return planReviewNeed(in, f), true
 	// Review before merge: a requested reviewer is asked for the review the merge then follows, so one
 	// pull request is one item for them (CD26). It is GitHub's to decide, as a merge is, and it lives as
 	// long as the merge does: the facts keep their PR after it merged, so a phase other than
@@ -174,6 +180,23 @@ func planConfirmationNeed(in NeedsIn, f *envelope.TaskFacts) Need {
 		n.What = clipWhat(fmt.Sprintf("a maintainer comments `/factory split` on issue #%d to accept the parts, or `/factory retry` to run the task whole", n.Issue))
 	}
 	n.Action = NeedAction{Kind: "comment", Label: "comment on the issue", URL: n.URL}
+	return stamp(n, in, NeedSource{Kind: "facts", Reason: f.Reason})
+}
+
+// planReviewNeed is a plan-first task's plan gate (phase F6): the author or a maintainer approves,
+// revises, or splits the proposed plan on the issue.
+func planReviewNeed(in NeedsIn, f *envelope.TaskFacts) Need {
+	id := number(issueNumber(f))
+	if id == "" {
+		id = "plan_review"
+	}
+	n := Need{Kind: NeedPlanReview, ID: id, Issue: issueNumber(f),
+		Why: whyOf(f.Reason), URL: firstURL(issueURL(in, f), in.URL),
+		What: clipWhat("review the proposed plan and comment `/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`")}
+	if n.Issue > 0 {
+		n.What = clipWhat(fmt.Sprintf("review the proposed plan on issue #%d and comment `/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`", n.Issue))
+	}
+	n.Action = NeedAction{Kind: "comment", Label: "review the plan on the issue", URL: n.URL}
 	return stamp(n, in, NeedSource{Kind: "facts", Reason: f.Reason})
 }
 

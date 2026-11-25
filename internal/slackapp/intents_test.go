@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/intent"
 	"github.com/Smana/maku/internal/summary"
 )
@@ -199,5 +200,32 @@ func TestStatusKindsArePhases(t *testing.T) {
 		if !intent.ValidPhase(k) {
 			t.Errorf("status kind %q is not a phase the broker accepts", k)
 		}
+	}
+}
+
+func TestAMentionWithAPullRequestIsAReview(t *testing.T) {
+	rig, base := withProposals(t)
+	plan := clonePlan(t, base)
+	plan.Issues[0].Outcome = intake.OutcomeReview
+	plan.Issues[0].OutcomeInferred = true
+	plan.Issues[0].Roles = []string{"reviewer"}
+	plan.Issues[0].Body = "## What is wrong\nReview https://github.com/Smana/ai-native-ref/pull/42\n## What it should be\nVerdict posted.\n## Acceptance check\nVerdict comment on PR #42."
+	rig.broker.setPlan(plan, false, nil)
+
+	rig.mention("C03", "1729.5001", "<@U0BOT> please review <https://github.com/Smana/ai-native-ref/pull/42|PR #42>")
+
+	if len(rig.broker.handoffs) != 1 {
+		t.Fatalf("expected 1 handoff call, got %d", len(rig.broker.handoffs))
+	}
+	gotText := rig.broker.handoffs[0].Text
+	if !strings.Contains(gotText, "https://github.com/Smana/ai-native-ref/pull/42") || strings.Contains(gotText, "<https://") {
+		t.Fatalf("expected unwrapped PR URL in handoff text, got %q", gotText)
+	}
+	if intake.InferOutcome(gotText) != intake.OutcomeReview {
+		t.Fatalf("expected InferOutcome=%q for %q", intake.OutcomeReview, gotText)
+	}
+	posts := rig.posts()
+	if len(posts) == 0 || !strings.Contains(posts[0].text, "review") {
+		t.Fatalf("expected review plan posted, got %+v", posts)
 	}
 }

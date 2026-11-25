@@ -98,6 +98,41 @@ func (r *Reconciler) requestVerifier(t *v1alpha1.Task, role string) {
 	r.to(t, v1alpha1.PhaseQueued, "")
 }
 
+// isReviewOnly reports whether t is a standalone read-only PR review task (phase F4):
+// one reviewer run, one verdict comment on the PR, never a write token, push, merge, or second run.
+func isReviewOnly(cfg *config.Config, t *v1alpha1.Task) bool {
+	return cfg.ReviewsOnly(t.Spec.Template) || t.Spec.Source.Kind == "review" || t.Spec.Outcome == config.OutcomeReview
+}
+
+// startReviewOnly starts the single read-only reviewer run for a review outcome task (phase F4).
+func (r *Reconciler) startReviewOnly(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) error {
+	s := r.implementerSpec(cfg, t, "")
+	baseRef := pr.HeadRef
+	if baseRef == "" {
+		baseRef = "main"
+	}
+	s.Role, s.Persona = "reviewer", "reviewer"
+	s.TaskURL = pr.URL
+	s.BaseRef = baseRef
+	s.Branch = baseRef
+	s.MaxTokens = runCapTokens(t, "reviewer")
+	r.withChecks(cfg, &s, t)
+	s.Tier = otherTier(t.Spec.Budget.Tier)
+	if tierCfg, ok := cfg.Tiers[s.Tier]; ok && tierCfg.Model != "" {
+		s.Model = tierCfg.Model
+	}
+	if m := cfg.Templates[t.Spec.Template].ReviewerModel; m != "" {
+		s.Model = m
+	}
+	s.TaskText = ForeignReviewerBrief(t, pr, r.Nonce())
+	s.Head = pr.HeadSHA
+	if err := r.startRun(ctx, cfg, t, s, "review"); err != nil {
+		return err
+	}
+	t.Status.NextRole = ""
+	return nil
+}
+
 // startVerifier starts the NextRole run from Queued, past the caps, C4 and lateReviews, on pr as
 // queued checked it (open), and records its head: the run's approve counts for that commit only
 // (F1). The verifiers of one chain all review one head: when the head moved since the run before,
@@ -176,6 +211,20 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 	v, why, err := r.verdict(ctx, t)
 	if err != nil {
 		return r.roomUnreadable(ctx, cfg, t, err)
+	}
+	if isReviewOnly(cfg, t) {
+		if why != "" {
+			cur.Verdict, t.Status.Verdict = "none", "none"
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "no_verdict")
+		}
+		cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
+		r.releaseUnheld(ctx, t)
+		r.to(t, v1alpha1.PhaseDone, ReasonReviewPosted)
+		if t.Status.PullRequest != nil && t.Status.PullRequest.Number > 0 {
+			narrateOn(t, t.Status.PullRequest.Number, narrate.ReviewPosted(t, v, cfg.RoomsURL))
+		}
+		r.outcome(ctx, cfg, t)
+		return nil
 	}
 	if why != "" {
 		switch {

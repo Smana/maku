@@ -38,6 +38,16 @@ func IssueKey(repo string, number, gen int) string {
 	return fmt.Sprintf("github:issue:%s#%d:gen%d", repo, number, gen)
 }
 
+// ReviewKey is a pull-request review task's key; gen counts every factory/review label event on the PR (phase F4).
+func ReviewKey(repo string, number, gen int) string {
+	return fmt.Sprintf("github:review:%s#%d:gen%d", repo, number, gen)
+}
+
+// FixKey is the change task filed by a maintainer's /factory fix on a completed report task (phase F5).
+func FixKey(repo string, issue int, reportTask string) string {
+	return fmt.Sprintf("github:fix:%s#%d:%s", repo, issue, reportTask)
+}
+
 // SplitKey keys a split's part k (splitter design SL7): one Task per part of a parent, whatever replays.
 func SplitKey(parent string, k int) string { return fmt.Sprintf("split:%s/%d", parent, k) }
 

@@ -64,6 +64,7 @@ func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[strin
 		"solo":        {Roles: []string{"implementer"}},
 		"pair":        {Roles: []string{"implementer", "reviewer"}, MaxReviewRounds: 2},
 		"investigate": {Roles: []string{"triager"}},
+		"review":      {Roles: []string{"reviewer"}},
 	}
 	stall := int32(DefaultStallSteps)
 	askOn, reviewOn := true, true

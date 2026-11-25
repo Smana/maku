@@ -154,3 +154,43 @@ func TestSyntheticSet(t *testing.T) {
 }
 
 func mustFold(s string) string { f, _ := fold(s); return f }
+
+func TestAMentionWithAPullRequestIsAReview(t *testing.T) {
+	cases := []struct {
+		name     string
+		text     string
+		wantRepo string
+		wantPR   int
+		wantOK   bool
+	}{
+		{
+			name:     "bare PR URL and review",
+			text:     "please review https://github.com/Smana/maku/pull/42",
+			wantRepo: "Smana/maku", wantPR: 42, wantOK: true,
+		},
+		{
+			name:     "Slack-wrapped PR URL and review",
+			text:     "can you review <https://github.com/Smana/ai-native-ref/pull/108|PR #108>?",
+			wantRepo: "Smana/ai-native-ref", wantPR: 108, wantOK: true,
+		},
+		{
+			name:   "PR URL without review word",
+			text:   "fix the tests broken by https://github.com/Smana/maku/pull/42",
+			wantOK: false,
+		},
+		{
+			name:   "review word without PR URL",
+			text:   "review the docs layout",
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, pr, ok := MentionReview(tc.text)
+			if ok != tc.wantOK || repo != tc.wantRepo || pr != tc.wantPR {
+				t.Fatalf("MentionReview(%q) = (%q, %d, %v), want (%q, %d, %v)",
+					tc.text, repo, pr, ok, tc.wantRepo, tc.wantPR, tc.wantOK)
+			}
+		})
+	}
+}

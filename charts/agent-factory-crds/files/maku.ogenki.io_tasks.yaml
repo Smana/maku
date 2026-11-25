@@ -530,6 +530,7 @@ spec:
                     description: |-
                       adopt: another author's pull request the factory decides (merge gate MC10).
                       coordination: a coordination parent or integration Task (MR2); a child is an issue.
+                      review: a pull request the factory did not write, reviewed read-only (phase F4).
                     enum:
                     - issue
                     - runlore
@@ -537,6 +538,7 @@ spec:
                     - api
                     - adopt
                     - coordination
+                    - review
                     type: string
                   onBehalfOf:
                     description: 'The external user a link made the sponsor (R9):
@@ -641,6 +643,7 @@ spec:
                 - solo
                 - pair
                 - investigate
+                - review
                 type: string
               text:
                 description: The snapshot. Admission caps it at caps.maxTextBytes

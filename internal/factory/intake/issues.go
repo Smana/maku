@@ -44,6 +44,13 @@ const LabelRevert = "factory/revert"
 // read with factory/revert, so it must be on the pull request before factory/revert is.
 const LabelDrill = "factory/drill"
 
+// Outcome labels read alongside factory/ready (phase F6) and the pull-request review trigger (phase F4).
+const (
+	LabelPlanFirst = "plan-first"
+	LabelReport    = "report"
+	LabelReview    = "factory/review"
+)
+
 // maxSnapshot bounds the stored text for etcd (the Task CRD's maxLength); admission refuses
 // anything above caps.maxTextBytes anyway (R6).
 const maxSnapshot = 65536
@@ -262,6 +269,9 @@ func (p *IssuePoller) Poll(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("#%d: %w", it.Number, err))
 		}
 	}
+	if err := p.reviews(ctx, cfg); err != nil {
+		errs = append(errs, err)
+	}
 	if err := p.orphans(ctx, cfg); err != nil {
 		errs = append(errs, fmt.Errorf("orphans: %w", err))
 	}
@@ -387,8 +397,23 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 		}
 	}
 	t := p.issueTask(cfg, n, key, "github:"+last.Actor, iss, text, sum)
-	if slices.Contains(iss.Labels, "plan-first") {
-		t.Spec.Outcome = config.OutcomePlanFirst
+	var outcomes []string
+	if slices.Contains(iss.Labels, LabelPlanFirst) {
+		outcomes = append(outcomes, config.OutcomePlanFirst)
+	}
+	if slices.Contains(iss.Labels, LabelReport) {
+		outcomes = append(outcomes, config.OutcomeReport)
+	}
+	switch len(outcomes) {
+	case 1:
+		t.Spec.Outcome = outcomes[0]
+	case 0:
+	default:
+		if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n),
+			narrate.OutcomeConflict(n, outcomes, last.At)); err != nil {
+			return err
+		}
+		t.Spec.Outcome = config.OutcomeChange
 	}
 	parent, err := p.childOf(ctx, cfg, n, iss)
 	if err != nil {

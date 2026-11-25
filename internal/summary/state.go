@@ -83,6 +83,7 @@ func StatusWord(phase, reason string) string {
 	case "Reviewing", "Verifying":
 		return "checking"
 	case "Escalated", "AwaitingHuman":
+		// Includes AwaitingHuman/plan_review (phase F6): always "waiting on you".
 		return "waiting on you"
 	case "AwaitingCI":
 		return "waiting on a check"

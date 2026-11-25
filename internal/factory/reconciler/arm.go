@@ -264,6 +264,10 @@ func front(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.Cl
 	human := func(reason, matched string) (ArmDecision, bool) {
 		return ArmDecision{Verdict: "human", Reason: reason, Matched: matched}, true
 	}
+	if in.Task != nil && (in.Task.Spec.Source.Kind == "review" || in.Task.Spec.Outcome == config.OutcomeReview) {
+		// Phase F4: a read-only review task never owns a pull request and its verdict never arms the gate.
+		return human("not_agent_authored", "")
+	}
 	if cl.Adopted() {
 		if reason := adoptAuthor(in, cl); reason != "" {
 			return human(reason, class)

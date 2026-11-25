@@ -195,3 +195,53 @@ func TestAReviewIsOwedOnlyWhileAHumanWaits(t *testing.T) {
 		t.Fatalf("the reviewer still waiting: %+v", got)
 	}
 }
+
+func TestAPlanToReviewIsANeed(t *testing.T) {
+	if got := summary.StatusWord("AwaitingHuman", "plan_review"); got != "waiting on you" {
+		t.Fatalf("StatusWord(AwaitingHuman, plan_review) = %q, want %q", got, "waiting on you")
+	}
+	facts := &envelope.TaskFacts{
+		Phase:  "AwaitingHuman",
+		Reason: "plan_review",
+		Issue: &envelope.IssueFact{
+			Number: 77,
+			URL:    "https://github.com/Smana/ai-native-ref/issues/77",
+			Author: "alice",
+		},
+	}
+	// Visible to the issue author and to a maintainer, not to an unrelated read-only viewer.
+	for _, tc := range []struct {
+		name     string
+		standing summary.GitHubStanding
+		caller   summary.Caller
+		want     bool
+	}{
+		{name: "issue author", standing: summary.GitHubStanding{Login: "alice"}, want: true},
+		{name: "maintainer", standing: summary.GitHubStanding{Login: "Smana", MayWrite: true}, want: true},
+		{name: "unrelated viewer", standing: summary.GitHubStanding{Login: "bob"}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := summary.Items(summary.NeedsIn{
+				Room:       "p1anr3vw",
+				URL:        "https://rooms.example/r/p1anr3vw",
+				Repository: "Smana/ai-native-ref",
+				FactsRead:  true,
+				Facts:      facts,
+				GitHub:     tc.standing,
+				Caller:     tc.caller,
+			})
+			if !tc.want {
+				if len(got) != 0 {
+					t.Fatalf("expected no need, got %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Kind != summary.NeedPlanReview || got[0].ID != "77" || got[0].Issue != 77 {
+				t.Fatalf("expected NeedPlanReview for #77, got %+v", got)
+			}
+			if got[0].Action.URL != "https://github.com/Smana/ai-native-ref/issues/77" {
+				t.Fatalf("unexpected action URL: %+v", got[0].Action)
+			}
+		})
+	}
+}

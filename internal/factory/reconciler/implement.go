@@ -805,6 +805,7 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	}
 	// R38: the triager's output reaches a public implementer only through a human. Its summary
 	// stays in the room (internal); the issue gets the room link and the next step, nothing else.
+	// Phase F5: a public report task posts its findings directly on the issue with a /factory fix offer.
 	if current(t).Role == "triager" {
 		if run.Phase != "Succeeded" {
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
@@ -815,6 +816,11 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		}
 		if len(evs) == 0 {
 			return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, "no_action")
+		}
+		if t.Spec.Outcome == config.OutcomeReport && t.Spec.Source.Kind != "runlore" && cfg.InternalBy(t.Spec.Source.RequestedBy) == nil {
+			findings := lastHandoffSummary(evs)
+			r.finish(ctx, cfg, t, v1alpha1.PhaseDone, ReasonFindingsPosted, narrate.FindingsPosted(t, findings, cfg.RoomsURL))
+			return nil
 		}
 		narrateLater(t, narrate.ProposalReady(t, cfg.RoomsURL, cfg.PublishStarts(t.Spec.Source.Kind, t.Spec.Source.RequestedBy)))
 		return r.end(ctx, cfg, t, v1alpha1.PhaseDone, "proposal_ready")

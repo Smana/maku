@@ -271,6 +271,54 @@ func ProposalReady(t *v1alpha1.Task, roomsURL string, starts bool) Event {
 		t.Name, strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)}
 }
 
+// ReviewPosted is the one comment a read-only review task posts on the pull request (phase F4).
+// It carries the reviewer's verdict and commit, and sanitised summary on public tasks; it never
+// pushes, merges, or opens a second run.
+func ReviewPosted(t *v1alpha1.Task, v rooms.Verdict, roomsURL string) Event {
+	head := fmt.Sprintf("Agent factory review (task `%s`): verdict **`%s`** on `%s`.\n\n",
+		t.Name, v.Verdict, v.Commit)
+	var body string
+	switch {
+	case t.Spec.DataClass != "public":
+		body = fmt.Sprintf("_The review notes stay in the room (%s/r/%s, tailnet only): the task's data class is not public._",
+			strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
+	case strings.TrimSpace(v.Text) == "":
+		body = "_No defects reported._"
+	default:
+		body = summary(v.Text, maxBody-len(head))
+	}
+	return Event{Key: "review-posted", Class: ClassDone, Body: head + body}
+}
+
+// FindingsPosted is the one comment a report task posts on its issue (phase F5): the read-only
+// findings, followed by the offer to file a change task with /factory fix.
+func FindingsPosted(t *v1alpha1.Task, findings, roomsURL string) Event {
+	const offer = "\n\nTo have this fixed, a maintainer comments `/factory fix`"
+	head := fmt.Sprintf("Agent factory findings (task `%s`):\n\n", t.Name)
+	var body string
+	if t.Spec.DataClass != "public" {
+		body = fmt.Sprintf("_The findings stay in the room (%s/r/%s, tailnet only): the task's data class is not public._",
+			strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
+	} else {
+		body = summary(findings, maxBody-len(head)-len(offer))
+	}
+	return Event{Key: "findings-posted", Class: ClassDone, Body: head + body + offer}
+}
+
+// FixFiled announces the change task filed by a maintainer's /factory fix on a completed report (phase F5).
+func FixFiled(t *v1alpha1.Task, fixTask, by string) Event {
+	return Event{Key: "fix-filed", Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s`: @%s commented `/factory fix`; filed change task `%s` on this issue with the findings.",
+		t.Name, by, fixTask)}
+}
+
+// OutcomeConflict answers conflicting outcome labels applied alongside factory/ready (phase F6):
+// the conflict is refused and the task runs as change.
+func OutcomeConflict(number int, outcomes []string, at time.Time) Event {
+	return Event{Key: fmt.Sprintf("outcome-conflict-%d", at.Unix()), Class: ClassChanged,
+		Body: fmt.Sprintf("Agent factory on #%d (`outcome_conflict`): conflicting outcome labels (%s); %s.",
+			number, strings.Join(outcomes, ", "), Reason("outcome_conflict"))}
+}
+
 // PublishedStarted answers a factory/publish that filed the proposal and started its fix: the
 // issue, the Task and the class it runs under. Its key is Published's, so a replay posts nothing new.
 func PublishedStarted(issue int, by, task, class string) Event {
