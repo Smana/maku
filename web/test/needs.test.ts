@@ -570,12 +570,14 @@ describe("room cards acting on the page (phase G2)", () => {
   });
 
   it("renders a plan_review card with Approve, Revise (with one-line note) and Split, and no GitHub link", async () => {
-    const { root, acts, refuse } = await mountWithActs([{
+    const { root, acts, refuse, panel } = await mountWithActs([{
       kind: "plan_review", type: "plan", act: "plan", id: "55",
       what: "the author or a maintainer reviews the proposed plan on issue #55",
       url: "https://github.com/o/r/issues/55",
       action: { kind: "plan", label: "review the plan on the issue", url: "https://github.com/o/r/issues/55" },
     }], ["plan"]);
+    expect(panel.offers("plan")).toBe(true); // the strip's Next folds its commands (gcp-0, 2026-11-25)
+    expect(panel.offers("retry")).toBe(false);
     const card = root.querySelector<HTMLElement>('li.need[data-kind="plan_review"]')!;
     expect(card.dataset.type).toBe("plan");
     expect(card.querySelector("a.need-go")).toBeNull();
@@ -912,7 +914,7 @@ describe("the plan-review card shows the proposed plan (gcp-0, 2026-11-25)", () 
   });
   it("takes the plan from the room's summary", () => {
     const { root, needs } = mount();
-    const s = sum([{ kind: "plan_review", id: "55", what: item.what, url: item.url }]);
+    const s = sum([{ kind: "plan_review", id: "55", what: item.what, url: item.url! }]);
     s.status.proposedPlan = plan;
     needs.setSummary(s);
     expect(root.querySelector("li.need details.need-plan .need-plan-task")?.textContent).toBe("Fix the dead links in docs/");

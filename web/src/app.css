@@ -749,6 +749,9 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .need-title { margin: 0; font-weight: 700; }
 .need-what, .need-why { margin: 0; font-size: var(--text-small); }
 .need-why { color: var(--muted-foreground); }
+/* Next's slash commands, folded when a Needs-you card already offers the acts as buttons. */
+.next-commands > summary { cursor: pointer; color: var(--muted-foreground); font-size: var(--text-small); }
+.next-commands > p { margin: 4px 0 0; }
 /* The proposed plan, folded under a plan-review card: what Approve approves, read in the room. */
 .need-plan { font-size: var(--text-small); }
 .need-plan > summary { cursor: pointer; color: var(--link); }

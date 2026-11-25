@@ -228,6 +228,7 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
       ctx.hands.plan!("revise", text);
     };
     note.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); revise(); } };
+    li.dataset.offers = "plan";
     bar.append(
       primary(button("Approve", "need-plan-approve", () => ctx.hands.plan!("approve"))),
       note,
@@ -280,7 +281,8 @@ function unreadLine(rooms: string[]): string {
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
   chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined,
   opts: { needs?: () => Promise<NeedsPage>; hands?: NeedHands; roomActs?: string[] | (() => Promise<string[]>) } = {}):
-  { refresh(): Promise<void>; onAck(f: Frame): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
+  { refresh(): Promise<void>; onAck(f: Frame): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void;
+    offers(act: string): boolean } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
   const approvals = el("ul", { className: "approvals" });
@@ -541,6 +543,11 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       summarisedItems = needsItems(s);
       proposedPlan = s.status.proposedPlan;
       render();
+    },
+    // offers is whether a card here holds act's controls (the plan's Approve, Revise and Split), so
+    // the strip's Next line need not repeat them as commands.
+    offers(act: string): boolean {
+      return !root.hidden && [...other.querySelectorAll<HTMLElement>(":scope > li.need")].some((li) => li.dataset.offers === act);
     },
     // count is what needs this viewer: the approvals it may decide, then merges, answers and holds.
     count(): number { return panel.approvalCounts().mine + others; },
