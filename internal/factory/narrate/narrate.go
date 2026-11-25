@@ -1138,7 +1138,7 @@ func RoleFindings(t *v1alpha1.Task, role, runID, verdict, text string) Event {
 	if t.Spec.DataClass == "public" {
 		body = summary(text, maxBody-len(head))
 	}
-	return Event{Key: "role-findings-" + runID, Body: head + body}
+	return Event{Key: "role-findings-" + runID, Class: ClassChanged, Body: head + body}
 }
 
 // summary is an agent's text as an inert code block of at most budget bytes, clipped with a mark.
