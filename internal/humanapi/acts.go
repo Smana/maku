@@ -379,6 +379,9 @@ func (a *Actor) retry(ctx context.Context, p authn.Principal, room *v1alpha1.Roo
 		if res.CeilingMicroUSD > 0 {
 			out["ceilingMicroUSD"] = res.CeilingMicroUSD
 		}
+		if res.ConfirmedMicroUSD > 0 && res.WorkflowCeilingMicroUSD > 0 {
+			out["confirmedMicroUSD"], out["workflowCeilingMicroUSD"] = res.ConfirmedMicroUSD, res.WorkflowCeilingMicroUSD
+		}
 		return envelope.Must(out), ""
 	}
 	return nil, res.Result

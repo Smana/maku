@@ -171,6 +171,9 @@ func newMakuBroker(t *testing.T) *makuBroker {
 			}
 			if act["kind"] == "retry" && act["deeper"] == true {
 				ack.Result = json.RawMessage(`{"result":"stepped_up","workflow":"careful","ceilingMicroUSD":13600000}`)
+				if hello.RoomID == "4cappedx" {
+					ack.Result = json.RawMessage(`{"result":"stepped_up","workflow":"careful","ceilingMicroUSD":5100000,"confirmedMicroUSD":5100000,"workflowCeilingMicroUSD":13600000}`)
+				}
 			}
 			if act["kind"] == "answer" {
 				if act["text"] == "author only" {
@@ -333,6 +336,12 @@ func TestRetryCommandSendsTheAct(t *testing.T) {
 	b.mu.Unlock()
 	if !strings.Contains(out.String(), "3buqdlot: running again under careful (up to $13.60), on the same branch and pull request") {
 		t.Errorf("output:\n%s", out)
+	}
+	if err := r.Run(t.Context(), []string{"retry", "4cappedx", "--deeper"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "4cappedx: running again under careful (capped at your confirmed $5.10; careful's ceiling is $13.60), on the same branch and pull request") {
+		t.Errorf("a capped step-up says why:\n%s", out)
 	}
 	for _, bad := range [][]string{{"retry"}, {"retry", "a", "b"}} {
 		if err := r.Run(t.Context(), bad); err == nil {

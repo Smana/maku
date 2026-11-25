@@ -354,11 +354,7 @@ func renderTaskText(in taskTextIn) string {
 		if len(card.Path) > 0 {
 			row("Will run", strings.Join(card.Path, " → "))
 		}
-		if card.CeilingUSD > 0 {
-			cost := "up to " + roomview.Dollars(card.CeilingUSD)
-			if card.StepUpUSD > 0 {
-				cost += " · up to " + roomview.Dollars(card.StepUpUSD) + " if it steps up"
-			}
+		if cost := roomview.CostLine(card); cost != "" {
 			row("Cost", cost)
 		}
 		if strip := summary.Strip(in.Sum.Flow); strip != "" {

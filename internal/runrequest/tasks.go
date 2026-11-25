@@ -79,6 +79,9 @@ type RetryResult struct {
 	Result          string `json:"result"`
 	Workflow        string `json:"workflow,omitempty"`
 	CeilingMicroUSD int64  `json:"ceilingMicroUSD,omitempty"`
+	// ConfirmedMicroUSD and WorkflowCeilingMicroUSD are set when the confirmed cost caps a step-up.
+	ConfirmedMicroUSD       int64 `json:"confirmedMicroUSD,omitempty"`
+	WorkflowCeilingMicroUSD int64 `json:"workflowCeilingMicroUSD,omitempty"`
 }
 
 // StopTask posts onBehalfOf to the factory's POST /v1/tasks/{task}/stops with accessToken.

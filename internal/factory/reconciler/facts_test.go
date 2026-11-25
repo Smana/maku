@@ -884,3 +884,29 @@ func TestFactsForParentProjectsSplitPartDetails(t *testing.T) {
 		t.Fatal("crossing a $0.10 cost step did not move the parent's factsKey")
 	}
 }
+
+// A confirmed cost reaches the room with the workflow's own ceiling, so the card can say which one
+// caps the task (gcp-0, 2026-11-25).
+func TestFactsCarryTheConfirmedCap(t *testing.T) {
+	task := issueTask("3buqdlot", 7, "x")
+	task.Status.Phase = v1alpha1.PhaseImplementing
+	g := newRig(t, task)
+	cfg := g.r.Cfg.Current()
+	if cfg.HarnessProfiles == nil {
+		cfg.HarnessProfiles = map[string]config.HarnessProfile{}
+	}
+	if cfg.Tiers == nil {
+		cfg.Tiers = map[string]config.Tier{}
+	}
+	cfg.HarnessProfiles["careful"] = config.HarnessProfile{Budget: "frontier", Stages: []config.StageDef{{Role: "implementer"}, {Role: "reviewer"}}}
+	cfg.Tiers["frontier"] = config.Tier{Model: "tier-frontier", TaskUSD: 13.60, RunUSD: 6.80}
+	task.Spec.MaxMicroUSD, task.Spec.Budget.TaskMicroUSD = 5_100_000, 5_100_000
+	task.Status.Profile = &v1alpha1.ProfileStatus{Name: "careful", Source: "label", Cohort: "labeled", Resolved: true}
+	f := g.r.factsFor(cfg, task)
+	if p := f.Profile; p == nil || p.CeilingMicroUSD != 5_100_000 || p.ConfirmedMicroUSD != 5_100_000 || p.WorkflowCeilingMicroUSD != 13_600_000 {
+		t.Fatalf("profile facts %+v", f.Profile)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
