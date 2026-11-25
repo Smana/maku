@@ -76,7 +76,7 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir --root-user-action=ignor
       -r /tmp/checks-requirements.txt \
  && rm /tmp/checks-requirements.txt
 
-COPY --chmod=0755 agent_run.py harness_types.py harness_driver.py openhands_driver.py agent_push.py agent_checks.py test_contract.py git_credential_agent.py loop_policy.py pr_footer.py coordination_integration.py /opt/agent/
+COPY --chmod=0755 agent_run.py harness_types.py harness_driver.py openhands_driver.py loop_guard.py event_tracing.py agent_push.py agent_checks.py test_contract.py git_credential_agent.py loop_policy.py pr_footer.py coordination_integration.py /opt/agent/
 COPY --chmod=0755 site /opt/agent/site
 COPY --chmod=0755 gh /usr/local/bin/gh
 # The git shim (hardening H3, HR23): /usr/local/bin precedes /usr/bin on PATH, so `git push` reaches agent-push

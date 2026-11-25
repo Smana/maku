@@ -69,6 +69,7 @@ class OpenCodeDriver(HarnessDriver):
         self._seen_event_ids: set[str] = set()
         self._stuck_pattern: str | None = None
         self._event_tracer = None
+        self._active_cid: str = ""
         self._role_name: str = env.get("ROLE") or "implementer"
 
     def _auth_header(self) -> str:
@@ -78,6 +79,12 @@ class OpenCodeDriver(HarnessDriver):
     def _request(self, method: str, path: str, body: dict | None = None, timeout: float = 30) -> dict:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Authorization": self._auth_header()}
+        tp = self.env.get("TRACEPARENT") or self.trace_env.get("TRACEPARENT")
+        if tp:
+            headers["traceparent"] = tp
+        ts = self.env.get("TRACESTATE") or self.trace_env.get("TRACESTATE")
+        if ts:
+            headers["tracestate"] = ts
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
@@ -89,9 +96,10 @@ class OpenCodeDriver(HarnessDriver):
         out = dict(self.env)
         if not out.get("PATH"):
             out["PATH"] = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
-        # Never export OpenCode's native OTLP logs or traces (design §7.6).
-        for k in oc_config.OPENCODE_BLOCKED_OTEL_KEYS:
-            out.pop(k, None)
+        # Never export OpenCode's native OTLP logs, metrics, or traces (design §7.6).
+        for k in list(out):
+            if k in oc_config.OPENCODE_BLOCKED_OTEL_KEYS or k.startswith("OTEL_"):
+                out.pop(k, None)
         out["HOME"] = self.paths["home"]
         out["XDG_CONFIG_HOME"] = self.paths["config"]
         out["XDG_DATA_HOME"] = self.paths["data"]
@@ -193,18 +201,85 @@ class OpenCodeDriver(HarnessDriver):
         if existing:
             try:
                 self._request("GET", "/api/session/" + urllib.parse.quote(existing, safe=""), timeout=10)
+                self._active_cid = existing
+                self._attach_tracer(request.span)
                 return existing
             except (urllib.error.URLError, OSError):
                 pass
 
         role = request.env.get("ROLE") or self._role_name
-        created = self._request("POST", "/api/session", {"agent": role}, timeout=15)
+        run_id = request.env.get("RUN_ID") or "run"
+        model = (request.env.get("MODEL") or self.env.get("MODEL") or "agent-default").strip()
+        effort = (request.env.get("LLM_REASONING_EFFORT") or self.env.get("LLM_REASONING_EFFORT") or "high").strip().lower()
+        if effort not in ("low", "medium", "high"):
+            effort = "high"
+        # Supplying title suppresses OpenCode's extra auto-title LLM call; explicit model ref activates the effort variant.
+        created = self._request(
+            "POST",
+            "/api/session",
+            {
+                "agent": role,
+                "title": f"maku-{role}-{run_id}",
+                "model": {"providerID": "maku", "id": model, "variant": effort},
+            },
+            timeout=15,
+        )
         sid = (created.get("data") or {}).get("id") or ""
         if not _valid_session_id(sid):
             raise RuntimeError("opencode returned invalid session id: %r" % (sid,))
         oc_config.atomic_write(self.session_file, sid + "\n", mode=0o600)
+        self._active_cid = sid
+        self._attach_tracer(request.span)
         if not request.resumed:
             self.send(sid, request.task, run=True)
+        return sid
+
+    def _attach_tracer(self, span) -> None:
+        if span is None:
+            return
+        try:
+            import event_tracing
+            self._event_tracer = event_tracing.EventTracer(root_span=span)
+        except ImportError:
+            pass
+
+    def on_event(self, event: dict) -> None:
+        """Feed normalized events to Maku's loop_guard and metadata-only EventTracer."""
+        eid = event.get("id") or ""
+        if eid and eid in self._seen_event_ids:
+            return
+        if eid:
+            self._seen_event_ids.add(eid)
+        if self._event_tracer is not None:
+            self._event_tracer.consume(event)
+        self._loop_events.append(event)
+        if not self._stuck_pattern and self._active_cid:
+            try:
+                import loop_guard
+                pattern = loop_guard.detect(self._loop_events)
+                if pattern:
+                    self.mark_stuck(self._active_cid, pattern)
+            except ImportError:
+                pass
+
+    def create_search_session(self, *, query: str, model: str, effort: str = "low", max_steps: int = 40) -> str:
+        """Create an independent read-only search session (no parentID, design §7.2)."""
+        provider_id = "maku_light" if (self.env.get("LIGHT_BASE_URL") and self.env.get("LIGHT_MODEL")) else "maku"
+        variant = effort if effort in ("low", "medium", "high") else "low"
+        created = self._request(
+            "POST",
+            "/api/session",
+            {
+                "agent": "search",
+                "title": "maku-search",
+                "model": {"providerID": provider_id, "id": model, "variant": variant},
+            },
+            timeout=15,
+        )
+        sid = (created.get("data") or {}).get("id") or ""
+        if not _valid_session_id(sid):
+            raise RuntimeError("opencode returned invalid search session id: %r" % (sid,))
+        self.send(sid, query, run=True)
         return sid
 
     def _read_terminal_marker(self) -> dict | None:

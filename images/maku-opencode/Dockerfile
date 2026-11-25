@@ -54,6 +54,8 @@ COPY --chmod=0755 \
     images/maku-harness/harness_types.py \
     images/maku-harness/harness_driver.py \
     images/maku-harness/openhands_driver.py \
+    images/maku-harness/loop_guard.py \
+    images/maku-harness/event_tracing.py \
     images/maku-harness/agent_push.py \
     images/maku-harness/agent_checks.py \
     images/maku-harness/test_contract.py \
@@ -64,6 +66,9 @@ COPY --chmod=0755 \
     /opt/agent/
 COPY --chmod=0755 \
     images/maku-opencode/config.py \
+    images/maku-opencode/role_config.py \
+    images/maku-opencode/mcp_proxy.py \
+    images/maku-opencode/search.py \
     images/maku-opencode/opencode_driver.py \
     /opt/agent/
 COPY --chmod=0755 images/maku-harness/gh /usr/local/bin/gh
