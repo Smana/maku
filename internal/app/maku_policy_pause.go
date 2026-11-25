@@ -16,7 +16,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/config"
 )
 
 func (r Maku) policyPause(ctx context.Context, verb string, args []string) error {
@@ -100,15 +99,7 @@ func (r Maku) openPausePR(ctx context.Context, factory factoryv1.Factory, reposi
 	if !strings.EqualFold(repositoryObject.Spec.Repository, repository) {
 		return "", fmt.Errorf("gitops manifest is for %s, not %s", repositoryObject.Spec.Repository, repository)
 	}
-	if verb == "pause" {
-		if repositoryObject.Spec.Merge == nil {
-			repositoryObject.Spec.Merge = &config.Merge{}
-		}
-		repositoryObject.Spec.Merge.Paused = &config.MergePause{Reason: reason}
-	} else if repositoryObject.Spec.Merge != nil {
-		repositoryObject.Spec.Merge.Paused = nil
-	}
-	updated, err := yaml.Marshal(repositoryObject)
+	updated, err := setMergePaused(raw, verb == "pause", reason)
 	if err != nil {
 		return "", err
 	}
