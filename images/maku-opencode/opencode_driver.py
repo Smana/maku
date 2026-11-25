@@ -22,6 +22,9 @@ SESSION_ID_RE = re.compile(r"^ses_[A-Za-z0-9_-]+$")
 PLACEHOLDER_KEY = "injected-by-identity-proxy"
 
 
+# The run's clone (agent_run.REPO_DIR): OpenCode must start inside it.
+REPO_DIR = "/workspace/repo"
+
 def _read_api_key(env: dict, var: str = "LLM_API_KEY_FILE") -> str:
     path = env.get(var)
     if not path:
@@ -140,9 +143,13 @@ class OpenCodeDriver(HarnessDriver):
         self._write_initial_config()
         binary = shutil.which("opencode") or OPENCODE_BIN
         cmd = [binary, "serve", "--hostname", self.host, "--port", str(self.port)]
-        cwd = self.env.get("OPENCODE_WORKDIR") or (
-            "/workspace/repo" if os.path.isdir("/workspace/repo") else self.paths["root"]
-        )
+        # OpenCode bounds its tools to the directory it starts in: anything outside is
+        # external_directory, denied for every role. agent_run starts the driver before it clones,
+        # so the clone's directory is created here (git clones into an empty directory) and the
+        # server always starts in it. Falling back to the config root made every read of the
+        # repository "external" and the run ended stuck (gcp-0 live trial, 2026-11-25).
+        cwd = self.env.get("OPENCODE_WORKDIR") or REPO_DIR
+        os.makedirs(cwd, exist_ok=True)
         # No secret on argv; stdout/stderr inherited for pod logging.
         self.server = subprocess.Popen(cmd, cwd=cwd, env=self._server_env())
 
