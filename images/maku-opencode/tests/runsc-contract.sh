@@ -2,6 +2,8 @@
 # Measure OpenCode image size, cold startup readiness distribution, and run the offline recovery +
 # contract matrix under gVisor (runsc) or a configured Docker runtime.
 # Set DOCKER_RUNTIME='' on a host without gVisor to run against ordinary Docker (runc).
+# Set SKIP_GO=1 to skip the host-side Go test invocations (e.g., in CI where check-test runs them).
+# Set SKIP_BUILD=1 when MAKU_OPENCODE_IMAGE is already built and loaded into Docker.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -9,7 +11,9 @@ IMAGE="${MAKU_OPENCODE_IMAGE:-maku-opencode:runsc-contract}"
 RUNTIME="${DOCKER_RUNTIME-runsc}"
 SAMPLES="${READINESS_SAMPLES:-5}"
 
-docker build --target harness -t "${IMAGE}" -f "${ROOT}/images/maku-opencode/Dockerfile" "${ROOT}"
+if [[ "${SKIP_BUILD:-}" != "1" ]]; then
+  docker build --load --target harness -t "${IMAGE}" -f "${ROOT}/images/maku-opencode/Dockerfile" "${ROOT}"
+fi
 
 SIZE_BYTES="$(docker image inspect "${IMAGE}" --format '{{.Size}}')"
 echo "==> Image ${IMAGE}: ${SIZE_BYTES} bytes ($((SIZE_BYTES / 1024 / 1024)) MiB)"
@@ -65,7 +69,11 @@ print(f'readiness_ms: samples={[round(x, 1) for x in samples]} p50={p50:.1f}ms p
 "
 
 echo "==> Running recovery suite (runtime=${RUNTIME:-runc})..."
-MAKU_OPENCODE_IMAGE="${IMAGE}" DOCKER_RUNTIME="${RUNTIME}" "${ROOT}/images/maku-opencode/tests/recovery-runsc.sh"
+MAKU_OPENCODE_IMAGE="${IMAGE}" DOCKER_RUNTIME="${RUNTIME}" SKIP_BUILD=1 "${ROOT}/images/maku-opencode/tests/recovery-runsc.sh"
 
 echo "==> Running full offline parity matrix (runtime=${RUNTIME:-runc})..."
-MAKU_OPENCODE_IMAGE="${IMAGE}" DOCKER_RUNTIME="${RUNTIME}" python3 "${ROOT}/images/maku-opencode/tests/contract-matrix.py"
+MATRIX_ARGS=()
+if [[ "${SKIP_GO:-}" == "1" ]]; then
+  MATRIX_ARGS+=(--skip-go)
+fi
+MAKU_OPENCODE_IMAGE="${IMAGE}" DOCKER_RUNTIME="${RUNTIME}" SKIP_BUILD=1 python3 "${ROOT}/images/maku-opencode/tests/contract-matrix.py" "${MATRIX_ARGS[@]}"

@@ -7,7 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 IMAGE="${MAKU_OPENCODE_IMAGE:-maku-opencode:recovery-test}"
 RUNTIME="${DOCKER_RUNTIME-runsc}"
 
-docker build --target harness -t "${IMAGE}" -f "${ROOT}/images/maku-opencode/Dockerfile" "${ROOT}"
+if [[ "${SKIP_BUILD:-}" != "1" ]]; then
+  docker build --load --target harness -t "${IMAGE}" -f "${ROOT}/images/maku-opencode/Dockerfile" "${ROOT}"
+fi
 
 RUN_ARGS=(
   --rm

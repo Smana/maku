@@ -185,7 +185,9 @@ jobs:
   # it reads two other repositories and the network. A repository that declares nothing yet skips.
   # It fails on the harness's faults only; a check that ran and failed on a repository's main is that
   # repository's verdict, a warning here (tests/checks/verdict.py).
-  # On a pull request, only when it touches images/maku-harness/; main's pushes always run it.
+  # Also verifies the OpenCode runner image's readiness, recovery, and full offline parity matrix
+  # under gVisor (runsc) with SKIP_GO=1 (check-test already runs the Go suites).
+  # On a pull request, only when it touches images/maku-harness/ or images/maku-opencode/; main's pushes always run it.
   harness-checks:
     needs: changes
     if: needs.changes.outputs.harness == 'true'
@@ -219,6 +221,20 @@ jobs:
         run: install -m 0644 /dev/null "$RUNNER_TEMP/token" && printf '%s' "$GH_TOKEN" > "$RUNNER_TEMP/token"
       - run: images/maku-harness/tests/checks/run.sh maku-harness:checks Smana/ai-native-ref golang,pypi "$RUNNER_TEMP/token"
       - run: images/maku-harness/tests/checks/run.sh maku-harness:checks Smana/cloud-native-ref pypi "$RUNNER_TEMP/token"
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: images/maku-opencode/Dockerfile
+          target: harness
+          load: true
+          push: false
+          tags: maku-opencode:runsc-contract
+      - name: OpenCode gVisor (runsc) contract matrix
+        env:
+          MAKU_OPENCODE_IMAGE: maku-opencode:runsc-contract
+          SKIP_BUILD: "1"
+          SKIP_GO: "1"
+        run: images/maku-opencode/tests/runsc-contract.sh
 
   # The values contract (v4 step 8, CL7; V17): each chart's values against the latest release's,
   # pulled from ghcr.io and cosign-verified, as a table in the job summary. Report-only (step 8 R8): a

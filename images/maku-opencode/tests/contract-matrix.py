@@ -42,33 +42,37 @@ PROVIDER_SPECS = {
 }
 
 
-def _run_host() -> int:
+def _run_host(skip_go: bool = False) -> int:
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     image = os.environ.get("MAKU_OPENCODE_IMAGE", "maku-opencode:contract-matrix")
     runtime = os.environ.get("DOCKER_RUNTIME", "")
 
-    print("==> Building maku-opencode harness image...")
-    subprocess.run(
-        ["docker", "build", "--target", "harness", "-t", image, "-f", "images/maku-opencode/Dockerfile", "."],
-        cwd=root,
-        check=True,
-    )
+    if os.environ.get("SKIP_BUILD") != "1":
+        print("==> Building maku-opencode harness image...")
+        subprocess.run(
+            ["docker", "build", "--load", "--target", "harness", "-t", image, "-f", "images/maku-opencode/Dockerfile", "."],
+            cwd=root,
+            check=True,
+        )
     size_bytes = int(
         subprocess.check_output(["docker", "image", "inspect", image, "--format", "{{.Size}}"], text=True).strip()
     )
     print(f"==> Image {image}: {size_bytes:,} bytes ({size_bytes / (1024 * 1024):.1f} MiB)")
 
-    print("==> Running Go OpenCode bridge and factory no-model integration checks...")
-    subprocess.run(
-        ["go", "test", "-race", "./internal/bridge/", "-run", "OpenCode", "-count=1"],
-        cwd=root,
-        check=True,
-    )
-    subprocess.run(
-        ["go", "test", "-race", "./internal/factory/reconciler/", "-run", "TestEveryRoleGetsTheFrozenHarness|TestIntegration", "-count=1"],
-        cwd=root,
-        check=True,
-    )
+    if skip_go or os.environ.get("SKIP_GO") == "1":
+        print("==> Skipping Go tests (--skip-go / SKIP_GO=1); covered by check-test.")
+    else:
+        print("==> Running Go OpenCode bridge and factory no-model integration checks...")
+        subprocess.run(
+            ["go", "test", "-race", "./internal/bridge/", "-run", "OpenCode", "-count=1"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["go", "test", "-race", "./internal/factory/reconciler/", "-run", "TestEveryRoleGetsTheFrozenHarness|TestIntegration", "-count=1"],
+            cwd=root,
+            check=True,
+        )
 
     cmd = [
         "docker",
@@ -441,8 +445,9 @@ def _run_inside_container() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inside-container", action="store_true")
+    parser.add_argument("--skip-go", action="store_true", help="Skip host-side Go test invocations (also SKIP_GO=1)")
     args = parser.parse_args()
-    return _run_inside_container() if args.inside_container else _run_host()
+    return _run_inside_container() if args.inside_container else _run_host(skip_go=args.skip_go)
 
 
 if __name__ == "__main__":
