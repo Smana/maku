@@ -205,6 +205,58 @@ func (s *Store) recordRunRequest(ctx context.Context, d envelope.Draft, runID st
 	return ev, tx.Commit(ctx)
 }
 
+// ConsumeQueued moves the queued messages a run's brief quoted (refs) to consumed
+// by runID and, when it moved any, records state_changed{queued_consumed} naming
+// the run and the refs it moved, in one transaction: the room shows which run used
+// a note, and a fork can date the move. A ref no longer queued, or never queued, is
+// skipped, so a retry moves nothing and records nothing. d carries the actor,
+// origin and key scope; the store fills the type, the payload and the key's seq,
+// the first ref it moved, which no other consume can move. A sealed room is ErrSealed.
+func (s *Store) ConsumeQueued(ctx context.Context, d envelope.Draft, runID string, refs []int64) ([]int64, error) {
+	moved, err := s.consumeQueued(ctx, d, runID, refs)
+	if err != nil {
+		return nil, fmt.Errorf("store: consume queued messages of room %s for run %s: %w", d.RoomID, runID, err)
+	}
+	return moved, nil
+}
+
+func (s *Store) consumeQueued(ctx context.Context, d envelope.Draft, runID string, refs []int64) ([]int64, error) {
+	if !envelope.ValidID(runID) {
+		return nil, ErrBadMove
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	sealed, _, err := lockRoom(ctx, tx, d.RoomID)
+	if err != nil {
+		return nil, err
+	}
+	if sealed {
+		return nil, ErrSealed
+	}
+	rows, err := tx.Query(ctx, `UPDATE queue SET state = 'consumed', run_id = $3
+		WHERE room_id = $1 AND ref = ANY($2) AND state = 'queued' RETURNING ref`, d.RoomID, refs, runID)
+	if err != nil {
+		return nil, err
+	}
+	moved, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil || len(moved) == 0 {
+		return nil, err
+	}
+	slices.Sort(moved)
+	d.Type, d.OriginSeq = envelope.StateChanged, moved[0]
+	d.Payload = envelope.StatePayload("queued_consumed", map[string]any{"runId": runID, "refs": moved})
+	if err := d.Validate(); err != nil {
+		return nil, err
+	}
+	if _, _, err := s.appendTx(ctx, tx, d, fence{}, false); err != nil {
+		return nil, err
+	}
+	return moved, tx.Commit(ctx)
+}
+
 // lockRoom takes the room's row lock and reads what a queue move decides on.
 func lockRoom(ctx context.Context, tx pgx.Tx, roomID string) (sealed bool, driver string, err error) {
 	err = tx.QueryRow(ctx, `SELECT sealed, driver FROM rooms WHERE room_id = $1 FOR UPDATE`, roomID).Scan(&sealed, &driver)

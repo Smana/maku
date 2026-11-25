@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,13 +18,14 @@ import (
 )
 
 // memQueue is the store's queue in memory, per room: Enqueue checks what the
-// store checks and returns the stored event for a replayed key, SetQueued moves
-// a row once, out of queued; err fails every call, cursorErr Cursor alone.
+// store checks and returns the stored event for a replayed key, ConsumeQueued
+// moves a row once, out of queued; err fails every call, cursorErr Cursor alone.
 type memQueue struct {
 	drafts    []envelope.Draft // every room's, in append order
 	seqs      []int64          // drafts[i]'s seq in its room
 	rows      map[string][]store.Queued
 	runs      map[string]map[int64]string // the run that consumed each ref, by room
+	consumes  []envelope.Draft            // each consume that moved a row: its actor and key scope
 	err       error
 	cursorErr error
 }
@@ -67,25 +69,29 @@ func (q *memQueue) Queue(_ context.Context, room string) ([]store.Queued, error)
 	return out, q.err
 }
 
-func (q *memQueue) SetQueued(_ context.Context, room string, ref int64, to, runID string) error {
+func (q *memQueue) ConsumeQueued(_ context.Context, d envelope.Draft, runID string, refs []int64) ([]int64, error) {
 	if q.err != nil {
-		return q.err
+		return nil, q.err
 	}
-	if to != "consumed" || !envelope.ValidID(runID) {
-		return store.ErrBadMove
+	if !envelope.ValidID(runID) {
+		return nil, store.ErrBadMove
 	}
-	rows := q.rows[room]
+	rows := q.rows[d.RoomID]
+	var moved []int64
 	for i := range rows {
-		if rows[i].Ref == ref && rows[i].State == "queued" {
-			rows[i].State = to
-			if q.runs[room] == nil {
-				q.runs[room] = map[int64]string{}
+		if rows[i].State == "queued" && slices.Contains(refs, rows[i].Ref) {
+			rows[i].State = "consumed"
+			if q.runs[d.RoomID] == nil {
+				q.runs[d.RoomID] = map[int64]string{}
 			}
-			q.runs[room][ref] = runID
-			return nil
+			q.runs[d.RoomID][rows[i].Ref] = runID
+			moved = append(moved, rows[i].Ref)
 		}
 	}
-	return store.ErrNotQueued
+	if len(moved) > 0 {
+		q.consumes = append(q.consumes, d)
+	}
+	return moved, nil
 }
 
 func (q *memQueue) Cursor(_ context.Context, room, origin string) (int64, error) {
@@ -171,6 +177,11 @@ func TestQueueRoutes(t *testing.T) {
 	if rec := call(t, h, "POST", roomA+"/consume", factory, consume); rec.Code != http.StatusOK ||
 		strings.TrimSpace(rec.Body.String()) != `{"consumed":1}` || q.runs["3buqdlot"][1] != "aaaaaaaa" {
 		t.Fatalf("consume: %d %s %v", rec.Code, rec.Body, q.runs)
+	}
+	// The move is recorded in the room as the caller's, keyed by the run (queued_consumed).
+	if len(q.consumes) != 1 || q.consumes[0].RoomID != "3buqdlot" || q.consumes[0].Actor.ID != "system:factory" ||
+		q.consumes[0].Actor.Kind != envelope.ActorSystem || q.consumes[0].OriginClient != "system:factory:consume:aaaaaaaa" {
+		t.Fatalf("consume draft: %+v", q.consumes)
 	}
 	if rec := call(t, h, "GET", roomA, factory, nil); strings.Contains(rec.Body.String(), `"ref":1,`) {
 		t.Fatalf("a consumed message leaves the queue: %s", rec.Body)

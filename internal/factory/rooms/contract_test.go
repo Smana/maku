@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -171,7 +172,7 @@ func TestTheClientSpeaksTheBrokersSystemAPI(t *testing.T) {
 }
 
 // memQueue is the store's queue for one room, in memory: Enqueue dedupes on the exact key, as
-// the store does, and SetQueued moves a row once.
+// the store does, and ConsumeQueued moves a row once.
 type memQueue struct {
 	keys  map[string]int64
 	rows  []store.Queued
@@ -199,14 +200,15 @@ func (q *memQueue) Queue(context.Context, string) ([]store.Queued, error) {
 	return out, nil
 }
 
-func (q *memQueue) SetQueued(_ context.Context, _ string, ref int64, to, runID string) error {
+func (q *memQueue) ConsumeQueued(_ context.Context, _ envelope.Draft, runID string, refs []int64) ([]int64, error) {
+	var moved []int64
 	for i := range q.rows {
-		if q.rows[i].Ref == ref && q.rows[i].State == "queued" {
-			q.rows[i].State, q.moved[ref] = to, runID
-			return nil
+		if q.rows[i].State == "queued" && slices.Contains(refs, q.rows[i].Ref) {
+			q.rows[i].State, q.moved[q.rows[i].Ref] = "consumed", runID
+			moved = append(moved, q.rows[i].Ref)
 		}
 	}
-	return store.ErrNotQueued
+	return moved, nil
 }
 
 func (q *memQueue) Cursor(_ context.Context, _, origin string) (int64, error) {

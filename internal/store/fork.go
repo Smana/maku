@@ -42,9 +42,9 @@ const (
 // point ($3) if it is queued now, or if the event that took it out of queued has a
 // seq past the point: promoted (the steering message caused_by the ref), removed
 // (state_changed queued_removed naming it) or consumed by a brief (state_changed
-// run_requested listing it in consumed). Every row enters queued, naming no run.
-// The one gap is POST /queue/consume (Store.SetQueued): it moves a row with no
-// event, so a row consumed that way is carried only while still queued.
+// run_requested listing it in consumed, or state_changed queued_consumed listing
+// it in refs). Every row enters queued, naming no run. A row moved by
+// Store.SetQueued alone leaves no event, so it is carried only while still queued.
 const forkQueueSQL = `INSERT INTO queue (room_id, ref, author, text, state)
 	SELECT $2, q.ref, q.author, q.text, 'queued' FROM queue q
 	WHERE q.room_id = $1 AND q.ref <= $3 AND (q.state = 'queued' OR EXISTS (
@@ -54,7 +54,9 @@ const forkQueueSQL = `INSERT INTO queue (room_id, ref, author, text, state)
 			OR (q.state = 'removed' AND e.type = 'state_changed' AND e.payload->>'kind' = 'queued_removed'
 				AND e.payload->'ref' = to_jsonb(q.ref))
 			OR (q.state = 'consumed' AND e.type = 'state_changed' AND e.payload->>'kind' = 'run_requested'
-				AND jsonb_typeof(e.payload->'consumed') = 'array' AND e.payload->'consumed' @> to_jsonb(q.ref)))))`
+				AND jsonb_typeof(e.payload->'consumed') = 'array' AND e.payload->'consumed' @> to_jsonb(q.ref))
+			OR (q.state = 'consumed' AND e.type = 'state_changed' AND e.payload->>'kind' = 'queued_consumed'
+				AND jsonb_typeof(e.payload->'refs') = 'array' AND e.payload->'refs' @> to_jsonb(q.ref)))))`
 
 // Fork creates room r from events 1..upTo of src, copied with their seq, id and
 // idempotency key (§5), then appends d as state_changed{forked_from}: fields,
@@ -66,9 +68,8 @@ const forkQueueSQL = `INSERT INTO queue (room_id, ref, author, text, state)
 //
 // The fork also carries the source's queue as it stood at upTo: the messages
 // queued by then and not yet taken out of the queue, each queued again in the
-// fork. One gap: a row consumed through POST /v1/rooms/{id}/queue/consume
-// (Store.SetQueued) leaves no event to date it, so it is carried only while it
-// is still queued; consumed that way after upTo and before the fork, it is not.
+// fork. A row consumed through POST /v1/rooms/{id}/queue/consume is dated by its
+// queued_consumed record, as a brief's run_requested dates its own.
 func (s *Store) Fork(ctx context.Context, src string, upTo int64, r NewRoom, d envelope.Draft, fields map[string]any) (envelope.Event, error) {
 	if r.Retention < MinRetention {
 		return envelope.Event{}, fmt.Errorf("store: fork room %s: %w", r.ID, ErrInvalidRetention)

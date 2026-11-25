@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Queued notes reach the next run of any kind](#queued-notes-reach-the-next-run-of-any-kind)
 - [Web New task starts are broker-confirmed](#web-new-task-starts-are-broker-confirmed)
 - [A step-up is costed at the target workflow's budget](#a-step-up-is-costed-at-the-target-workflows-budget)
 - [Opt-in OpenCode harness](#opt-in-opencode-harness)
@@ -46,6 +47,10 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## Queued notes reach the next run of any kind
+
+A note queued in a factory task's room was quoted only by a revision brief, once a pull request existed: a note queued before the first run, or before a retry or plan revision with no pull request, waited without being read. The task's next scoper, triager or implementer run now quotes it, whatever started that run, and consumes it ([queued notes](factory.md#queued-notes)). The broker records each consume as `state_changed{queued_consumed}`, so the room shows which run used a note. No values change. Upgrade the broker with or before the factory: a broker without the record still consumes the notes, and the room shows the move only after a reload.
 
 ## Web New task starts are broker-confirmed
 

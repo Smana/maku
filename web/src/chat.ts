@@ -262,7 +262,10 @@ function marker(ev: RoomEvent): HTMLElement {
       text = `room ${String(p.phase ?? "?").toLowerCase()}${p.reason ? ": " + p.reason : ""}`;
       break;
     case "run_requested":
-      text = `run requested: ${p.role ?? "?"}${p.via ? " via " + p.via : ""}`;
+      text = `run requested: ${p.role ?? "?"}${p.via ? " via " + p.via : ""}${usedNotes(p.consumed, "")}`;
+      break;
+    case "queued_consumed":
+      text = usedNotes(p.refs, `run ${p.runId ?? "?"}`).replace(/^ · /, "");
       break;
     case "policy_decision":
     case "decision_applied":
@@ -291,6 +294,14 @@ function marker(ev: RoomEvent): HTMLElement {
   }
   row.append(el("span", "dot"), el("span", "mark-text", text), time(ev.ts));
   return row;
+}
+
+// usedNotes names the queued notes a run's brief quoted, by seq: " · queued #3, #5 used by run x"
+// (by, when set), or "" when it quoted none.
+function usedNotes(refs: unknown, by: string): string {
+  const seqs = Array.isArray(refs) ? refs.filter((r): r is number => typeof r === "number") : [];
+  if (!seqs.length) return "";
+  return ` · queued ${seqs.map((r) => "#" + r).join(", ")} used${by ? " by " + by : ""}`;
 }
 
 // sysline renders membership and coordination as a subtle single line.

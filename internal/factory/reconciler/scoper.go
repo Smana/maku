@@ -49,16 +49,16 @@ func (r *Reconciler) scoperSpec(cfg *config.Config, t *v1alpha1.Task, text strin
 	return s
 }
 
-// startScoper starts the scoper run, or resumes a lost one with its own brief.
+// startScoper starts the scoper run, a plan revision's included, or resumes a lost one with its own
+// brief. Either quotes the room's queued messages, and the run consumes what it quoted.
 func (r *Reconciler) startScoper(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
-	text, ok, err := r.resumeBrief(ctx, t)
+	text, refs, err := r.briefWithQueue(ctx, t, func(nonce string) string {
+		return ScoperBrief(t, nonce, cfg.Scoper, r.profileChoices(cfg, t))
+	})
 	if err != nil {
 		return err
 	}
-	if !ok {
-		text = ScoperBrief(t, r.Nonce(), cfg.Scoper, r.profileChoices(cfg, t))
-	}
-	return r.startRun(ctx, cfg, t, r.scoperSpec(cfg, t, text), nextTrigger(t))
+	return r.startConsuming(ctx, cfg, t, r.scoperSpec(cfg, t, text), nextTrigger(t), refs)
 }
 
 // The bounce's reason and label (SC8). The label is an output the factory never reads.

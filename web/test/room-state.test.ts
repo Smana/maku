@@ -29,6 +29,12 @@ describe("RoomState", () => {
     s.apply(ev(5, "state_changed", { kind: "run_requested", role: "implementer", runId: "b2b3c4d5", consumed: [1, 2] }));
     expect(s.queue()).toEqual([{ ref: 3, author: "human:a", text: "m3" }]);
   });
+  it("dequeues what the factory's run consumed (queued_consumed)", () => {
+    const s = new RoomState();
+    for (const seq of [1, 2, 3]) s.apply(ev(seq, "message", { kind: "chat", text: `m${seq}`, delivery: "queued" }));
+    s.apply(ev(4, "state_changed", { kind: "queued_consumed", runId: "b2b3c4d5", refs: [1, 3] }));
+    expect(s.queue()).toEqual([{ ref: 2, author: "human:a", text: "m2" }]);
+  });
   it("dequeues only on a steering message's causedBy (review 4.5 M2)", () => {
     const s = new RoomState();
     s.apply(ev(2, "message", { kind: "chat", text: "two", delivery: "queued" }));

@@ -59,7 +59,7 @@ Everything that happens in a room is an event in its log, assigned a gapless seq
 | **Room id** | 8 lowercase unpadded base32 characters (`[a-z2-7]{8}`), shared by room, run and task names (`agent/<id>` branches) |
 | **Room role** | Cumulative human standing in a room (`watcher` < `collaborator` < `owner`), plus the separate `approver` flag |
 | **Driver** | Single principal allowed to steer or interrupt the active run, fenced by `driverEpoch` across *give*, *request* and *take* |
-| **Message delivery** | `none` (chat only), `queued` (FIFO into the next run's brief), or `steering` (injected live by the driver) |
+| **Message delivery** | `none` (chat only), `queued` (FIFO into the next run's brief; in a factory room, the next planner, triager or implementer run, of any trigger), or `steering` (injected live by the driver) |
 | **Handoff** | Work and commit SHA passed from one run role to the next (`handoff` event), distinct from driver transfer |
 | **Verdict** | The reviewer's `approve` or `changes` (`message{kind: review_verdict}`), also posted once on the PR |
 | **Brief** | Bounded, fenced context assembled by the broker for the next run from the latest handoff, verdict and queued messages |
