@@ -24,7 +24,7 @@ import (
 // Delivery is at least once: a ref injected but not yet acknowledged in the log
 // when the bridge restarts is injected again.
 type Steering struct {
-	Harness *Harness
+	Harness HarnessAPI
 	RunID   string
 	Push    func(wire.Item)
 	// Gate runs each steering send (Confirmer.Gate), deciding its run flag: a message with run:true

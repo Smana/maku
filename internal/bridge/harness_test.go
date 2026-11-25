@@ -591,3 +591,22 @@ func TestWritesReachAgentServer(t *testing.T) {
 		t.Fatalf("status %q, %v", s, err)
 	}
 }
+
+func TestHarnessKindDefaultsToOpenHands(t *testing.T) {
+	for _, kind := range []string{"", HarnessOpenHands} {
+		got, err := NewHarnessForKind(kind, "http://127.0.0.1:1", conv)
+		if err != nil || got == nil {
+			t.Fatalf("kind %q: got %T, %v", kind, got, err)
+		}
+		if _, ok := got.(*Harness); !ok {
+			t.Fatalf("kind %q: got %T, want *Harness", kind, got)
+		}
+	}
+}
+
+func TestHarnessKindRejectsUnknown(t *testing.T) {
+	_, err := NewHarnessForKind("other", "http://127.0.0.1:1", conv)
+	if err == nil || !strings.Contains(err.Error(), `harness "other"`) {
+		t.Fatalf("got %v, want error naming harness \"other\"", err)
+	}
+}

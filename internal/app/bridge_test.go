@@ -76,6 +76,8 @@ func TestRunBridge(t *testing.T) {
 		{"a flush grace that is not positive fails startup", with("FLUSH_GRACE", "-1s"), "FLUSH_GRACE"},
 		{"a flush grace past the pod's grace fails startup", with("FLUSH_GRACE", "29s"), "at most 28s"},
 		{"a flush grace of 28 s starts", with("FLUSH_GRACE", "28s"), ""},
+		{"an explicit openhands harness starts", with("AGENT_HARNESS", "openhands"), ""},
+		{"an unknown harness fails startup", with("AGENT_HARNESS", "other"), `harness "other"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
