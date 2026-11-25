@@ -38,7 +38,7 @@ func (readAccess) CanRead(_ context.Context, p authn.Principal, repository strin
 	return (p.ID == "human:291" || p.ID == "human:5") && repository == coordPrimary, nil
 }
 
-type fakeEditor struct{ previews, timelines, recents int }
+type fakeEditor struct{ previews, timelines, recents, backtests int }
 
 func (f *fakeEditor) Preview(context.Context, string, string) (any, error) {
 	f.previews++
@@ -63,6 +63,11 @@ func (f *fakeEditor) Timeline(_ context.Context, repo string, pr int) (any, erro
 func (f *fakeEditor) Recent(_ context.Context, repo, since string) (any, error) {
 	f.recents++
 	return map[string]any{"repository": repo, "since": since}, nil
+}
+
+func (f *fakeEditor) Backtest(_ context.Context, repo, _, _ string, _ []config.Binding, _ string, _ *config.PolicySpec, since string) (any, error) {
+	f.backtests++
+	return map[string]any{"valid": true, "repository": repo, "since": since}, nil
 }
 
 // managed is stage manage when on, else read: the stage below promotion.

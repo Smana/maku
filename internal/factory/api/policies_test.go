@@ -116,6 +116,12 @@ func TestPreviewKinds(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a policy backtest", func(t *testing.T) {
+		w := post("human", `{"kind":"policy","policy":"dead-links","spec":{"maxPerDay":2},"repository":"`+coordPrimary+`","backtest":true,"since":"2026-11-01"}`)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"valid":true`) || !strings.Contains(w.Body.String(), `"since":"2026-11-01"`) {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
+	})
 }
 
 // Review of #546: a repository whose own file binds the policy (stage 4) is a consumer for its

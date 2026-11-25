@@ -26,7 +26,8 @@ type Service struct {
 	Reports  Reports
 	Comments func(repository string) (CommentReader, bool)
 	// RecentReader lists a repository's merged pull requests and their comments, newest first.
-	RecentReader func(ctx context.Context, repository, since string) ([]evidence.PR, error)
+	RecentReader   func(ctx context.Context, repository, since string) ([]evidence.PR, error)
+	BacktestReader func(repository string) (BacktestSource, bool)
 	// Namespace is the MergePolicy objects' namespace, for a policy edit's manifest.
 	Namespace string
 }
@@ -107,4 +108,26 @@ func (s *Service) Recent(ctx context.Context, repository, since string) (Recent,
 		return Recent{}, fmt.Errorf("policyview: %w", err)
 	}
 	return ReadRecent(rc.Name, since, cfg.FactoryLogin, prs), nil
+}
+
+// Backtest replays an edited policy over the repository's recent recorded diffs.
+func (s *Service) Backtest(ctx context.Context, repository string, req BacktestRequest, since string) (Backtest, error) {
+	cfg := s.Cfg.Current()
+	rc, err := s.repository(cfg, repository)
+	if err != nil {
+		return Backtest{}, err
+	}
+	rep, err := s.Reports.Report(ctx, rc.Name)
+	if err != nil {
+		return Backtest{}, err
+	}
+	recent, err := s.Recent(ctx, rc.Name, since)
+	if err != nil {
+		return Backtest{}, err
+	}
+	var source BacktestSource
+	if s.BacktestReader != nil {
+		source, _ = s.BacktestReader(rc.Name)
+	}
+	return Replay(ctx, cfg, rc, rep, req, recent, source), nil
 }

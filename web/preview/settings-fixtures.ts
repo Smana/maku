@@ -8,6 +8,8 @@
 // repositories, so the table has enough rows to filter. policies are the MergePolicies they bind.
 
 import type { PolicyReport } from "../src/policy-page";
+import type { Recent } from "../src/decisions";
+import type { Backtest } from "../src/backtest";
 import type { BindingView, ClassReport, Condition, Evidence, RepositoryPage, RepositoryStatus } from "../src/settings";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
@@ -150,8 +152,32 @@ const policy = (name: string, generation: number, spec: PolicyReport["spec"], co
   status: { observedGeneration: generation, consumerCount: consumers, currentCount: current },
 });
 export const policies: PolicyReport[] = [
-  policy("docs-links", 2, { description: "Fixes a broken link in the docs, and nothing else.", author: "agents", harness: "plain", checks: ["Check the documentation links"] }, 8, 8),
+  policy("docs-links", 2, { description: "Link targets in Markdown, nothing else.", diffShape: "links-only", modifyOnly: true, maxModifiedLines: 20, evidence: "low" }, 8, 8),
   policy("revert", 1, { description: "Reverts a merge the factory made.", author: "agents", harness: "plain" }, 8, 8),
-  policy("docs", 4, { description: "Small documentation changes: Markdown under docs/ and the README, never the security pages.", author: "agents", harness: "plain", requires: ["allowedFiles"] }, 1, 1),
-  policy("deps-patch", 1, { description: "A dependency's patch bump.", author: "adopt", harness: "adopted-none", diffShape: "semver-patch", modifyOnly: true, requires: ["allowedFiles"] }, 1, 0),
+  policy("docs", 4, { description: "Prose in Markdown files, small changes.", allowedFiles: ["^.+\\.mdx?$"], maxPatchFiles: 5, maxModifiedLines: 100, maxPerDay: 2, evidence: "standard" }, 1, 1),
+  policy("deps-patch", 1, { description: "A dependency's patch bump.", author: { adopt: { logins: ["renovate[bot]"], branches: ["^renovate/"] } }, diffShape: "semver-patch", modifyOnly: true, maxPatchFiles: 3, maxModifiedLines: 10, maxPerDay: 2, releaseAgeCheck: "renovate/stability-days", evidence: "low" }, 1, 0),
 ];
+
+
+const measured = (lines: number, maxLines = 100) => ({ counted: true, files: 2, maxFiles: 5, lines, maxLines });
+export const recentByRepository: Record<string, Recent> = Object.fromEntries(
+  ["Smana/maku", "Smana/cloud-native-ref", "Smana/legacy", ...Object.keys(smallPages)].map((repository, i) => [repository, {
+    repository, since: "2026-10-25",
+    decisions: [
+      { at: "2026-11-24T10:30:00Z", pullRequest: 524 + i, head: "abc123", outcome: "arm", policy: "revert", reason: "clean", rows: measured(4), commentURL: `https://github.com/${repository}/pull/${524 + i}` },
+      { at: "2026-11-23T09:00:00Z", pullRequest: 519 + i, head: "def456", outcome: "shadow", policy: "docs-links", reason: "shadow_would_arm", rows: measured(2), commentURL: `https://github.com/${repository}/pull/${519 + i}` },
+      { at: "2026-11-22T08:00:00Z", pullRequest: 512 + i, head: "fedcba", outcome: "human", policy: "docs", reason: "patch_too_large", rows: measured(131), considered: "docs-links:class_mismatch", commentURL: `https://github.com/${repository}/pull/${512 + i}` },
+    ],
+  }]),
+);
+
+export const backtestFixture: Backtest = {
+  valid: true, repository: "Smana/cloud-native-ref", since: "2026-10-25",
+  counts: { considered: 3, changed: 1, unchanged: 1, unknown: 1, matched: 1 },
+  rows: [
+    { pullRequest: 512, url: "https://github.com/Smana/cloud-native-ref/pull/512", policy: "docs",
+      before: { verdict: "shadow", reason: "shadow_would_arm" }, after: { verdict: "human", reason: "patch_too_large" }, change: "changed" },
+    { pullRequest: 498, url: "https://github.com/Smana/cloud-native-ref/pull/498", policy: "docs",
+      before: { verdict: "shadow", reason: "shadow_would_arm" }, after: { verdict: "unknown", reason: "diff_unrecorded" }, change: "unknown" },
+  ],
+};

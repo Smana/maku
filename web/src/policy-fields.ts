@@ -1,25 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// A binding's parameters (B4), as the bindings editor offers them, and the policy's meaning keys it
-// shows read-only beside them.
-
-// BindingField is one parameter a binding supplies (B4): fill-once, additive or a cap. The policy's
-// meaning fields are never a binding's: the binding editor shows them, read-only.
-export interface BindingField { key: string; label: string; kind: "list" | "number" | "text" | "approval" }
+// A binding's parameters and the policy's read-only meaning. Fields appear only where the policy
+// makes them valid: repository-specific fill-once values are not offered when the policy sets them.
+export type BindingGroup = "essential" | "shape" | "expert";
+export interface BindingField { key: string; label: string; kind: "list" | "number" | "text" | "approval"; group: BindingGroup }
 
 export const BINDING_FIELDS: BindingField[] = [
-  { key: "allowedFiles", label: "Files it may change (fill once)", kind: "list" },
-  { key: "companionFiles", label: "Files that may change with the entry (fill once)", kind: "list" },
-  { key: "requiredLabel", label: "Label it must carry (fill once)", kind: "text" },
-  { key: "oracleWorkflow", label: "Workflow reporting the oracle's findings (fill once)", kind: "text" },
-  { key: "holdoutChecks", label: "Checks that must pass (added to the policy's)", kind: "list" },
-  { key: "protectedFiles", label: "Files it must never touch (added to the policy's)", kind: "list" },
-  { key: "requiresApproval", label: "Changes that need a maintainer's approval (added to the policy's; one block of patterns per rule, a blank line between)", kind: "approval" },
-  { key: "maxPatchFiles", label: "Most files changed (at most the policy's)", kind: "number" },
-  { key: "maxModifiedLines", label: "Most lines changed (at most the policy's)", kind: "number" },
-  { key: "maxPerDay", label: "Most merges a day (at most the policy's)", kind: "number" },
+  { key: "allowedFiles", label: "Files it may change", kind: "list", group: "essential" },
+  { key: "requiredLabel", label: "Label it must carry", kind: "text", group: "essential" },
+  { key: "maxPerDay", label: "Most merges a day (at most the policy's)", kind: "number", group: "essential" },
+  { key: "companionFiles", label: "Files that may change with the entry", kind: "list", group: "shape" },
+  { key: "oracleWorkflow", label: "Workflow reporting the oracle's findings", kind: "text", group: "shape" },
+  { key: "holdoutChecks", label: "Checks that must pass (added to the policy's)", kind: "list", group: "shape" },
+  { key: "protectedFiles", label: "Files it must never touch (added to the policy's)", kind: "list", group: "expert" },
+  { key: "requiresApproval", label: "Changes that need a maintainer's approval (one block of patterns per rule, a blank line between)", kind: "approval", group: "expert" },
+  { key: "maxPatchFiles", label: "Most files changed (at most the policy's)", kind: "number", group: "expert" },
+  { key: "maxModifiedLines", label: "Most lines changed (at most the policy's)", kind: "number", group: "expert" },
 ];
 
-// MEANING_KEYS are a policy's meaning fields (B4): the policy's, shown read-only in a binding edit.
-export const MEANING_KEYS = ["description", "author", "harness", "harnessAllowed", "escalation", "checks", "testFirst", "diffShape",
-  "modifyOnly", "oracle", "releaseAgeCheck", "monitor"];
+export function bindingFieldValid(key: string, meaning: Record<string, unknown> | undefined): boolean {
+  const set = (k: string) => {
+    const v = meaning?.[k];
+    return v !== undefined && v !== "" && v !== false && (!Array.isArray(v) || v.length > 0);
+  };
+  if (key === "companionFiles") return meaning?.diffShape === "added-entry" && !set(key);
+  if (key === "oracleWorkflow") return set("oracle");
+  if (key === "requiredLabel") return !set(key) && (set("author") || meaning?.diffShape === "added-entry");
+  return true;
+}
+
+export const MEANING_KEYS = ["description", "allowedFiles", "companionFiles", "requiredLabel", "protectedFiles", "requiresApproval",
+  "modifyOnly", "maxPatchFiles", "maxModifiedLines", "maxPerDay", "evidence", "diffShape", "holdoutChecks", "oracle", "monitor",
+  "author", "releaseAgeCheck"];

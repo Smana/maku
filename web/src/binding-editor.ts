@@ -5,8 +5,9 @@
 // binding's resolution and the Repository manifest to commit ("Copy repository-<name>.yaml"). A
 // policy is edited on its own page, with its own reviewers.
 
-import { BINDING_FIELDS, MEANING_KEYS } from "./policy-fields";
+import { BINDING_FIELDS, MEANING_KEYS, bindingFieldValid, type BindingField, type BindingGroup } from "./policy-fields";
 import { fileActions } from "./policy-editor";
+import { backtestView, type Backtest } from "./backtest";
 import { explain, post } from "./settings-api";
 import type { Binding, Report } from "./settings";
 
@@ -31,71 +32,85 @@ function set(b: Binding, key: string, value: unknown) {
   else r[key] = value;
 }
 
-// bindingForm is one binding's fieldset: its mode, each parameter, and the policy's meaning.
+function parameterField(b: Binding, f: BindingField, change: () => void): HTMLLabelElement {
+  const l = el("label", undefined, "editor-field");
+  l.dataset.key = f.key;
+  const cur = (b as unknown as Record<string, unknown>)[f.key];
+  let input: HTMLInputElement | HTMLTextAreaElement;
+  if (f.kind === "list" || f.kind === "approval") {
+    input = el("textarea");
+    input.rows = 2;
+    input.value = f.kind === "approval"
+      ? ((cur as { changedFiles: string[] }[] | undefined) ?? []).map((a) => a.changedFiles.join("\n")).join("\n\n")
+      : ((cur as string[] | undefined) ?? []).join("\n");
+    input.oninput = () => {
+      set(b, f.key, f.kind === "approval"
+        ? input.value.split(/\n\s*\n/).map(lines).filter((v) => v.length).map((v) => ({ changedFiles: v }))
+        : lines(input.value));
+      change();
+    };
+  } else {
+    input = el("input");
+    input.type = f.kind === "number" ? "number" : "text";
+    if (f.kind === "number") input.min = "0";
+    input.value = cur === undefined ? "" : String(cur);
+    input.oninput = () => {
+      set(b, f.key, f.kind === "number" ? (input.value === "" ? undefined : Number(input.value)) : input.value.trim());
+      change();
+    };
+  }
+  input.setAttribute("aria-label", `${b.name} ${f.key}`);
+  l.append(el("span", f.label), input);
+  return l;
+}
+
+function modeLadder(b: Binding, change: () => void): HTMLElement {
+  const group = el("div", undefined, "mode-ladder");
+  group.setAttribute("role", "radiogroup");
+  group.setAttribute("aria-label", `${b.name} mode`);
+  const current = b.mode === "off" ? "disabled" : b.mode;
+  for (const [value, label] of [["disabled", "Off"], ["shadow", "Shadow"], ["live", "Live"]] as const) {
+    const item = el("label", undefined, "mode-choice");
+    const input = el("input");
+    input.type = "radio";
+    input.name = `mode-${b.name}`;
+    input.value = value;
+    input.checked = current === value;
+    input.onclick = () => { b.mode = value; change(); };
+    item.append(input, el("span", label));
+    group.append(item);
+  }
+  return group;
+}
+
+// bindingForm keeps the fields a binding needs in view and the valid optional fields in two folds.
 function bindingForm(b: Binding, meaning: Record<string, unknown> | undefined, change: () => void): HTMLFieldSetElement {
   const fs = el("fieldset", undefined, "binding-form");
   fs.dataset.binding = b.name;
-  fs.append(el("legend", b.name));
-  const mode = el("select");
-  mode.setAttribute("aria-label", `${b.name} mode`);
-  for (const m of ["live", "shadow", "off"]) {
-    const o = el("option", m);
-    o.value = m;
-    mode.append(o);
-  }
-  mode.value = b.mode;
-  mode.onchange = () => { b.mode = mode.value; change(); };
-  const ml = el("label", undefined, "editor-field");
-  ml.append(el("span", "Mode"), mode);
-  fs.append(ml);
-  // review takes only mode off and no parameter (B3): its form is the mode alone.
+  fs.append(el("legend", b.name), modeLadder(b, change));
   if (b.name !== "review") {
-    for (const f of BINDING_FIELDS) {
-      const l = el("label", undefined, "editor-field");
-      l.dataset.key = f.key;
-      const cur = (b as unknown as Record<string, unknown>)[f.key];
-      let input: HTMLInputElement | HTMLTextAreaElement;
-      if (f.kind === "list" || f.kind === "approval") {
-        input = el("textarea");
-        input.rows = 2;
-        // requiresApproval is a list of leaves (B4): one block of patterns per leaf, a blank line
-        // between, so each stays its own.
-        input.value = f.kind === "approval"
-          ? ((cur as { changedFiles: string[] }[] | undefined) ?? []).map((a) => a.changedFiles.join("\n")).join("\n\n")
-          : ((cur as string[] | undefined) ?? []).join("\n");
-        input.oninput = () => {
-          set(b, f.key, f.kind === "approval"
-            ? input.value.split(/\n\s*\n/).map(lines).filter((v) => v.length).map((v) => ({ changedFiles: v }))
-            : lines(input.value));
-          change();
-        };
-      } else {
-        input = el("input");
-        input.type = f.kind === "number" ? "number" : "text";
-        if (f.kind === "number") input.min = "0";
-        input.value = cur === undefined ? "" : String(cur);
-        input.oninput = () => {
-          set(b, f.key, f.kind === "number" ? (input.value === "" ? undefined : Number(input.value)) : input.value.trim());
-          change();
-        };
-      }
-      input.setAttribute("aria-label", `${b.name} ${f.key}`);
-      l.append(el("span", f.label), el("code", f.key), input);
-      fs.append(l);
+    const fields = BINDING_FIELDS.filter((f) => bindingFieldValid(f.key, meaning));
+    fs.append(...fields.filter((f) => f.group === "essential").map((f) => parameterField(b, f, change)));
+    for (const [group, title] of [["shape", "Shape and checks"], ["expert", "Expert"]] as [BindingGroup, string][]) {
+      const folded = fields.filter((f) => f.group === group);
+      if (!folded.length) continue;
+      const details = el("details", undefined, `binding-${group}`);
+      details.append(el("summary", title), ...folded.map((f) => parameterField(b, f, change)));
+      fs.append(details);
     }
   }
-  // The policy's meaning is the policy's (B4): shown, never a field here.
   const fixed = MEANING_KEYS.filter((k) => meaning?.[k] !== undefined && meaning?.[k] !== "" && meaning?.[k] !== false);
   if (fixed.length) {
+    const definition = el("details", undefined, "binding-definition");
+    definition.append(el("summary", "Policy definition"));
     const ul = el("ul", undefined, "binding-meaning");
     for (const k of fixed) {
       const v = meaning![k];
-      ul.append(el("li", `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)} (the policy's)`));
+      ul.append(el("li", `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`));
     }
-    fs.append(el("p", "Set by the policy, for every repository that binds it:", "binding-meaning-lead"), ul);
+    definition.append(ul);
+    fs.append(definition);
   }
-  const req = meaning?.requires as string[] | undefined;
-  if (req?.length) fs.append(el("p", `The policy requires: ${req.join(", ")}.`, "binding-requires"));
   return fs;
 }
 
@@ -119,7 +134,20 @@ export function bindingEditor(r: Report, meaning: Record<string, Record<string, 
     } catch (e) { out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); }
     check.disabled = !maintainer;
   };
-  box.append(check);
+  const backtest = el("button", "Backtest the last 30 days");
+  backtest.type = "button";
+  backtest.disabled = !maintainer;
+  backtest.onclick = async () => {
+    backtest.disabled = true;
+    try {
+      const bt = (await post(`/api/policy/repositories/${r.repository}/backtest`, { kind: "binding", bindings, since: "30d" }, get)) as Backtest;
+      out.replaceChildren(...backtestView(bt));
+    } catch (e) { out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); }
+    backtest.disabled = !maintainer;
+  };
+  const actions = el("div", undefined, "editor-actions");
+  actions.append(check, backtest);
+  box.append(actions);
   if (!maintainer) box.append(el("p", "Only a maintainer of the repository may check its bindings.", "notice"));
   box.append(out, el("p", "Copy or download the Repository manifest and commit it by pull request; Flux applies it. Maku never edits the cluster or the repository.", "editor-footer"));
   return box;

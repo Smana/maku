@@ -12,12 +12,15 @@
 import { mountApprovalMemory } from "../src/approval-memory";
 import { mountSettings, settingsFrame } from "../src/settings";
 import { applyTheme, initTheme } from "../src/theme";
-import { cnrPage, legacyPage, makuPage, policies, smallPages } from "./settings-fixtures";
+import { backtestFixture, cnrPage, legacyPage, makuPage, policies, recentByRepository, smallPages } from "./settings-fixtures";
 
 const params = new URLSearchParams(location.search);
 const path = params.get("path") ?? "/settings";
 // Longest prefix first: "/api/policy/repositories" is a prefix of every repository's route.
 const answers: Record<string, unknown> = {
+  ...Object.fromEntries(Object.entries(recentByRepository).map(([r, recent]) => [`/api/policy/repositories/${r}/decisions`, recent])),
+  "/api/policy/repositories/Smana/cloud-native-ref/backtest": backtestFixture,
+  "/api/policy/repositories/Smana/maku/backtest": { ...backtestFixture, repository: "Smana/maku" },
   "/api/policy/repositories/Smana/maku": makuPage,
   "/api/policy/repositories/Smana/cloud-native-ref": cnrPage,
   "/api/policy/repositories/Smana/legacy": legacyPage,

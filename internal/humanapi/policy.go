@@ -32,6 +32,7 @@ type PolicyGateway interface {
 	PolicyPreview(ctx context.Context, accessToken, repository, file string) (policyview.Preview, error)
 	PolicyDecisions(ctx context.Context, accessToken, repository string, pr int) (policyview.Timeline, error)
 	PolicyRecentDecisions(ctx context.Context, accessToken, repository, since string) (policyview.Recent, error)
+	PolicyBacktest(ctx context.Context, accessToken, repository string, request policyview.BacktestRequest, since string) (policyview.Backtest, error)
 	// PolicyList, Policy and the two previews are the MergePolicies' pages (B16).
 	PolicyList(ctx context.Context, accessToken string) ([]evidence.PolicyReport, error)
 	Policy(ctx context.Context, accessToken, name string) (evidence.PolicyReport, error)
@@ -83,6 +84,7 @@ func (s *Server) policyRoutes(mux *http.ServeMux, index http.Handler) {
 	mux.HandleFunc("GET /api/policy/repositories", s.policyRepositories)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}", s.policyRepository)
 	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/preview", s.policyPreview)
+	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/backtest", s.policyBacktest)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions", s.policyRecentDecisions)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions/{pr}", s.policyDecisions)
 	mux.HandleFunc("GET /api/policy/policies", s.policyList)
@@ -506,6 +508,40 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, pv)
+}
+
+// policyBacktest replays an edited policy over the repository's recent recorded diffs.
+func (s *Server) policyBacktest(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		policyview.BacktestRequest
+		Since string `json:"since"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPreviewBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil || dec.More() {
+		refuseJSON(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if in.Kind != "" && in.Kind != "file" && in.Kind != "binding" && in.Kind != "policy" {
+		refuseJSON(w, http.StatusBadRequest, "kind_unknown")
+		return
+	}
+	rep, ok := s.report(w, r, p, r.PathValue("owner")+"/"+r.PathValue("name"))
+	if !ok {
+		return
+	}
+	if _, ok := s.maintainerOf(w, r, p, rep.Repository); !ok {
+		return
+	}
+	bt, err := s.Policy.Factory.PolicyBacktest(r.Context(), p.AccessToken, rep.Repository, in.BacktestRequest, in.Since)
+	if !s.forwarded(w, err) {
+		return
+	}
+	writeJSON(w, bt)
 }
 
 // policyList is GET /api/policy/policies: the MergePolicies the factory shows this caller (B16).

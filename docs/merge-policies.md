@@ -782,6 +782,19 @@ for `dead-links` and `docs`. Under any other config a row prints `(the fixture r
 central decision)`: read a replay as proof that the evaluator is the gate's, not as a preview of your
 repository's pull requests.
 
+### Recorded-diff backtest
+
+`maku policy backtest new.yaml --repository owner/name --since 30d` replays the newest recorded
+per-policy decisions under an edited file, with the same evaluator the gate uses. The policy and
+binding editors offer the same replay against the last 30 days. Each row links to a real pull
+request and shows its before and after. Only changed and unknown rows print; the counts include
+unchanged decisions too. A warning names a rule that matched none.
+
+A backtest reconstructs the diff from the merge commit's first parent and the judged head, and
+reuses the recorded checks and fixed-base evidence. If those immutable references or the diff are
+unavailable, the row is `unknown`, never `unchanged`. Oracle decisions are also `unknown` because
+their original finding snapshots are not in the decision record. The replay writes nothing.
+
 ### The settings pages
 
 With `policyManagement.stage: manage` (factory and broker), `/settings/merge-policies/<owner>/<name>`

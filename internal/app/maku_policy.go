@@ -23,10 +23,10 @@ import (
 // validation, simulation and structural diffs against a factory config file.
 func (r Maku) policy(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("policy list, explain, pause, resume, validate, export, check, simulate or diff\n%s", makuUsage)
+		return fmt.Errorf("policy list, explain, backtest, pause, resume, validate, export, check, simulate or diff\n%s", makuUsage)
 	}
 	verb, args := args[0], args[1:]
-	if verb == "list" || verb == "explain" {
+	if verb == "list" || verb == "explain" || verb == "backtest" {
 		return r.policyOnline(ctx, verb, args)
 	}
 	if verb == "pause" || verb == "resume" {

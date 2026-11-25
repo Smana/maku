@@ -227,7 +227,9 @@ The room page is three bands: the header (title strip), the log with the rail be
 1100 px (`--log-w` column, then a 360 px rail), and the dock pinned at the foot. Below 1100 px
 the rail folds into a labelled strip (each run's persona and its state glyph) that opens it as a
 drawer. Phone breakpoints sit at 640 px (header and dock reflow, the settings nav becomes a
-scrolling row) and 720 px (settings forms and the repository table stack).
+scrolling row) and 720 px (settings forms, repository, decision and backtest tables stack into
+labelled rows without horizontal page scrolling). Policy modes use a native radio group labelled
+Off, Shadow and Live; Off serializes as `disabled`.
 
 Spacing tokens are the Ogenki 4 px scale (`--space-1` to `--space-16`: 4, 8, 12, 16, 24, 32, 48,
 64), for new work: most existing rules still write literal px (6, 10, 14 among them), and only

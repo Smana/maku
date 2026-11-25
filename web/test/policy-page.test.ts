@@ -21,28 +21,42 @@ function fakeFetch(routes: Record<string, unknown>, calls: string[] = []): typeo
   }) as typeof fetch;
 }
 
-describe("a policy's page (B16)", () => {
-  it("shows the definition, what each binding must supply, and the consumers", async () => {
+describe("a policy's page", () => {
+  it("leads with what it allows and puts definition and repository health after it", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": deadLinks }));
     expect(app.querySelector(".page-title")!.textContent).toBe("dead-links");
-    expect(app.querySelector(".policy-counts")!.textContent).toBe("2 consumers · 1 current");
-    expect(app.textContent).toContain("Retargets dead external links.");
+    expect(app.querySelector(".policy-counts")!.textContent).toBe("2 repositories");
+    expect(app.querySelector(".policy-sentence")!.textContent).toContain("link targets only");
     expect(app.textContent).toContain("Each binding must supply: allowedFiles, holdoutChecks, oracleWorkflow");
-    expect(app.querySelector(".policy-definition")!.textContent).toContain("maxModifiedLines: 20");
+    expect(app.querySelector(".policy-definition")!.textContent).toContain("Retargets dead external links.");
     const rows = [...app.querySelectorAll("table.consumers tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
-    expect(rows).toEqual([["ai-native-ref", "shadow", "3", "no", "MissingParameter"], ["cloud-native-ref", "shadow", "4", "yes", ""]]);
+    expect(rows).toEqual([["ai-native-ref", "shadow", "refused", "MissingParameter"], ["cloud-native-ref", "shadow", "accepted", ""]]);
+    expect(app.textContent).not.toContain("Generation 4");
   });
 
-  it("previews an edit: the manifest to submit, and each consumer's change, live first", async () => {
+  it("offers a shipped preset with YAML, essentials open and valid optional fields folded", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": deadLinks, "/api/policy/policies": { policies: [deadLinks] } }));
+    expect(app.querySelector(".policy-presets")?.textContent).toContain("Start from a shipped policy");
+    expect(app.querySelector(".preset-yaml summary")?.textContent).toBe("Show the YAML");
+    expect(app.querySelector('[data-key="allowedFiles"]')?.closest("details")).toBeNull();
+    expect(app.querySelector('[data-key="maxModifiedLines"]')?.closest("details")?.querySelector("summary")?.textContent).toBe("Expert");
+    expect(app.querySelector('[data-key="evidence"]')?.closest("details")?.querySelector("summary")?.textContent).toBe("Expert");
+    expect(app.querySelector('[data-key="companionFiles"]')).toBeNull();
+    expect(app.querySelector('[data-key="harness"]')).toBeNull();
+  });
+
+  it("previews an edit: the manifest to submit, and each repository's change, live first", async () => {
     const calls: string[] = [];
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": deadLinks,
       "/api/policy/policies/dead-links/preview": { valid: true, manifestPath: "mergepolicy-dead-links.yaml", manifest: deadLinks.manifest, consumers: [
         { repository: "ai-native-ref", mode: "shadow", change: "relaxation", resolves: true },
         { repository: "cloud-native-ref", mode: "live", change: "relaxation", why: ["maxModifiedLines 20 -> 40"], resolves: true }] } }, calls));
-    const text = app.querySelector<HTMLTextAreaElement>("textarea.policy-spec")!;
-    text.value = text.value.replace("maxModifiedLines: 20", "maxModifiedLines: 40");
+    const input = app.querySelector<HTMLInputElement>('input[aria-label="policy maxModifiedLines"]')!;
+    input.value = "40";
+    input.dispatchEvent(new Event("input"));
     app.querySelector<HTMLButtonElement>(".policy-editor button.primary")!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(calls.at(-1)).toContain(`POST /api/policy/policies/dead-links/preview`);
@@ -63,11 +77,32 @@ describe("a policy's page (B16)", () => {
     expect(app.textContent).not.toContain("Copy mergepolicy-dead-links.yaml");
   });
 
-  it("lists the policies the reader sees on the merge policies page", async () => {
+  it("backtests the edited policy against the selected repository", async () => {
+    const calls: string[] = [];
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({
+      "/api/policy/policies/dead-links": deadLinks,
+      "/api/policy/repositories": { repositories: ["Smana/ai-native-ref"] },
+      "/api/policy/repositories/Smana/ai-native-ref/backtest": { valid: true, repository: "Smana/ai-native-ref", since: "2026-11-01",
+        counts: { considered: 1, changed: 1, unchanged: 0, unknown: 0, matched: 0 },
+        rows: [{ pullRequest: 42, url: "https://github.com/Smana/ai-native-ref/pull/42", policy: "dead-links",
+          before: { verdict: "shadow", reason: "shadow_would_arm" }, after: { verdict: "human", reason: "patch_too_large" }, change: "changed" }] },
+    }, calls));
+    const input = app.querySelector<HTMLInputElement>('input[aria-label="policy maxModifiedLines"]')!;
+    input.value = "10";
+    input.dispatchEvent(new Event("input"));
+    [...app.querySelectorAll("button")].find((b) => b.textContent === "Backtest the last 30 days")!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.at(-1)).toContain('POST /api/policy/repositories/Smana/ai-native-ref/backtest {"kind":"policy","policy":"dead-links"');
+    expect(calls.at(-1)).toContain('"maxModifiedLines":10');
+    expect(app.querySelector(".backtest-table a")?.getAttribute("href")).toBe("https://github.com/Smana/ai-native-ref/pull/42");
+  });
+
+  it("lists the policies by what they allow on the merge policies page", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: [] }, "/api/policy/policies": { policies: [deadLinks] } }));
     const rows = [...app.querySelectorAll("table.policy-table tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
-    expect(rows).toEqual([["dead-links", "4", "2 consumers · 1 current"]]);
+    expect(rows).toEqual([["dead-links", "link targets only, at most 20 lines", "2 repositories"]]);
     expect(app.querySelector('table.policy-table a[href="/settings/merge-policies/policies/dead-links"]')).not.toBeNull();
   });
 });

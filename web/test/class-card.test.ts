@@ -29,15 +29,16 @@ describe("a class card", () => {
     expect(badge.getAttribute("title")).toBe("records what it would do, merges nothing");
     expect(c.querySelector(".class-intent")).toBeNull();
     const order = [...c.children].map((e) => e.className || e.tagName.toLowerCase());
-    expect(order.slice(0, 4)).toEqual(["class-card-head", "class-summary", "evidence-bar", "evidence-ladder"]);
+    expect(order.slice(0, 4)).toEqual(["class-card-head", "policy-sentence", "evidence-bar", "policy-certainty"]);
     expect(c.querySelector("details.class-conditions")).toBeNull();
     expect(c.querySelector(".class-source")).toBeNull();
   });
-  it("sends a bound class's conditions to its policy's page", () => {
+  it("leads with the policy's sentence and a link to its definition", () => {
     const p = page();
     p.report.repositoryObject = "r";
-    expect(classCard(p.report.classes[0], ctx(p)).querySelector(".class-summary")?.textContent)
-      .toBe("This class's conditions are its MergePolicy's: open the policy's page.");
+    const card = classCard(p.report.classes[0], ctx(p));
+    expect(card.querySelector(".policy-sentence")?.textContent).toBe("No extra policy restriction");
+    expect(card.querySelector(".class-summary")).toBeNull();
   });
   it("shows the badge as the bare word for each mode", () => {
     for (const [mode, word] of [["live", "Live"], ["shadow", "Shadow"], ["off", "Off"]]) {
@@ -46,11 +47,11 @@ describe("a class card", () => {
       expect(classCard(p.report.classes[0], ctx(p)).querySelector(".mode-badge")?.textContent).toBe(word);
     }
   });
-  it("says a class set by the factory has its conditions there, and never a per-card source", () => {
+  it("uses the same plain sentence for a factory-defined policy and no per-card source", () => {
     const p = page();
     p.report.classes[0].source = "central";
     const c = classCard(p.report.classes[0], ctx(p));
-    expect(c.querySelector(".class-summary")?.textContent).toBe("This class's conditions are set in the factory's config and are not shown here.");
+    expect(c.querySelector(".policy-sentence")?.textContent).toBe("No extra policy restriction");
     expect(c.querySelector(".class-source")).toBeNull();
     expect(c.querySelector("details.class-conditions")).toBeNull();
   });
@@ -124,12 +125,13 @@ describe("a class card", () => {
     expect(c.querySelector('a[href="https://github.com/o/r/pull/7"]')).not.toBeNull();
     expect(c.textContent).toContain("Exception: 12 clean decisions instead of 20, approved");
   });
-  it("shows a live class no bar, no ladder and no promotion, one line of what it has done", () => {
+  it("shows a live class no bar and no promotion, its statistics folded", () => {
     const p = page();
     p.report.classes[0] = { class: "docs", source: "repository", mode: "live", unproposed: "not_shadow", evidence: ev({ clean: 40, eligible: true, blockers: [] }) };
     const c = classCard(p.report.classes[0], ctx(p));
     expect(c.querySelector('[role="meter"]')).toBeNull();
-    expect(c.querySelector(".evidence-ladder")).toBeNull();
+    expect(c.querySelector(":scope > .evidence-ladder")).toBeNull();
+    expect(c.querySelector("details.policy-certainty .evidence-ladder")).not.toBeNull();
     expect([...c.querySelectorAll("button")].some((b) => b.textContent === "Promote to live")).toBe(false);
     expect(c.textContent).toContain("Live \u00b7 40 clean decisions recorded.");
     expect(c.querySelector(".evidence-detail")).not.toBeNull();
