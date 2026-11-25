@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/webhook"
 )
 
@@ -457,11 +458,30 @@ func (a *App) postWaitLine(ctx context.Context, th Thread, e webhook.Event) stri
 	if !ok {
 		return "ignored"
 	}
+	markDone := false
+	switch notificationClass(e) {
+	case narrate.ClassNeedsYou:
+		line = mentionPrefix(th.actorFor(webhook.Clip("reason", e.Reason))) + line
+	case narrate.ClassDone:
+		if !th.DoneMentioned {
+			line = mentionPrefix(th.actorFor("")) + line
+			markDone = true
+		}
+	}
 	if ch, served := a.Channels[th.Channel]; served {
 		if blocks := actLineBlocks(e, ch, line); len(blocks) > 0 {
 			if _, err := a.Slack.PostCard(ctx, th.Channel, th.TS, line, blocks, nil); err != nil {
 				a.log().Warn("slack post card failed", "room", e.Room, "err", err)
 				return "error"
+			}
+			if markDone {
+				th.DoneMentioned = true
+				if th.At.IsZero() {
+					th.At = a.now()
+				}
+				if err := a.Threads.Put(ctx, e.Room, th); err != nil {
+					a.log().Warn("thread map put failed", "room", e.Room, "err", err)
+				}
 			}
 			return "posted"
 		}
@@ -469,6 +489,15 @@ func (a *App) postWaitLine(ctx context.Context, th Thread, e webhook.Event) stri
 	if _, err := a.Slack.Post(ctx, th.Channel, th.TS, line, nil); err != nil {
 		a.log().Warn("slack post failed", "room", e.Room, "err", err)
 		return "error"
+	}
+	if markDone {
+		th.DoneMentioned = true
+		if th.At.IsZero() {
+			th.At = a.now()
+		}
+		if err := a.Threads.Put(ctx, e.Room, th); err != nil {
+			a.log().Warn("thread map put failed", "room", e.Room, "err", err)
+		}
 	}
 	return "posted"
 }

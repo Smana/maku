@@ -26,19 +26,23 @@ const (
 	maxSlackAnswerBytes = 2 << 10
 )
 
-// waitingLine renders a room.waiting_for_human thread line. When the wait is a scoper question and
-// the broker's summary supplies the question text, it quotes that clipped question and invites a
-// thread reply; otherwise it renders the room-page wait line with any merge-gate decision.
-func waitingLine(e webhook.Event, sum summary.Summary, roomsURL string) string {
+// waitingLine renders a room.waiting_for_human thread line under the needs_you class (G6):
+// mentions the one actor who can act (when recorded), states what is asked and the recommended
+// action, and names what happens if nothing is done.
+func waitingLine(e webhook.Event, sum summary.Summary, th Thread, roomsURL string) string {
+	reason := webhook.Clip("reason", e.Reason)
+	if reason == "" || reason == "other" {
+		reason = sum.Status.ReasonCode
+	}
 	if q := questionForWait(e, sum); q != "" {
-		return "The scoper asks: " + q + ". Reply to answer."
+		return mentionPrefix(th.actorFor("needs_author")) + "The scoper asks: " + q + ". Reply to answer. " + needsYouDefault(e, sum)
 	}
 	url := strings.TrimSuffix(roomsURL, "/") + "/r/" + e.Room
 	head := "Needs you (" + webhook.Clip("reason", e.Reason) + ")"
 	if gp := gatePart(sum); gp != "" {
 		head += " · " + gp
 	}
-	return head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run."
+	return mentionPrefix(th.actorFor(reason)) + head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run. " + needsYouDefault(e, sum)
 }
 
 // questionForWait returns the broker's clipped question text when the wait is a scoper question, or

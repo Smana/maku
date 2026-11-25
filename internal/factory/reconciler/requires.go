@@ -145,7 +145,8 @@ func (r *Reconciler) applyClassRequires(ctx context.Context, cfg *config.Config,
 					cr.Unmet = appendUnique(cr.Unmet, "tests")
 				}
 				narrateLater(t, narrate.Event{
-					Key: fmt.Sprintf("required-stage-unmet-%s-tests", class),
+					Key:   fmt.Sprintf("required-stage-unmet-%s-tests", class),
+					Class: narrate.ClassChanged,
 					Body: fmt.Sprintf("Maku task `%s`: class `%s` requires `tests`, but this repository has no `tests.paths` or `merge.contractCheck`; the merge gate will hand off to a maintainer (`%s`).",
 						t.Name, class, reasonRequiredStageMissing),
 				})
@@ -221,7 +222,8 @@ func (r *Reconciler) applyLatePlanRequires(ctx context.Context, cfg *config.Conf
 						cr.Unmet = appendUnique(cr.Unmet, "tests")
 					}
 					narrateLater(t, narrate.Event{
-						Key: fmt.Sprintf("required-stage-unmet-%s-tests", class),
+						Key:   fmt.Sprintf("required-stage-unmet-%s-tests", class),
+						Class: narrate.ClassChanged,
 						Body: fmt.Sprintf("Maku task `%s`: class `%s` requires `tests`, but this repository has no `tests.paths` or `merge.contractCheck`; the merge gate will hand off to a maintainer (`%s`).",
 							t.Name, class, reasonRequiredStageMissing),
 					})
@@ -363,7 +365,8 @@ func (r *Reconciler) applyLateDiffRequires(ctx context.Context, cfg *config.Conf
 						cr.Unmet = appendUnique(cr.Unmet, "tests")
 					}
 					narrateLater(t, narrate.Event{
-						Key: fmt.Sprintf("required-stage-unmet-%s-tests", class),
+						Key:   fmt.Sprintf("required-stage-unmet-%s-tests", class),
+						Class: narrate.ClassChanged,
 						Body: fmt.Sprintf("Maku task `%s`: class `%s` requires `tests`, but this repository has no `tests.paths` or `merge.contractCheck`; the merge gate will hand off to a maintainer (`%s`).",
 							t.Name, class, reasonRequiredStageMissing),
 					})

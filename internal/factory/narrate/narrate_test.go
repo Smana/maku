@@ -6,7 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -16,6 +20,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
 	"github.com/Smana/maku/internal/factory/rooms"
@@ -805,5 +810,147 @@ func TestEndedNamesTheStepTried(t *testing.T) {
 	tk.Status.Profile.Source = "scoper"
 	if b := Ended(tk, v1alpha1.PhaseEscalated, "stalled").Body; strings.Contains(b, "review-frontier") {
 		t.Fatal(b)
+	}
+}
+
+// Task G6: every exported Event constructor in package narrate assigns one of the three
+// notification classes (needs_you, changed, done). Walking the package's AST ensures a new
+// constructor cannot land without a class.
+func TestEveryNarrationEventHasAClass(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	discovered := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || !fn.Name.IsExported() || fn.Type.Results == nil || len(fn.Type.Results.List) != 1 {
+				continue
+			}
+			if id, ok := fn.Type.Results.List[0].Type.(*ast.Ident); ok && id.Name == "Event" {
+				discovered[fn.Name.Name] = true
+			}
+		}
+	}
+	if len(discovered) == 0 {
+		t.Fatal("AST walk found no Event constructors")
+	}
+
+	tk := task()
+	tk.Spec.Repository = "Smana/x"
+	tk.Spec.PredictedClass = "docs-links"
+	tk.Spec.IssueAuthor = "alice"
+	tk.Spec.Split = &v1alpha1.SplitSpec{ChildTier: "standard", FamilyMicroUSD: 4_000_000}
+	tk.Spec.Parent = &v1alpha1.Parent{Task: "parent01", Index: 1, Of: 2}
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/x/pull/12", HeadSHA: "abcdef1", MergeCommitSHA: "1234567"}
+	tk.Status.Split = &v1alpha1.SplitStatus{Of: 2}
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+
+	constructors := map[string]struct {
+		ev   Event
+		want Class
+	}{
+		"Started":              {Started(tk, runs.Spec{RunID: "r1", Role: "implementer", Branch: "agent/3buqdlot", MaxTokens: 1000, MaxMinutes: 10}, "https://rooms.example"), ClassChanged},
+		"TaskCard":             {TaskCard(tk, "- **Workflow:** standard"), ClassChanged},
+		"ProposalReady":        {ProposalReady(tk, "https://rooms.example", false), ClassNeedsYou},
+		"PublishedStarted":     {PublishedStarted(12, "smana", "3buqdlot", "docs-links"), ClassChanged},
+		"Published":            {Published(7, 12, "smana"), ClassNeedsYou},
+		"PublishRefused":       {PublishRefused(7, "no_proposal", now), ClassChanged},
+		"PublishRejected":      {PublishRejected(7, "3buqdlot", "daily_task_cap", now), ClassChanged},
+		"NeedsAuthor":          {NeedsAuthor(tk, "Which command?", "Use task check", []string{"smana"}, "https://rooms.example"), ClassNeedsYou},
+		"SplitProposed":        {SplitProposed(tk, "too wide", []string{"part 1", "part 2"}, []string{"smana"}, "https://rooms.example"), ClassNeedsYou},
+		"Revising":             {Revising(tk, "smana"), ClassChanged},
+		"Revised":              {Revised(tk, Revision{PR: 12, Repository: "Smana/x", From: "aaa", Head: "bbb", Files: []string{"a.go"}, FilesRead: true}, "https://rooms.example"), ClassNeedsYou},
+		"Reminder":             {Reminder(tk, []string{"smana"}, now, false), ClassNeedsYou},
+		"Retrying":             {Retrying(tk, "smana", ""), ClassChanged},
+		"TaskCapHolds":         {TaskCapHolds(tk, 99), ClassNeedsYou},
+		"Resuming":             {Resuming(tk, "r1", "implementer", 1, 2), ClassChanged},
+		"ModelHeld":            {ModelHeld(tk, "r1", "model_unavailable_quota", 5*time.Minute, 1, 6), ClassChanged},
+		"ContractReady":        {ContractReady(tk, &v1alpha1.ContractStatus{IDs: []string{"T1"}, Files: []string{"a_test.go"}}), ClassChanged},
+		"NoContract":           {NoContract(tk, "skipped"), ClassChanged},
+		"PROpened":             {PROpened(tk, 12, "https://github.com/Smana/x/pull/12", "r1"), ClassChanged},
+		"Armed":                {Armed(tk, "docs-links"), ClassChanged},
+		"WouldArm":             {WouldArm(tk, "docs-links", "abcdef1", false, false), ClassNeedsYou},
+		"WouldArmAdopted":      {WouldArmAdopted(tk, config.Class{}, "renovate", "abcdef1", false, false), ClassNeedsYou},
+		"WaitingForHuman":      {WaitingForHuman(tk, "file_protected"), ClassNeedsYou},
+		"WaitingForApproval":   {WaitingForApproval(tk, "class_unarmed"), ClassNeedsYou},
+		"ArmedByApproval":      {ArmedByApproval(tk, "smana"), ClassChanged},
+		"ApprovalShown":        {ApprovalShown(tk, 77, "smana", "abcdef1", ""), ClassNeedsYou},
+		"ChecksNeverReported":  {ChecksNeverReported(tk, 30*time.Minute, []string{"unit"}), ClassNeedsYou},
+		"BackToGate":           {BackToGate(tk, "reentered_policy", 1), ClassChanged},
+		"Held":                 {Held(tk, "waiting_room_busy", "https://rooms.example"), ClassChanged},
+		"CIFixing":             {CIFixing(tk, 12, "abcdef1", []string{"unit: failure"}, 1, 2), ClassChanged},
+		"CIExhausted":          {CIExhausted(tk, []string{"unit"}), ClassNeedsYou},
+		"RevertOpened":         {RevertOpened(tk, 13, "main_red", false), ClassChanged},
+		"ClassDrill":           {ClassDrill(tk), ClassChanged},
+		"ClassDemoted":         {ClassDemoted(tk, 10, 1), ClassChanged},
+		"RevertStalled":        {RevertStalled(tk, 13), ClassNeedsYou},
+		"MonitorVerdict":       {MonitorVerdict(tk, 12, "healthy", []string{"main CI: green"}, false, false), ClassChanged},
+		"FollowUpFound":        {FollowUpFound(tk, 12, 14, false), ClassChanged},
+		"Ended":                {Ended(tk, v1alpha1.PhaseDone, "merged"), ClassDone},
+		"MergedUnverified":     {MergedUnverified(tk, now.Add(time.Hour)), ClassDone},
+		"StopIgnored":          {StopIgnored(7, "unauthorised_labeller", now), ClassChanged},
+		"Refused":              {Refused(7, "edited_after_label", now), ClassChanged},
+		"PersonOverBudget":     {PersonOverBudget(7, "github:smana", 5_000_000, now), ClassNeedsYou},
+		"ApproverOverBudget":   {ApproverOverBudget(7, "github:smana", 5_000_000, now), ClassNeedsYou},
+		"SplitPart":            {SplitPart(tk, 1, 15), ClassChanged},
+		"SplitEnded":           {SplitEnded(tk, v1alpha1.PhaseDone, "children_merged", []Part{{Index: 1, Issue: 15, Outcome: "done"}}), ClassDone},
+		"PartReverted":         {PartReverted(tk, 16, true), ClassNeedsYou},
+		"NoVerdict":            {NoVerdict(tk, "r2", "verdict_missing"), ClassChanged},
+		"RoundsExhausted":      {RoundsExhausted(tk, rooms.Verdict{Verdict: "changes", Commit: "abcdef1", RunID: "r2", Text: "fix"}), ClassNeedsYou},
+		"ProfileChosen":        {ProfileChosen(tk, "standard", "scoper", "", "", 1), ClassChanged},
+		"ProfileRefused":       {ProfileRefused("careful", "Only a maintainer can pin."), ClassChanged},
+		"TriageNote":           {TriageNote(0, "note"), ClassChanged},
+		"ProfileEscalated":     {ProfileEscalated("standard", "careful", "stalled", 13_600_000, 2), ClassChanged},
+		"StepUpOffered":        {StepUpOffered(tk, "standard", "careful", "budget-run", 13_600_000, "pinned"), ClassNeedsYou},
+		"CoordinationIncident": {CoordinationIncident("parent01", "child-a", 19), ClassChanged},
+	}
+
+	for name := range discovered {
+		if _, ok := constructors[name]; !ok {
+			t.Errorf("exported Event constructor %s is missing from TestEveryNarrationEventHasAClass", name)
+		}
+	}
+	for name, tc := range constructors {
+		if !discovered[name] {
+			t.Errorf("constructor %s in test table was not found in package AST", name)
+		}
+		if !tc.ev.Class.Valid() {
+			t.Errorf("%s returned invalid Class %q", name, tc.ev.Class)
+		}
+		if tc.ev.Class != tc.want {
+			t.Errorf("%s.Class = %q, want %q", name, tc.ev.Class, tc.want)
+		}
+		if tc.ev.Key == "" || tc.ev.Body == "" {
+			t.Errorf("%s returned empty key or body: %+v", name, tc.ev)
+		}
+	}
+
+	// Branch checks: escalated endings and human-driver holds are needs_you; open-parent part
+	// reverts are changed; mention rule holds on every class.
+	if got := Ended(tk, v1alpha1.PhaseEscalated, "stalled", "smana").Class; got != ClassNeedsYou {
+		t.Errorf("Ended(Escalated).Class = %q, want %q", got, ClassNeedsYou)
+	}
+	if got := SplitEnded(tk, v1alpha1.PhaseEscalated, "budget-family", nil, "smana").Class; got != ClassNeedsYou {
+		t.Errorf("SplitEnded(Escalated).Class = %q, want %q", got, ClassNeedsYou)
+	}
+	if got := Held(tk, "waiting_human_driver", "https://rooms.example").Class; got != ClassNeedsYou {
+		t.Errorf("Held(waiting_human_driver).Class = %q, want %q", got, ClassNeedsYou)
+	}
+	if got := PartReverted(tk, 16, false).Class; got != ClassChanged {
+		t.Errorf("PartReverted(open parent).Class = %q, want %q", got, ClassChanged)
+	}
+	if !ClassNeedsYou.Mentions() || ClassChanged.Mentions() || !ClassDone.Mentions() {
+		t.Errorf("mention rules: needs_you=%v changed=%v done=%v", ClassNeedsYou.Mentions(), ClassChanged.Mentions(), ClassDone.Mentions())
 	}
 }

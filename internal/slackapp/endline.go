@@ -7,10 +7,82 @@ import (
 	"strings"
 
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/narrate"
 	reasonwords "github.com/Smana/maku/internal/factory/reasons"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
 )
+
+// notificationClass maps a Slack webhook event onto one of the three notification classes (G6):
+//   - needs_you: waits for human action (room.waiting_for_human, escalated room.ended)
+//   - done: terminal end line (non-escalated room.ended, room.merged, room.reverted)
+//   - changed: state change in the thread with no mention (everything else)
+func notificationClass(e webhook.Event) narrate.Class {
+	switch e.Type {
+	case "room.waiting_for_human":
+		return narrate.ClassNeedsYou
+	case "room.ended":
+		if isEscalatedEnd(e.State) {
+			return narrate.ClassNeedsYou
+		}
+		return narrate.ClassDone
+	case "room.merged", "room.reverted":
+		return narrate.ClassDone
+	default:
+		return narrate.ClassChanged
+	}
+}
+
+// mentionPrefix returns "<@user> " when actor is a valid Slack user id, or "" otherwise.
+func mentionPrefix(actor string) string {
+	if !userRE.MatchString(actor) {
+		return ""
+	}
+	return "<@" + actor + "> "
+}
+
+// needsYouDefault names what happens if nothing is done for a needs_you notification (G6).
+func needsYouDefault(e webhook.Event, sum summary.Summary) string {
+	reason := webhook.Clip("reason", e.Reason)
+	if reason == "" || reason == "other" {
+		reason = sum.Status.ReasonCode
+	}
+	switch {
+	case e.Type == "room.ended" && isEscalatedEnd(e.State):
+		return "If nothing is done, it stops in 24 hours."
+	case reason == "needs_author" || reason == "split_proposed" || hasOpenQuestion(sum):
+		return "If nothing is done, it stops in 24 hours."
+	case reason == "approval" || e.ApprovalID != "":
+		return "If nothing is done, it stays parked until the deadline."
+	default:
+		return "If nothing is done, it stays parked."
+	}
+}
+
+// doneEndLine formats a terminal end line under the done class (G6): mentions the one actor once
+// when th.DoneMentioned is false, and omits the mention on later updates.
+func doneEndLine(e webhook.Event, sum summary.Summary, th Thread) string {
+	line := endLine(e, sum)
+	if th.DoneMentioned {
+		return line
+	}
+	return mentionPrefix(th.actorFor("")) + line
+}
+
+// escalatedEndLine formats an escalated room.ended notification under the needs_you class (G6):
+// mentions the one actor (when recorded), states what stopped, names one recommended action when
+// no button is attached, and says what happens if nothing is done.
+func escalatedEndLine(e webhook.Event, sum summary.Summary, th Thread, ch Channel, roomsURL string) string {
+	line := endLine(e, sum)
+	if !ch.actsOn(actRetry) {
+		url := strings.TrimSuffix(roomsURL, "/") + "/r/" + e.Room
+		line += ". Comment `/factory retry` on the issue or open " + url + "."
+	} else {
+		line += "."
+	}
+	line += " " + needsYouDefault(e, sum)
+	return mentionPrefix(th.actorFor("")) + line
+}
 
 // slackDollars formats micro-USD as $X.XX, half-cent rounded like humanapi's task view.
 func slackDollars(micro int64) string {

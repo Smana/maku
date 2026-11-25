@@ -1785,7 +1785,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		return "error", answer
 	}
 	// Put on a duplicate too (idempotent): a Put that failed the first time is retried by the next ✅.
-	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.now()}); err != nil {
+	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.now(), Author: p.Author, Filer: user}); err != nil {
 		a.log().Warn("thread map put failed", "room", res.Room, "err", err)
 	}
 	// The Filed line replaces the proposal in place: one message from the mention to the room. An

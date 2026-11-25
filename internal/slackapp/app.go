@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
 )
@@ -865,23 +866,33 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	if !served {
 		return "ignored"
 	}
-	// UX7: room.merged and room.reverted edit the thread's one end line before the notify filter.
+	// UX7, G6: room.merged and room.reverted edit the thread's one end line before the notify filter.
+	// Done mentions the one actor once across the entire end-line sequence (th.DoneMentioned).
 	switch e.Type {
 	case "room.merged":
 		if th.EndTS == "" && !ch.notifies("room.ended") && !ch.notifies("room.merged") {
 			return "ignored"
 		}
-		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)), nil)
+		return a.upsertEndLine(ctx, e.Room, th, doneEndLine(e, a.taskSummary(ctx, e.Room), th), nil, true)
 	case "room.reverted":
 		wantLine := ch.Notify != nil && slices.Contains(ch.Notify, "room.reverted")
 		if th.EndTS == "" && !wantLine {
 			return "ignored"
 		}
 		if th.EndTS != "" {
-			text := endLine(e, a.taskSummary(ctx, e.Room))
+			text := doneEndLine(e, a.taskSummary(ctx, e.Room), th)
 			if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, nil); err != nil {
 				a.log().Warn("slack update failed", "room", e.Room, "err", err)
 				return "error"
+			}
+			if !th.DoneMentioned {
+				th.DoneMentioned = true
+				if th.At.IsZero() {
+					th.At = a.now()
+				}
+				if err := a.Threads.Put(ctx, e.Room, th); err != nil {
+					a.log().Warn("thread map put failed", "room", e.Room, "err", err)
+				}
 			}
 		}
 		if wantLine {
@@ -897,9 +908,14 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	switch e.Type {
 	case "room.ended":
 		sum := a.taskSummary(ctx, e.Room)
-		text := endLine(e, sum)
-		return a.upsertEndLine(ctx, e.Room, th, text, actLineBlocks(e, ch, text, sum))
+		if notificationClass(e) == narrate.ClassNeedsYou {
+			text := escalatedEndLine(e, sum, th, ch, a.RoomsURL)
+			return a.upsertEndLine(ctx, e.Room, th, text, actLineBlocks(e, ch, text, sum), false)
+		}
+		text := doneEndLine(e, sum, th)
+		return a.upsertEndLine(ctx, e.Room, th, text, actLineBlocks(e, ch, text, sum), true)
 	case "room.task_triaged":
+		// ClassChanged: one line in the thread, no mention.
 		sum := a.taskSummary(ctx, e.Room)
 		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
 		text := "Started. Room: " + url
@@ -912,6 +928,7 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 		}
 		return "posted"
 	case "room.stepped_up":
+		// ClassChanged: one line in the thread, no mention.
 		if !a.stepped.add(e.Room) {
 			return "duplicate"
 		}
@@ -922,8 +939,9 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 		}
 		return "posted"
 	case "room.waiting_for_human":
+		// ClassNeedsYou: mention the one actor, state the action and what happens if nothing is done.
 		sum := a.taskSummary(ctx, e.Room)
-		text := waitingLine(e, sum, a.RoomsURL)
+		text := waitingLine(e, sum, th, a.RoomsURL)
 		if blocks := actLineBlocks(e, ch, text); len(blocks) > 0 {
 			if _, err := a.Slack.PostCard(ctx, th.Channel, th.TS, text, blocks, nil); err != nil {
 				a.log().Warn("slack post card failed", "room", e.Room, "err", err)
@@ -949,11 +967,20 @@ func (a *App) taskSummary(ctx context.Context, room string) summary.Summary {
 	return tv.Summary()
 }
 
-func (a *App) upsertEndLine(ctx context.Context, room string, th Thread, text string, blocks json.RawMessage) string {
+func (a *App) upsertEndLine(ctx context.Context, room string, th Thread, text string, blocks json.RawMessage, isDone bool) string {
 	if th.EndTS != "" {
 		if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, blocks); err != nil {
 			a.log().Warn("slack update failed", "room", room, "err", err)
 			return "error"
+		}
+		if isDone && !th.DoneMentioned {
+			th.DoneMentioned = true
+			if th.At.IsZero() {
+				th.At = a.now()
+			}
+			if err := a.Threads.Put(ctx, room, th); err != nil {
+				a.log().Warn("thread map put failed", "room", room, "err", err)
+			}
 		}
 		return "posted"
 	}
@@ -971,6 +998,9 @@ func (a *App) upsertEndLine(ctx context.Context, room string, th Thread, text st
 		return "error"
 	}
 	th.EndTS = ts
+	if isDone {
+		th.DoneMentioned = true
+	}
 	if th.At.IsZero() {
 		th.At = a.now()
 	}
@@ -991,7 +1021,8 @@ func (a *App) line(e webhook.Event) (string, bool) {
 	case "room.run_started":
 		return "A run started.", true
 	case "room.waiting_for_human":
-		return fmt.Sprintf("Needs you (%s): answer it on the room page, %s. Nothing posted here reaches the run.", reason, url), true
+		return fmt.Sprintf("Needs you (%s): answer it on the room page, %s. Nothing posted here reaches the run. %s",
+			reason, url, needsYouDefault(e, summary.Summary{})), true
 	case "room.pr_opened":
 		return fmt.Sprintf("Pull request #%d opened.", e.PR), true
 	case "room.verdict_posted":
