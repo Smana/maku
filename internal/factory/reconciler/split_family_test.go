@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -444,5 +445,227 @@ func TestAPricedPartIsNotRefusedOnTokens(t *testing.T) {
 	g.r.Cfg.Current().Tiers["standard"] = tr
 	if !g.r.partFits(g.r.Cfg.Current(), p, 5_000_000) {
 		t.Error("an unpriced part within its token bound is refused")
+	}
+}
+
+// parallelPart builds a ready split part with declared files, checks and optional dependencies.
+func parallelPart(k int, files, checks []string, deps ...int) envelope.Scope {
+	sc := part(k)
+	sc.Files = files
+	sc.Checks = checks
+	sc.DependsOn = deps
+	return sc
+}
+
+// approvedParallel builds an approved split rig with split.parallel = 2 and the given split parts.
+func approvedParallel(t *testing.T, sp envelope.Split) *rig {
+	t.Helper()
+	g := splitRig(t, "frontier", false)
+	g.r.Cfg.Current().Loops = map[string]config.Loop{
+		"default": {
+			Scope: config.ScopeScoper,
+			Split: &config.SplitPolicy{MaxChildren: 4, Parallel: config.MaxParallelParts},
+		},
+	}
+	g.reconcile(t, "3buqdlot", 3) // Received -> Triaged -> Queued -> scoper run
+	splitHandoffOf(g, 0, readyScope(), sp)
+	endScoper(t, g, "Succeeded", "agent_finished")
+	g.r.Now = func() time.Time { return now.Add(time.Hour) }
+	g.f.SetComments(7, splitBy(81, "Smana"))
+	g.reconcile(t, "3buqdlot", 2) // Escalated -> Split -> open eligible parts
+	return g
+}
+
+// Phase H3: with split.parallel = 2, two parts declaring disjoint files, valid repository checks,
+// and no dependency between them open and run simultaneously, each with its own branch, PR and room.
+func TestDisjointPartsRunTwoAtATime(t *testing.T) {
+	sp := envelope.Split{
+		Why: "Independent documentation sections.",
+		Children: []envelope.Scope{
+			parallelPart(1, []string{"docs/alpha/*.md"}, []string{"Pre-commit checks"}),
+			parallelPart(2, []string{"docs/beta/*.md"}, []string{"Pre-commit checks"}),
+		},
+	}
+	g := approvedParallel(t, sp)
+	p := g.reconcile(t, "3buqdlot", 0)
+	if p.Status.Phase != v1alpha1.PhaseSplit || len(p.Status.Split.Children) != 2 {
+		t.Fatalf("expected 2 open parts, got phase=%s split=%+v", p.Status.Phase, p.Status.Split)
+	}
+	// Both parts triage and start their own implementer runs on distinct branches and rooms.
+	g.reconcile(t, child(1), 3)
+	g.reconcile(t, child(2), 3)
+	s1 := g.runs.specs[runID(child(1), 0)]
+	s2 := g.runs.specs[runID(child(2), 0)]
+	if s1.Branch == "" || s2.Branch == "" || s1.Branch == s2.Branch || s1.RoomRef == s2.RoomRef {
+		t.Fatalf("each part must keep its own branch and room: s1=%+v s2=%+v", s1, s2)
+	}
+	// Landing both parts closes the parent.
+	setPhase(t, g, child(1), v1alpha1.PhaseDone, "merged")
+	setPhase(t, g, child(2), v1alpha1.PhaseDone, "merged")
+	p = g.reconcile(t, "3buqdlot", 1)
+	if p.Status.Phase != v1alpha1.PhaseDone || p.Status.Reason != ReasonChildrenMerged {
+		t.Fatalf("parent after both land: phase=%s reason=%s", p.Status.Phase, p.Status.Reason)
+	}
+}
+
+// Phase H3: parts whose declared files overlap never run at the same time.
+func TestPartsWithASharedFileNeverRunTogether(t *testing.T) {
+	sp := envelope.Split{
+		Why: "Shared glob overlaps.",
+		Children: []envelope.Scope{
+			parallelPart(1, []string{"docs/*.md"}, []string{"Pre-commit checks"}),
+			parallelPart(2, []string{"docs/page-2.md"}, []string{"Pre-commit checks"}),
+		},
+	}
+	g := approvedParallel(t, sp)
+	p := g.reconcile(t, "3buqdlot", 0)
+	if len(p.Status.Split.Children) != 1 || p.Status.Split.Children[0].Index != 1 {
+		t.Fatalf("overlapping parts must run one at a time: %+v", p.Status.Split.Children)
+	}
+	// Once part 1 lands, part 2 opens.
+	setPhase(t, g, child(1), v1alpha1.PhaseDone, "merged")
+	p = g.reconcile(t, "3buqdlot", 1)
+	if len(p.Status.Split.Children) != 2 || p.Status.Split.Children[1].Index != 2 {
+		t.Fatalf("part 2 should open once part 1 lands: %+v", p.Status.Split.Children)
+	}
+}
+
+// Phase H3: a part that omits its own checks (or names an undeclared check) runs alone.
+func TestAPartWithoutItsOwnCheckRunsAlone(t *testing.T) {
+	for name, sp := range map[string]envelope.Split{
+		"second part missing check": {
+			Why: "Part 2 declares no check.",
+			Children: []envelope.Scope{
+				parallelPart(1, []string{"docs/a.md"}, []string{"Pre-commit checks"}),
+				parallelPart(2, []string{"docs/b.md"}, nil),
+			},
+		},
+		"first part missing check": {
+			Why: "Part 1 declares no check.",
+			Children: []envelope.Scope{
+				parallelPart(1, []string{"docs/a.md"}, nil),
+				parallelPart(2, []string{"docs/b.md"}, []string{"Pre-commit checks"}),
+			},
+		},
+		"undeclared check": {
+			Why: "Part 2 names a check not declared on the repository.",
+			Children: []envelope.Scope{
+				parallelPart(1, []string{"docs/a.md"}, []string{"Pre-commit checks"}),
+				parallelPart(2, []string{"docs/b.md"}, []string{"unknown-check"}),
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := approvedParallel(t, sp)
+			p := g.reconcile(t, "3buqdlot", 0)
+			if len(p.Status.Split.Children) != 1 {
+				t.Fatalf("part without valid check must run alone: %+v", p.Status.Split.Children)
+			}
+		})
+	}
+}
+
+// Phase H3: a part that touches a file outside its declared files ends Escalated
+// outside_declared_files and serialises the family back to one part at a time.
+func TestAPartOutsideItsFilesSerialisesTheFamily(t *testing.T) {
+	sp := envelope.Split{
+		Why: "Four disjoint parts.",
+		Children: []envelope.Scope{
+			parallelPart(1, []string{"docs/a.md"}, []string{"Pre-commit checks"}),
+			parallelPart(2, []string{"docs/b.md"}, []string{"Pre-commit checks"}),
+			parallelPart(3, []string{"docs/c.md"}, []string{"Pre-commit checks"}),
+			parallelPart(4, []string{"docs/d.md"}, []string{"Pre-commit checks"}),
+		},
+	}
+	g := approvedParallel(t, sp)
+	p := g.reconcile(t, "3buqdlot", 0)
+	if len(p.Status.Split.Children) != 2 {
+		t.Fatalf("expected parts 1 and 2 open initially: %+v", p.Status.Split.Children)
+	}
+
+	// Run part 1's implementer and have its PR modify a file outside docs/a.md.
+	g.reconcile(t, child(1), 3) // Received -> Triaged -> Queued -> Implementing
+	pr1 := forge.PR{Number: 61, NodeID: "PR_61", State: "OPEN", HeadRef: "agent/" + child(1), HeadSHA: strings.Repeat("1", 40), URL: "https://github.com/Smana/cloud-native-ref/pull/61"}
+	g.f.SetPR(pr1)
+	g.f.SetBranch("agent/"+child(1), 61)
+	g.f.SetPullFiles(61, forge.FilePatch{Path: "docs/a.md"}, forge.FilePatch{Path: "docs/secret.md"})
+	r1 := runID(child(1), 0)
+	g.runs.set(r1, "Succeeded")
+	g.reconcile(t, child(1), 1)
+	g.r.Now = func() time.Time { return now.Add(time.Hour + 2*time.Minute) }
+	c1 := g.reconcile(t, child(1), 1)
+	if c1.Status.Phase != v1alpha1.PhaseEscalated || c1.Status.Reason != ReasonOutsideDeclaredFiles {
+		t.Fatalf("part 1 phase=%q reason=%q, want Escalated / %s", c1.Status.Phase, c1.Status.Reason, ReasonOutsideDeclaredFiles)
+	}
+
+	// Parent sees part 1 escalated outside_declared_files and serialises the family.
+	g.f.SetIssue(forge.Issue{Number: p.Status.Split.Children[0].Issue, State: "OPEN"})
+	p = g.reconcile(t, "3buqdlot", 1)
+	if !p.Status.Split.Serialised {
+		t.Fatal("parent must record split.serialised = true after outside_declared_files")
+	}
+
+	// Even after parts 1 and 2 both land, parts 3 and 4 now run ONE at a time.
+	setPhase(t, g, child(1), v1alpha1.PhaseDone, "merged")
+	setPhase(t, g, child(2), v1alpha1.PhaseDone, "merged")
+	p = g.reconcile(t, "3buqdlot", 1)
+	if len(p.Status.Split.Children) != 3 || p.Status.Split.Children[2].Index != 3 {
+		t.Fatalf("serialised family must open only part 3 (not 3 and 4): %+v", p.Status.Split.Children)
+	}
+}
+
+// Phase H3: never more than MaxParallelParts (2) parts open at once, even with 4 disjoint parts.
+func TestNeverMoreThanTwoPartsOpen(t *testing.T) {
+	sp := envelope.Split{
+		Why: "Four disjoint parts.",
+		Children: []envelope.Scope{
+			parallelPart(1, []string{"docs/1.md"}, []string{"Pre-commit checks"}),
+			parallelPart(2, []string{"docs/2.md"}, []string{"Pre-commit checks"}),
+			parallelPart(3, []string{"docs/3.md"}, []string{"Pre-commit checks"}),
+			parallelPart(4, []string{"docs/4.md"}, []string{"Pre-commit checks"}),
+		},
+	}
+	g := approvedParallel(t, sp)
+	p := g.reconcile(t, "3buqdlot", 3) // extra reconciles must never open a 3rd
+	if len(p.Status.Split.Children) != config.MaxParallelParts {
+		t.Fatalf("opened %d parts, want at most %d (%+v)", len(p.Status.Split.Children), config.MaxParallelParts, p.Status.Split.Children)
+	}
+	// Landing part 1 opens part 3 (still at most 2 open: part 2 and part 3).
+	setPhase(t, g, child(1), v1alpha1.PhaseDone, "merged")
+	p = g.reconcile(t, "3buqdlot", 2)
+	if len(p.Status.Split.Children) != 3 {
+		t.Fatalf("after part 1 lands, opened %d parts, want 3 (2 open: #2 and #3)", len(p.Status.Split.Children))
+	}
+}
+
+// Phase H3: the family USD cap still ends a parallel family Escalated budget-family.
+func TestTheFamilyCapStillEndsTheFamily(t *testing.T) {
+	sp := envelope.Split{
+		Why: "Three disjoint parts.",
+		Children: []envelope.Scope{
+			parallelPart(1, []string{"docs/1.md"}, []string{"Pre-commit checks"}),
+			parallelPart(2, []string{"docs/2.md"}, []string{"Pre-commit checks"}),
+			parallelPart(3, []string{"docs/3.md"}, []string{"Pre-commit checks"}),
+		},
+	}
+	g := approvedParallel(t, sp)
+	// Parts 1 and 2 together spend past the family cap ($20.40 -> leaves < $2.55 run cap).
+	var c1, c2 v1alpha1.Task
+	_ = g.c.Get(t.Context(), taskKey(child(1)), &c1)
+	c1.Status.Phase, c1.Status.Reason = v1alpha1.PhaseDone, "merged"
+	c1.Status.Runs = []v1alpha1.RunRecord{{ID: runID(child(1), 0), Role: "implementer", Trigger: "initial", CostMicroUSD: 10_000_000, Tokens: 1}}
+	_ = g.c.Status().Update(t.Context(), &c1)
+
+	_ = g.c.Get(t.Context(), taskKey(child(2)), &c2)
+	c2.Status.Phase, c2.Status.Reason = v1alpha1.PhaseDone, "merged"
+	c2.Status.Runs = []v1alpha1.RunRecord{{ID: runID(child(2), 0), Role: "implementer", Trigger: "initial", CostMicroUSD: 9_000_000, Tokens: 1}}
+	_ = g.c.Status().Update(t.Context(), &c2)
+
+	p := g.reconcile(t, "3buqdlot", 1)
+	if p.Status.Phase != v1alpha1.PhaseEscalated || p.Status.Reason != ReasonBudgetFamily {
+		t.Fatalf("parent phase=%s reason=%s, want Escalated / %s", p.Status.Phase, p.Status.Reason, ReasonBudgetFamily)
+	}
+	if len(p.Status.Split.Children) != 2 {
+		t.Fatalf("part 3 must not open past family cap: %+v", p.Status.Split.Children)
 	}
 }

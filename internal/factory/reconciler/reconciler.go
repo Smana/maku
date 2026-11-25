@@ -541,7 +541,7 @@ func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 
 // noopRetryable reports whether a NoOp task can still be stepped up via a maintainer's deeper retry.
 func (r *Reconciler) noopRetryable(t *v1alpha1.Task) bool {
-	if t.Status.Phase != v1alpha1.PhaseNoOp || alreadyStepped(t.Status.Profile) {
+	if t.Status.Phase != v1alpha1.PhaseNoOp || t.Status.Reason == ReasonDependencyDropped || alreadyStepped(t.Status.Profile) {
 		return false
 	}
 	return t.Annotations[v1alpha1.AnnotationRetry] != "" || t.Spec.Issue > 0
@@ -1240,6 +1240,17 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 			narrateLater(t, narrate.TaskCard(t, b.String()))
 		}
 	}
+	if len(t.Spec.DependsOn) > 0 {
+		switch st, err := r.dependencyState(ctx, t); {
+		case err != nil:
+			return err
+		case st == depDropped:
+			return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, ReasonDependencyDropped)
+		case st == depWaiting:
+			r.to(t, v1alpha1.PhaseTriaged, ReasonWaitingDependency)
+			return nil
+		}
+	}
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }
@@ -1357,6 +1368,17 @@ func (r *Reconciler) notePin(ctx context.Context, cfg *config.Config, t *v1alpha
 // triaged gives the task its room (R2). A room of that name the factory did not make escalates:
 // its runs would inherit another owner's data class (C3).
 func (r *Reconciler) triaged(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	if len(t.Spec.DependsOn) > 0 {
+		switch st, err := r.dependencyState(ctx, t); {
+		case err != nil:
+			return err
+		case st == depDropped:
+			return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, ReasonDependencyDropped)
+		case st == depWaiting:
+			t.Status.Reason = ReasonWaitingDependency
+			return nil
+		}
+	}
 	if t.Spec.CoordinationParent != nil { // MR2: a Room for another repository is never adopted
 		_, err := r.checkCoordinationLineage(ctx, t)
 		if reason := lineageReason(err); reason != "" {

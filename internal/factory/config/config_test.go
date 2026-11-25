@@ -925,3 +925,39 @@ func TestMergePause(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitParallelPolicy(t *testing.T) {
+	if MaxParallelParts != 2 {
+		t.Fatalf("MaxParallelParts = %d, want 2", MaxParallelParts)
+	}
+	if got := (SplitPolicy{}).ParallelOr(); got != 1 {
+		t.Fatalf("unset ParallelOr() = %d, want 1", got)
+	}
+	for _, tc := range []struct {
+		name     string
+		parallel int
+		wantErr  string
+	}{
+		{"one", 1, ""},
+		{"two", 2, ""},
+		{"three rejected", 3, "parallel"},
+		{"negative rejected", -1, "parallel"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := priced + gatewayIdentity + "\nloops: {standard: {scope: scoper, split: {maxChildren: 4, parallel: " + strconv.Itoa(tc.parallel) + "}}}\n"
+			c, err := Parse([]byte(raw))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got := c.Loops["standard"].Split.ParallelOr(); got != tc.parallel {
+				t.Fatalf("ParallelOr() = %d, want %d", got, tc.parallel)
+			}
+		})
+	}
+}

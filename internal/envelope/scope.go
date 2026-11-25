@@ -37,6 +37,12 @@ type Scope struct {
 	// its reason; a ready scope's only.
 	Profile    string `json:"profile,omitempty"`
 	ProfileWhy string `json:"profileWhy,omitempty"`
+	// Files are the path globs a split part is allowed to touch (phase H3).
+	Files []string `json:"files,omitempty"`
+	// Checks are the repository check names verifying a split part (phase H3).
+	Checks []string `json:"checks,omitempty"`
+	// DependsOn lists 1-based indices of earlier split parts this part depends on (phase H3).
+	DependsOn []int `json:"dependsOn,omitempty"`
 }
 
 // MaxProfileWhy bounds the reason a scope gives for its profile.
@@ -63,7 +69,10 @@ const ScopeSchema = `{"type":"object","additionalProperties":false,"required":["
 	`"properties":{"check":{"type":"string","minLength":1,"maxLength":300},"proves":{"type":"string","minLength":1,"maxLength":200}}}},` +
 	`"question":{"type":"string","maxLength":500},` +
 	`"profile":{"type":"string","pattern":"^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$"},` +
-	`"profileWhy":{"type":"string","minLength":1,"maxLength":200}}}`
+	`"profileWhy":{"type":"string","minLength":1,"maxLength":200},` +
+	`"files":{"type":"array","maxItems":20,"items":{"type":"string","minLength":1,"maxLength":200}},` +
+	`"checks":{"type":"array","maxItems":20,"items":{"type":"string","minLength":1,"maxLength":200}},` +
+	`"dependsOn":{"type":"array","maxItems":4,"items":{"type":"integer","minimum":1,"maximum":5}}}}`
 
 // ErrScope is every refusal of Validate: the broker returns it to the model as an argument error.
 var ErrScope = errors.New("scope: state ready or question; task 1-1000 bytes; touches 1-10 and leave 0-10, each 1-200; " +
@@ -90,7 +99,11 @@ func (s Scope) Validate() error {
 	}
 	good := (s.State == ScopeReady || s.State == ScopeQuestion) && ok(s.Task, 1000) &&
 		list(s.Touches, 1, 10, 200) && list(s.Leave, 0, 10, 200) && list(s.Plan, 1, 7, 300) &&
-		list(s.Assumptions, 0, 5, 300) && len(s.Acceptance) >= 1 && len(s.Acceptance) <= 5
+		list(s.Assumptions, 0, 5, 300) && len(s.Acceptance) >= 1 && len(s.Acceptance) <= 5 &&
+		list(s.Files, 0, 20, 200) && list(s.Checks, 0, 20, 200) && len(s.DependsOn) <= 4
+	for _, d := range s.DependsOn {
+		good = good && d >= 1 && d <= MaxChildren
+	}
 	for _, a := range s.Acceptance {
 		good = good && ok(a.Check, 300) && ok(a.Proves, 200)
 	}

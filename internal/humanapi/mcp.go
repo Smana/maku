@@ -128,11 +128,11 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 	out := make([]mcpTool, 0, len(sponsoredTools)+1)
 	out = append(out, mcpTool{name: "run_create", tasks: true, schema: runCreateSchema,
 		call: func(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
-			res, err := s.createTask(ctx, p, args)
+			res, all, err := s.createTasks(ctx, p, args)
 			if rp := (replanned{}); errors.As(err, &rp) {
 				return rp.result(s)
 			}
-			return s.runCreated(res), err
+			return s.runCreated(res, all...), err
 		},
 		description: "Start factory work as a sponsored principal: a task under your sponsor and ceiling (max_cost, USD). " +
 			"It files the issue when title is set. Run it as a task to follow the room's state. Approvals happen on the room page, never here."})

@@ -43,3 +43,37 @@ func TestScopeProfileFields(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitParallelFieldsValidation(t *testing.T) {
+	part1 := readyScope()
+	part1.Files = []string{"docs/a.md"}
+	part1.Checks = []string{"Pre-commit checks"}
+	part2 := readyScope()
+	part2.Files = []string{"docs/b.md"}
+	part2.Checks = []string{"Pre-commit checks"}
+	part2.DependsOn = []int{1}
+
+	sp := Split{Why: "Two parts.", Children: []Scope{part1, part2}}
+	if err := sp.Validate(); err != nil {
+		t.Fatalf("valid split with files/checks/dependsOn failed: %v", err)
+	}
+
+	// Self or forward dependency must be rejected.
+	badDep := readyScope()
+	badDep.DependsOn = []int{2}
+	if err := (Split{Why: "Bad dep.", Children: []Scope{badDep, part2}}).Validate(); err == nil {
+		t.Fatal("forward dependsOn must fail Validate")
+	}
+
+	// Blank file or check must be rejected.
+	blankFile := readyScope()
+	blankFile.Files = []string{"  "}
+	if err := blankFile.Validate(); err == nil {
+		t.Fatal("blank files entry must fail Validate")
+	}
+	blankCheck := readyScope()
+	blankCheck.Checks = []string{""}
+	if err := blankCheck.Validate(); err == nil {
+		t.Fatal("blank checks entry must fail Validate")
+	}
+}

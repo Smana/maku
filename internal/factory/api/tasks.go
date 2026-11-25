@@ -61,6 +61,8 @@ type TaskRequest struct {
 	StepUpShown bool `json:"stepUpShown,omitempty"`
 	// Outcome is the task outcome the confirmed plan carried (phase F); empty is change.
 	Outcome string `json:"outcome,omitempty"`
+	// DependsOn lists earlier issue numbers in the same repository that must merge first (phase H2).
+	DependsOn []int32 `json:"dependsOn,omitempty"`
 	// Incident is an internal principal's finding (RA3); a sponsored principal's request refuses it.
 	Incident *Incident `json:"incident,omitempty"`
 }
@@ -433,11 +435,17 @@ func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.S
 	if ref == "" {
 		ref = "api:" + sp.Name
 	}
+	var deps []int32
+	for _, d := range in.DependsOn {
+		if d > 0 && !slices.Contains(deps, d) && len(deps) < 4 {
+			deps = append(deps, d)
+		}
+	}
 	t := &factoryv1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace},
 		Spec: factoryv1.TaskSpec{
 			Source: factoryv1.Source{Kind: "api", Ref: ref, Key: "api:" + sp.Name + ":" + key, RequestedBy: sp.Principal(),
 				Sponsor: factoryv1.Person(login), OnBehalfOf: in.OnBehalfOf, Trust: "untrusted", ContentSHA256: hex.EncodeToString(sum[:])},
-			Repository: in.Repository, Text: clean, DataClass: in.DataClass, Outcome: in.Outcome, MaxMicroUSD: maxUSD, IssueAuthor: login}}
+			Repository: in.Repository, DependsOn: deps, Text: clean, DataClass: in.DataClass, Outcome: in.Outcome, MaxMicroUSD: maxUSD, IssueAuthor: login}}
 	if in.Class != "" || in.Suggested != "" || in.Profile != "" || in.StepUpShown || in.Outcome != "" {
 		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login, StepUpShown: in.StepUpShown, Outcome: in.Outcome}
 	}

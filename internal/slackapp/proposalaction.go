@@ -185,6 +185,7 @@ func (a *App) redrawProposal(ctx context.Context, channel, ts string, p Proposal
 			return
 		}
 		p.Plan = checked.Plan
+		p.WholePlans = p.WholePlans || checked.WholePlans
 	}
 	text, blocks, err := proposalSections(p, nil, nil, channel)
 	if err != nil {

@@ -39,7 +39,11 @@ func (r *Reconciler) splitAtTriage(cfg *config.Config, t *v1alpha1.Task, row str
 		return
 	}
 	if p := cfg.SplitFor(t.Spec.Repository, t.Spec.PredictedClass, row); p != nil && (cl.Tier == "frontier" || p.AnyTier) {
-		t.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: p.MaxChildren, FamilyMicroUSD: config.MicroUSD(p.FamilyUSD), ChildTier: p.ChildTier}
+		spec := &v1alpha1.SplitSpec{MaxChildren: p.MaxChildren, FamilyMicroUSD: config.MicroUSD(p.FamilyUSD), ChildTier: p.ChildTier}
+		if p.Parallel > 1 {
+			spec.Parallel = int32(min(p.Parallel, config.MaxParallelParts))
+		}
+		t.Spec.Split = spec
 	}
 }
 
@@ -356,8 +360,8 @@ func (r *Reconciler) partFits(cfg *config.Config, p *v1alpha1.Task, left int64) 
 	return b.TaskTokens > 0 && b.TaskTokens >= b.RunTokens
 }
 
-// childScope is part k of the parent's split: the handoff status.split names, checked again.
-func (r *Reconciler) childScope(ctx context.Context, p *v1alpha1.Task, k int32) (*envelope.Scope, error) {
+// splitPlan reads the parent's validated split from the room handoff status.split names.
+func (r *Reconciler) splitPlan(ctx context.Context, p *v1alpha1.Task) (*envelope.Split, error) {
 	seq := p.Status.Split.Seq
 	evs, _, err := r.Rooms.EventsSince(ctx, p.Status.RoomRef, seq-1, func(e envelope.Event) bool {
 		return e.Seq == seq && e.Type == envelope.Handoff
@@ -367,15 +371,30 @@ func (r *Reconciler) childScope(ctx context.Context, p *v1alpha1.Task, k int32) 
 	}
 	var h envelope.HandoffPayload
 	if len(evs) == 0 || json.Unmarshal(evs[0].Payload, &h) != nil || h.FromRole != "triager" || h.Split == nil ||
-		h.Split.Validate() != nil || int(k) > len(h.Split.Children) {
-		return nil, fmt.Errorf("task %s: the handoff at seq %d holds no part %d", p.Name, seq, k)
+		h.Split.Validate() != nil {
+		return nil, fmt.Errorf("task %s: the handoff at seq %d holds no valid split", p.Name, seq)
 	}
-	return &h.Split.Children[k-1], nil
+	return h.Split, nil
+}
+
+// childScope is part k of the parent's split: the handoff status.split names, checked again.
+func (r *Reconciler) childScope(ctx context.Context, p *v1alpha1.Task, k int32) (*envelope.Scope, error) {
+	sp, err := r.splitPlan(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if int(k) < 1 || int(k) > len(sp.Children) {
+		return nil, fmt.Errorf("task %s: the handoff at seq %d holds no part %d", p.Name, p.Status.Split.Seq, k)
+	}
+	return &sp.Children[k-1], nil
 }
 
 // taskScopeOf is a part's scope as the Task keeps it.
 func taskScopeOf(s *envelope.Scope) *v1alpha1.TaskScope {
-	out := &v1alpha1.TaskScope{State: s.State, Task: s.Task, Touches: s.Touches, Leave: s.Leave, Plan: s.Plan, Assumptions: s.Assumptions}
+	out := &v1alpha1.TaskScope{
+		State: s.State, Task: s.Task, Touches: s.Touches, Leave: s.Leave, Plan: s.Plan, Assumptions: s.Assumptions,
+		Files: slices.Clone(s.Files), Checks: slices.Clone(s.Checks),
+	}
 	for _, a := range s.Acceptance {
 		out.Acceptance = append(out.Acceptance, v1alpha1.TaskAcceptance{Check: a.Check, Proves: a.Proves})
 	}
@@ -384,7 +403,10 @@ func taskScopeOf(s *envelope.Scope) *v1alpha1.TaskScope {
 
 // envelopeScope is taskScopeOf's inverse: a part's scope as the brief renders it.
 func envelopeScope(s *v1alpha1.TaskScope) envelope.Scope {
-	out := envelope.Scope{State: s.State, Task: s.Task, Touches: s.Touches, Leave: s.Leave, Plan: s.Plan, Assumptions: s.Assumptions}
+	out := envelope.Scope{
+		State: s.State, Task: s.Task, Touches: s.Touches, Leave: s.Leave, Plan: s.Plan, Assumptions: s.Assumptions,
+		Files: slices.Clone(s.Files), Checks: slices.Clone(s.Checks),
+	}
 	for _, a := range s.Acceptance {
 		out.Acceptance = append(out.Acceptance, envelope.Acceptance{Check: a.Check, Proves: a.Proves})
 	}
@@ -520,9 +542,11 @@ func (r *Reconciler) inherit(ctx context.Context, cfg *config.Config, t *v1alpha
 	return "", nil
 }
 
-// splitting is the parent's wait in Split (SL7, SL12, SR13): it records each part's outcome from
-// its newest generation, ends the family on a revert or a drop, opens the next part once the one
-// before has landed within the family's cap, and closes the parent when the last part lands.
+// splitting is the parent's wait in Split (SL7, SL12, SR13, phase H3): it records each part's
+// outcome from its newest generation, ends the family on a revert or a drop, opens the next
+// eligible part(s) (at most 2 when parallel == 2, disjoint files, valid checks, and no dependency
+// between them; 1 otherwise or after outside_declared_files serialises the family), and closes the
+// parent when every part lands.
 func (r *Reconciler) splitting(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if _, _, err := r.observe(ctx, t); err != nil { // the scoper's late readings land (R49)
 		return err
@@ -532,54 +556,136 @@ func (r *Reconciler) splitting(ctx context.Context, cfg *config.Config, t *v1alp
 	if err != nil {
 		return err
 	}
+	landedByIdx := make(map[int]bool, len(sp.Children))
+	openedByIdx := make(map[int32]bool, len(sp.Children))
+	var openChildren []v1alpha1.SplitChild
+	anyEscalated := false
 	for i := range sp.Children {
 		c := &sp.Children[i]
-		if n := newest[c.Index]; n != nil {
+		openedByIdx[c.Index] = true
+		n := newest[c.Index]
+		if n != nil {
 			c.Task = n.Name
 			if n.Status.Phase == v1alpha1.PhaseReverted {
 				c.Outcome = ChildReverted
 				return r.endFamily(ctx, cfg, t, newest, v1alpha1.PhaseClosed, ReasonChildDropped)
 			}
 		}
-	}
-	if k := len(sp.Children); k > 0 {
-		c := &sp.Children[k-1]
-		n := newest[c.Index]
+		if c.Outcome == ChildLanded {
+			landedByIdx[int(c.Index)] = true
+			continue
+		}
 		switch {
 		case n == nil: // the part's create was lost with its write: open it again, by its marker
 			return r.openChild(ctx, cfg, t, c.Index)
 		case n.Status.Phase == v1alpha1.PhaseDone:
 			c.Outcome = ChildLanded
+			landedByIdx[int(c.Index)] = true
 		case n.Status.Phase == v1alpha1.PhaseRejected && n.Status.Reason == ReasonBudgetFamily:
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily)
 		case v1alpha1.TerminalPhase(n.Status.Phase) || n.Status.Phase == v1alpha1.PhaseEscalated:
+			if n.Status.Phase == v1alpha1.PhaseEscalated && n.Status.Reason == ReasonOutsideDeclaredFiles {
+				sp.Serialised = true
+			}
 			iss, err := r.gh(ctx).Issue(ctx, c.Issue)
 			if err != nil {
 				return err
 			}
-			if iss.State != "CLOSED" {
-				return nil // waits: a maintainer re-labels the part's issue or closes it (SL12)
+			if iss.State == "CLOSED" {
+				c.Outcome = ChildDropped
+				return r.endFamily(ctx, cfg, t, newest, v1alpha1.PhaseClosed, ReasonChildDropped)
 			}
-			c.Outcome = ChildDropped
-			return r.endFamily(ctx, cfg, t, newest, v1alpha1.PhaseClosed, ReasonChildDropped)
+			if n.Status.Phase == v1alpha1.PhaseEscalated {
+				anyEscalated = true
+			}
+			openChildren = append(openChildren, *c)
 		default:
-			return nil // the part is running
+			openChildren = append(openChildren, *c)
 		}
 	}
-	if len(sp.Children) == int(sp.Of) {
+	if len(landedByIdx) == int(sp.Of) {
 		if err := r.gh(ctx).CloseIssue(ctx, t.Spec.Issue); err != nil {
 			return err // closing a closed issue is no error, so a replay closes again harmlessly
 		}
 		return r.endFamily(ctx, cfg, t, newest, v1alpha1.PhaseDone, ReasonChildrenMerged)
 	}
+	limit := 1
+	if t.Spec.Split != nil && t.Spec.Split.Parallel >= config.MaxParallelParts && !sp.Serialised {
+		limit = config.MaxParallelParts
+	}
+	if anyEscalated || len(openChildren) >= limit {
+		return nil
+	}
 	left, err := r.familyLeft(ctx, t)
 	if err != nil {
 		return err
 	}
-	if !r.partFits(cfg, t, left) {
+	if len(openChildren) == 0 && !r.partFits(cfg, t, left) {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily) // SL10
 	}
-	return r.openChild(ctx, cfg, t, int32(len(sp.Children))+1) //nolint:gosec // Validate bounds the parts to 2..5
+	if len(openChildren) > 0 && left <= 0 {
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily)
+	}
+	var plan *envelope.Split
+	if limit > 1 {
+		plan, err = r.splitPlan(ctx, t)
+		if err != nil {
+			return err
+		}
+	}
+	rc := r.repo(cfg, t)
+	runReserve := runMicroUSD(triage.BudgetFor(cfg, t.Spec.Split.ChildTier))
+	for len(openChildren) < limit {
+		var nextIdx int32
+		for k := int32(1); k <= sp.Of; k++ {
+			if openedByIdx[k] {
+				continue
+			}
+			if plan != nil {
+				scK := plan.Children[k-1]
+				depsReady := true
+				for _, d := range scK.DependsOn {
+					if !landedByIdx[d] {
+						depsReady = false
+						break
+					}
+				}
+				if !depsReady {
+					continue
+				}
+				if len(openChildren) > 0 {
+					parallelOK := true
+					for _, oc := range openChildren {
+						if !partsCanRunTogether(k, scK, oc.Index, plan.Children[oc.Index-1], rc) {
+							parallelOK = false
+							break
+						}
+					}
+					if !parallelOK {
+						continue
+					}
+				}
+			}
+			nextIdx = k
+			break
+		}
+		if nextIdx == 0 {
+			break
+		}
+		effectiveLeft := left - int64(len(openChildren))*runReserve
+		if !r.partFits(cfg, t, effectiveLeft) {
+			if len(openChildren) == 0 {
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily)
+			}
+			break
+		}
+		if err := r.openChild(ctx, cfg, t, nextIdx); err != nil {
+			return err
+		}
+		openedByIdx[nextIdx] = true
+		openChildren = append(openChildren, sp.Children[len(sp.Children)-1])
+	}
+	return nil
 }
 
 // endFamily ends the parent (SL12, SR14): one comment listing the parts and their pull requests,

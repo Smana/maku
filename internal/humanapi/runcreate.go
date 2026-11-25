@@ -8,7 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -103,8 +106,11 @@ func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Princip
 	if intake.Hash(plan) != a.PlanHash {
 		return intake.ReasonRefusal(intake.ReasonPlanChanged)
 	}
-	if len(plan.Issues) != slackFiles {
+	if !s.wholePlans() && len(plan.Issues) != slackFiles {
 		return argRefusal("Slack files exactly one issue: the plan carries " + strconv.Itoa(len(plan.Issues)))
+	}
+	if len(plan.Issues) == 0 {
+		return argRefusal("the plan carries no issues")
 	}
 	// The four fields the App still sends are the plan's, byte for byte but for the repository's case (the App
 	// files into the channel's spelling, the planner lowercases): the hash covers the
@@ -179,57 +185,69 @@ func planPresent(raw json.RawMessage) bool {
 // none), a titled draft issue_draft's whole check. The key defaults to the arguments' hash, so a
 // retried call creates one task.
 func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.RawMessage) (runrequest.TaskResult, error) {
+	first, _, err := s.createTasks(ctx, p, args)
+	return first, err
+}
+
+func (s *Server) createTasks(ctx context.Context, p authn.Principal, args json.RawMessage) (runrequest.TaskResult, []runrequest.TaskResult, error) {
 	if !p.Sponsored {
-		return runrequest.TaskResult{}, toolError("unknown tool: run_create")
+		return runrequest.TaskResult{}, nil, toolError("unknown tool: run_create")
 	}
 	var a runCreateArgs
 	bad := toolError("invalid_arguments: repo, text, dataClass public and max_cost above 0 are required; " +
 		"idempotency_key is at most 128 characters")
 	if mcpwire.DecodeArgs(args, &a) != nil || a.MaxCost <= 0 || a.DataClass != "public" || len(a.IdempotencyKey) > maxIdempotencyKey {
-		return runrequest.TaskResult{}, bad
+		return runrequest.TaskResult{}, nil, bad
 	}
 	if a.Handoff != "" {
 		if err := s.fromHandoff(ctx, p, &a); err != nil {
-			return runrequest.TaskResult{}, err
+			return runrequest.TaskResult{}, nil, err
 		}
 	}
 	if !repositoryRE.MatchString(a.Repo) || a.Text == "" {
-		return runrequest.TaskResult{}, bad
+		return runrequest.TaskResult{}, nil, bad
 	}
 	if !sponsored.ValidRef(a.Ref) {
-		return runrequest.TaskResult{}, toolError("bad_ref: ref is a git ref of at most 256 characters")
+		return runrequest.TaskResult{}, nil, toolError("bad_ref: ref is a git ref of at most 256 characters")
 	}
 	if a.OnBehalfOf != "" && !onBehalfRE.MatchString(a.OnBehalfOf) {
-		return runrequest.TaskResult{}, toolError("invalid_arguments: on_behalf_of is slack:<team>/<user>")
+		return runrequest.TaskResult{}, nil, toolError("invalid_arguments: on_behalf_of is slack:<team>/<user>")
 	}
 	if !planPresent(a.Plan) && a.PlanHash != "" {
 		// Half the pair names nothing to check: a hash is a claim about a plan, and there is no plan
 		// here to hold it to. Refused rather than filed, because a caller that sends the hash meant to
 		// send a plan and silently filing the arguments alone would file what nobody confirmed.
-		return runrequest.TaskResult{}, toolError("invalid_arguments: plan and plan_hash are passed together: " +
+		return runrequest.TaskResult{}, nil, toolError("invalid_arguments: plan and plan_hash are passed together: " +
 			"a plan_hash with no plan names nothing to check")
 	}
 	if planPresent(a.Plan) {
 		if err := s.checkPlan(ctx, a, p); err != nil {
 			var rp replanned
 			if errors.As(err, &rp) {
-				return runrequest.TaskResult{}, rp
+				return runrequest.TaskResult{}, nil, rp
 			}
-			return runrequest.TaskResult{}, toolError(err.Error())
+			return runrequest.TaskResult{}, nil, toolError(err.Error())
 		}
 	}
-	planned, stepUpShown := s.plannedIssue(ctx, p, a)
+	planIssues, stepUpShown := s.plannedIssues(ctx, p, a)
+	if len(planIssues) > 1 && s.wholePlans() {
+		return s.createWholePlan(ctx, p, args, a, planIssues, stepUpShown)
+	}
+	var planned plannedTask
+	if len(planIssues) == 1 {
+		planned = planIssues[0]
+	}
 	if a.Title != "" {
 		d, err := s.checkFinalDraft(ctx, a.Title, a.Text)
 		if err != nil {
-			return runrequest.TaskResult{}, err
+			return runrequest.TaskResult{}, nil, err
 		}
 		a.Title, a.Text = d.Title, d.Body
 	} else if err := s.redactCheck(ctx, a.Text); err != nil {
-		return runrequest.TaskResult{}, err
+		return runrequest.TaskResult{}, nil, err
 	}
 	if s.Tasks == nil {
-		return runrequest.TaskResult{}, toolError("no_factory: the factory is not configured")
+		return runrequest.TaskResult{}, nil, toolError("no_factory: the factory is not configured")
 	}
 	key := a.IdempotencyKey
 	if key == "" {
@@ -243,12 +261,93 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 		Outcome: planned.Outcome})
 	var refused runrequest.ErrRefused
 	if errors.As(err, &refused) {
-		return runrequest.TaskResult{}, toolError("rejected: " + refused.Reason)
+		return runrequest.TaskResult{}, nil, toolError("rejected: " + refused.Reason)
 	}
 	if err == nil && planned.Class != "" && !res.Duplicate {
 		s.countChoices(ctx, intake.Plan{Issues: []intake.Issue{intake.Issue(planned)}}, intake.SurfaceSlack)
 	}
-	return res, err
+	return res, nil, err
+}
+
+func (s *Server) createWholePlan(ctx context.Context, p authn.Principal, rawArgs json.RawMessage, a runCreateArgs,
+	issues []plannedTask, stepUpShown bool) (runrequest.TaskResult, []runrequest.TaskResult, error) {
+	if s.Tasks == nil {
+		return runrequest.TaskResult{}, nil, toolError("no_factory: the factory is not configured")
+	}
+	type checkedDraft struct {
+		title, body string
+		index       int
+		task        plannedTask
+	}
+	drafts := make([]checkedDraft, 0, len(issues))
+	for i, is := range issues {
+		d, err := s.checkFinalDraft(ctx, is.Title, is.Body)
+		if err != nil {
+			return runrequest.TaskResult{}, nil, err
+		}
+		idx := is.Index
+		if idx == 0 {
+			idx = i + 1
+		}
+		drafts = append(drafts, checkedDraft{title: d.Title, body: d.Body, index: idx, task: is})
+	}
+	baseKey := a.IdempotencyKey
+	if baseKey == "" {
+		sum := sha256.Sum256(rawArgs)
+		baseKey = hex.EncodeToString(sum[:16])
+	}
+	filedByIdx := make(map[int]int, len(drafts))
+	results := make([]runrequest.TaskResult, 0, len(drafts))
+	for i, d := range drafts {
+		var deps []int32
+		for _, depIdx := range d.task.DependsOn {
+			if num := filedByIdx[depIdx]; num > 0 && num <= math.MaxInt32 {
+				n32 := int32(num)
+				if !slices.Contains(deps, n32) && len(deps) < 4 {
+					deps = append(deps, n32)
+				}
+			}
+		}
+		body := appendDependsOn(d.body, deps)
+		key := baseKey
+		if i > 0 {
+			key = baseKey + "/" + strconv.Itoa(i+1)
+		}
+		res, err := s.Tasks.CreateTask(ctx, runrequest.TaskRequest{
+			Repository: a.Repo, Title: d.title, Text: body,
+			DataClass: a.DataClass, MaxCostUSD: a.MaxCost, OnBehalfOf: a.OnBehalfOf, Ref: a.Ref,
+			AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key,
+			Class: d.task.Class, Suggested: d.task.suggested(), Profile: d.task.Profile, StepUpShown: stepUpShown,
+			Outcome: d.task.Outcome, DependsOn: deps,
+		})
+		var refused runrequest.ErrRefused
+		if errors.As(err, &refused) {
+			return runrequest.TaskResult{}, nil, toolError("rejected: " + refused.Reason)
+		}
+		if err != nil {
+			return runrequest.TaskResult{}, nil, err
+		}
+		if res.Issue > 0 {
+			filedByIdx[d.index] = res.Issue
+		}
+		if d.task.Class != "" && !res.Duplicate {
+			s.countChoices(ctx, intake.Plan{Issues: []intake.Issue{intake.Issue(d.task)}}, intake.SurfaceSlack)
+		}
+		results = append(results, res)
+	}
+	return results[0], results, nil
+}
+
+func appendDependsOn(body string, deps []int32) string {
+	if len(deps) == 0 {
+		return body
+	}
+	refs := make([]string, len(deps))
+	for i, d := range deps {
+		refs[i] = fmt.Sprintf("#%d", d)
+	}
+	list := strings.Join(refs, ", ")
+	return strings.TrimRight(body, "\n") + "\n\nWaits for " + list + "\n\n<!-- maku depends-on: " + list + " -->\n"
 }
 
 // fromHandoff turns a run_create {handoff} into the plan-carrying call it stands for (UX2): the id's
@@ -279,8 +378,11 @@ func (s *Server) fromHandoff(ctx context.Context, p authn.Principal, a *runCreat
 		return toolError(intake.ReasonRefusal(intake.ReasonPlanChanged).Error())
 	}
 	plan := checked.Plan
-	if len(plan.Issues) != slackFiles {
+	if !s.wholePlans() && len(plan.Issues) != slackFiles {
 		return toolError("invalid_arguments: Slack files exactly one issue: the plan carries " + strconv.Itoa(len(plan.Issues)))
+	}
+	if len(plan.Issues) == 0 {
+		return toolError("invalid_arguments: the plan carries no issues")
 	}
 	if a.Repo != "" && !strings.EqualFold(a.Repo, plan.Repository) {
 		return toolError(intake.ReasonRefusal(intake.ReasonPlanChanged).Error())
@@ -313,26 +415,42 @@ func (s *Server) redactCheck(ctx context.Context, text string) error {
 	return nil
 }
 
-// runCreated is run_create's answer without a task: the factory's, and the room page.
-func (s *Server) runCreated(r runrequest.TaskResult) map[string]any {
+// runCreated is run_create's answer without a task: the factory's, and the room page. When
+// wholePlans filed multiple issues, every filed issue is also listed under issues.
+func (s *Server) runCreated(r runrequest.TaskResult, all ...runrequest.TaskResult) map[string]any {
 	out := map[string]any{"task": r.Task, "room": r.Room, "issue": r.Issue, "duplicate": r.Duplicate, "url": s.PublicURL + "/r/" + r.Room}
 	if r.Sponsor != "" {
 		out["sponsor"] = r.Sponsor
 	}
+	if len(all) > 1 {
+		items := make([]map[string]any, 0, len(all))
+		for _, item := range all {
+			items = append(items, map[string]any{
+				"task": item.Task, "room": item.Room, "issue": item.Issue, "duplicate": item.Duplicate,
+				"url": s.PublicURL + "/r/" + item.Room,
+			})
+		}
+		out["issues"] = items
+	}
 	return out
 }
 
-// plannedIssue is the one issue a checked plan files (P5, P7): its class and pin are bound by the
-// plan's hash; its suggestion is display and the client's copy, so it is rebuilt from the plan
-// repository's catalogue first (review B2): a profile the class does not offer, or any on the config
-// fallback, is never stored. The zero issue without a plan.
-func (s *Server) plannedIssue(ctx context.Context, p authn.Principal, a runCreateArgs) (plannedTask, bool) {
+// plannedIssues are the issues a checked plan files (P5, P7, H2): their class and pin are bound by
+// the plan's hash; suggestions are rebuilt from the repository's catalogue first (review B2).
+func (s *Server) plannedIssues(ctx context.Context, p authn.Principal, a runCreateArgs) ([]plannedTask, bool) {
 	var plan intake.Plan
-	if !planPresent(a.Plan) || json.Unmarshal(a.Plan, &plan) != nil || len(plan.Issues) != slackFiles {
-		return plannedTask{}, false
+	if !planPresent(a.Plan) || json.Unmarshal(a.Plan, &plan) != nil || len(plan.Issues) == 0 {
+		return nil, false
+	}
+	if !s.wholePlans() && len(plan.Issues) != slackFiles {
+		return nil, false
 	}
 	plan = intake.Resuggest(plan, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository))
-	return plannedTask(plan.Issues[0]), plan.Budget.StepUpCeilingUSD > 0
+	out := make([]plannedTask, 0, len(plan.Issues))
+	for _, is := range plan.Issues {
+		out = append(out, plannedTask(is))
+	}
+	return out, plan.Budget.StepUpCeilingUSD > 0
 }
 
 // plannedTask is a planned issue as run_create passes it on.

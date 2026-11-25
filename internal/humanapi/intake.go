@@ -110,6 +110,8 @@ type Intake struct {
 	// Fallback is the config's fallback: `off` leaves the degraded composer unreachable, `composer`
 	// makes it the answer when the call fails rather than a plan.
 	Fallback string
+	// WholePlans files every issue of a confirmed multi-issue plan in order (phase H2).
+	WholePlans bool
 	// Now is the clock the daily cap and the plan's composition read; nil means time.Now.
 	Now func() time.Time
 

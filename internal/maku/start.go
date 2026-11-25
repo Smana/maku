@@ -70,6 +70,7 @@ type planView struct {
 		Outcome         string `json:"outcome,omitempty"`
 		OutcomeInferred bool   `json:"outcomeInferred,omitempty"`
 		OutcomeNote     string `json:"outcomeNote,omitempty"`
+		DependsOn       []int  `json:"dependsOn,omitempty"`
 		Suggestion      *struct {
 			Profile string   `json:"profile"`
 			Roles   []string `json:"roles"`
@@ -91,11 +92,14 @@ type governed struct {
 	view planView
 }
 
-// planLabels are the labels start applies before factory/ready: workflow:<p> when the plan pins
-// one (unless the catalogue says this developer does not maintain the repository), plus an outcome
-// label when the confirmed plan carries plan-first or report.
-func (g *governed) planLabels() []string {
-	is := g.view.Issues[0]
+// planLabels are the labels start applies to the first issue before factory/ready.
+func (g *governed) planLabels() []string { return g.planLabelsFor(0) }
+
+// planLabelsFor are the labels start applies to issue i before factory/ready: workflow:<p> when
+// the plan pins one (unless the catalogue says this developer does not maintain the repository),
+// plus an outcome label when the confirmed plan carries plan-first or report.
+func (g *governed) planLabelsFor(i int) []string {
+	is := g.view.Issues[i]
 	var out []string
 	if is.Profile != "" && (g.Maintainer == nil || *g.Maintainer) {
 		out = append(out, "workflow:"+is.Profile)
@@ -161,6 +165,7 @@ type handoffCheckShape struct {
 	Title           string           `json:"title"`
 	Body            string           `json:"body"`
 	Repository      string           `json:"repository"`
+	WholePlans      bool             `json:"wholePlans,omitempty"`
 	view            planView
 	workflow        string
 }
@@ -380,11 +385,29 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 
 	meta := renderStartCard(checked, defaultWF, allChoices)
 	if n := len(checked.view.Issues); n > 1 {
-		meta += fmt.Sprintf("The plan holds %d issues: this files the first.\n\n", n)
+		if checked.WholePlans {
+			meta += fmt.Sprintf("The plan holds %d issues: this files all %d, in order.\n\n", n, n)
+		} else {
+			meta += fmt.Sprintf("The plan holds %d issues: this files the first.\n\n", n)
+		}
+	}
+
+	preview := draft.Title + "\n\n" + draft.Body
+	if checked.WholePlans && len(checked.view.Issues) > 1 {
+		var pb strings.Builder
+		for i, is := range checked.view.Issues {
+			if i > 0 {
+				pb.WriteString("\n\n---\n\n")
+			}
+			pb.WriteString(is.Title)
+			pb.WriteString("\n\n")
+			pb.WriteString(is.Body)
+		}
+		preview = pb.String()
 	}
 
 	ans, err := r.ask(ctx, "elicitation/create", map[string]any{
-		"message":         fmt.Sprintf("File this issue on %s as you, with gh? %s\n\n%s%s\n\n%s", draft.Repo, tail, meta, draft.Title, draft.Body),
+		"message":         fmt.Sprintf("File this issue on %s as you, with gh? %s\n\n%s%s", draft.Repo, tail, meta, preview),
 		"requestedSchema": map[string]any{"type": "object", "required": []string{"file"}, "properties": props},
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -443,6 +466,9 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	if offer && !chosen {
 		r.log().Warn("start: the form answer has no usable start; treated as not started", "start", string(res.Content["start"]))
 	}
+	if checked.WholePlans && len(checked.view.Issues) > 1 {
+		return r.fileWholePlan(ctx, checked, draft, offer, startNow, chosen, workflowIgnored)
+	}
 	url, err := r.File(ctx, draft.Repo, draft.Title, draft.Body)
 	if err != nil {
 		return mcpwire.ToolError("not_filed: " + err.Error())
@@ -460,6 +486,112 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 		return out
 	}
 	return r.startFromHandoff(ctx, draft.Repo, url, checked.governed().planLabels(), workflowIgnored)
+}
+
+func withDependsOn(body string, deps []int) string {
+	if len(deps) == 0 {
+		return body
+	}
+	refs := make([]string, len(deps))
+	for i, d := range deps {
+		refs[i] = fmt.Sprintf("#%d", d)
+	}
+	list := strings.Join(refs, ", ")
+	return strings.TrimRight(body, "\n") + "\n\nWaits for " + list + "\n\n<!-- maku depends-on: " + list + " -->\n"
+}
+
+func (r *Relay) fileWholePlan(ctx context.Context, checked *handoffCheckShape, draft draftShape,
+	offer, startNow, chosen bool, workflowIgnored string) any {
+	gov := checked.governed()
+	filedByIdx := make(map[int]int, len(checked.view.Issues))
+	urls := make([]string, 0, len(checked.view.Issues))
+	type filedEntry struct {
+		Index     int    `json:"index"`
+		URL       string `json:"url"`
+		Issue     int    `json:"issue,omitempty"`
+		DependsOn []int  `json:"dependsOn,omitempty"`
+	}
+	entries := make([]filedEntry, 0, len(checked.view.Issues))
+	for i, is := range checked.view.Issues {
+		idx := is.Index
+		if idx == 0 {
+			idx = i + 1
+		}
+		var deps []int
+		for _, depIdx := range is.DependsOn {
+			if num := filedByIdx[depIdx]; num > 0 && !slices.Contains(deps, num) && len(deps) < 4 {
+				deps = append(deps, num)
+			}
+		}
+		body := withDependsOn(is.Body, deps)
+		u, err := r.File(ctx, draft.Repo, is.Title, body)
+		if err != nil {
+			return mcpwire.ToolError("not_filed: " + err.Error())
+		}
+		num, _ := issueNumber(u, draft.Repo)
+		if num > 0 {
+			filedByIdx[idx] = num
+		}
+		urls = append(urls, u)
+		entries = append(entries, filedEntry{Index: idx, URL: u, Issue: num, DependsOn: deps})
+	}
+	if !offer || !startNow {
+		next := "show the developer the issue links and stop: they label them " + readyLabel + " to start the work, their decision. Never add the label yourself"
+		if offer && !chosen {
+			next = "start was not chosen (the form came back without it), so the work is not started: ask the developer whether to start it, and label them " + readyLabel + " only on their yes"
+		}
+		m := map[string]any{"filed": true, "url": urls[0], "urls": urls, "issues": entries, "started": false, "next": next}
+		if workflowIgnored != "" {
+			m["workflow_ignored"] = workflowIgnored
+		}
+		out, _ := mcpwire.ToolResult(m)
+		return out
+	}
+	for i, e := range entries {
+		if e.Issue <= 0 {
+			continue
+		}
+		for _, label := range gov.planLabelsFor(i) {
+			if r.ClassLabel == nil {
+				break
+			}
+			if cerr := r.ClassLabel(ctx, draft.Repo, e.Issue, label); cerr != nil {
+				m := map[string]any{"filed": true, "url": urls[0], "urls": urls, "issues": entries, "started": false,
+					"why": "filed without labels, so not started: " + label + ": " + OneLine(cerr.Error())}
+				if workflowIgnored != "" {
+					m["workflow_ignored"] = workflowIgnored
+				}
+				out, _ := mcpwire.ToolResult(m)
+				return out
+			}
+		}
+		if err := r.Label(ctx, draft.Repo, e.Issue, readyLabel); err != nil {
+			m := map[string]any{"filed": true, "url": urls[0], "urls": urls, "issues": entries, "started": false,
+				"why": "filed without the label, so not started: " + OneLine(err.Error()) + "; label it " + readyLabel + " yourself"}
+			if workflowIgnored != "" {
+				m["workflow_ignored"] = workflowIgnored
+			}
+			out, _ := mcpwire.ToolResult(m)
+			return out
+		}
+	}
+	result := map[string]any{"filed": true, "url": urls[0], "urls": urls, "issues": entries, "started": true}
+	if workflowIgnored != "" {
+		result["workflow_ignored"] = workflowIgnored
+	}
+	if entries[0].Issue > 0 {
+		if id := r.awaitRoom(ctx, draft.Repo, entries[0].Issue); id != "" {
+			result["task"] = id
+			result["room"] = id
+			result["next"] = "call " + mcpwire.Wait + " with {\"task\":\"" + id + "\"} in a background task now, without asking, and tell the developer you are following it. " +
+				"Without background tasks, show them the task and stop"
+			out, _ := mcpwire.ToolResult(result)
+			return out
+		}
+	}
+	result["next"] = "show the developer the issue links and stop; call " + mcpwire.Task + " with the first issue when they ask where it stands"
+	out, _ := mcpwire.ToolResult(result)
+	return out
 }
 
 func workflowChoiceLabel(c workflowChoice, isDefault bool) string {

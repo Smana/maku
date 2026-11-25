@@ -165,11 +165,18 @@ func (h HumanConfig) EffectiveRoomActs() []string {
 	return h.RoomActs
 }
 
-// IntakeConfig is human.intake. It holds one block today; it exists so the planner's switch has a
-// name of its own beside the other v3 switches, rather than growing on the listener's config.
+// IntakeConfig is human.intake. It holds the planner block and the wholePlans switch so intake
+// settings live together beside the other listener switches.
 type IntakeConfig struct {
 	Plan PlanConfig `json:"plan,omitzero"`
+	// WholePlans files every issue of a confirmed multi-issue plan in order (phase H2), linking
+	// later issues to the earlier ones they depend on. Off by default: start files the first issue
+	// only and Slack refuses multi-issue plans.
+	WholePlans bool `json:"wholePlans,omitempty"`
 }
+
+// IntakeWholePlans reports whether human.intake.wholePlans is enabled.
+func (c Config) IntakeWholePlans() bool { return c.Human.Intake.WholePlans }
 
 // The planner's one route, and the values that are not a deployment's to choose.
 const (
