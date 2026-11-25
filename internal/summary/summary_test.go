@@ -665,3 +665,20 @@ func TestDescribeOutputPush(t *testing.T) {
 		t.Fatalf("DescribeApproval read a digest from the action: %q", got)
 	}
 }
+
+// While a plan-first task waits in plan review, the summary carries the scoper's ready plan, so the
+// room shows what it asks a maintainer to approve; any other state carries none (gcp-0, 2026-11-25).
+func TestPlanReviewCarriesTheProposedPlan(t *testing.T) {
+	scope := &envelope.Scope{State: envelope.ScopeReady, Task: "Fix the dead links", Touches: []string{"docs/a.md"},
+		Plan: []string{"Replace the link"}, Acceptance: []envelope.Acceptance{{Check: "task docs", Proves: "the links resolve"}}}
+	st := summary.State{Scope: scope, Facts: &envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "plan_review"}}
+	s := view(st, "r", "https://x/r/r", owner(), 0, time.Now())
+	p := s.Status.ProposedPlan
+	if p == nil || p.Task != scope.Task || !slices.Equal(p.Touches, scope.Touches) || !slices.Equal(p.Steps, scope.Plan) || len(p.Acceptance) != 1 {
+		t.Fatalf("proposed plan %+v", p)
+	}
+	st.Facts.Phase, st.Facts.Reason = "Implementing", ""
+	if s := view(st, "r", "https://x/r/r", owner(), 0, time.Now()); s.Status.ProposedPlan != nil {
+		t.Fatalf("a task past plan review carries a plan: %+v", s.Status.ProposedPlan)
+	}
+}

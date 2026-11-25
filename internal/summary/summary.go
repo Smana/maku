@@ -206,6 +206,15 @@ type Action struct {
 	CLI  string `json:"cli,omitempty"` // steer has none: maku never steers (P18)
 }
 
+// ProposedPlan is a ready scope as the room shows it in plan review: the bounded task, the files it
+// expects to touch, its steps and its acceptance checks.
+type ProposedPlan struct {
+	Task       string                `json:"task"`
+	Touches    []string              `json:"touches,omitempty"`
+	Steps      []string              `json:"steps,omitempty"`
+	Acceptance []envelope.Acceptance `json:"acceptance,omitempty"`
+}
+
 // Summary is the summary/v1 object.
 type Summary struct {
 	APIVersion string `json:"apiVersion"`
@@ -248,6 +257,9 @@ type Summary struct {
 		Policy *PolicyView `json:"policy,omitempty"`
 		// Question is the scoper's open question when the task is Escalated with needs_author.
 		Question string `json:"question,omitempty"`
+		// ProposedPlan is the scoper's plan while a plan-first task waits in plan review, so the
+		// room shows what it asks a maintainer to approve. Agent-written: a surface sets it as text.
+		ProposedPlan *ProposedPlan `json:"proposedPlan,omitempty"`
 	} `json:"status"`
 	// Runs is the task's run history, oldest first: the factory's facts, so a sealed room keeps it.
 	Runs     []envelope.RunFact `json:"runs,omitempty"`
@@ -553,6 +565,10 @@ func View(st State, room, url string, sub policy.Subject, standing GitHubStandin
 	s.Status.Reason, s.Status.Next = Waiting(st.Facts)
 	if st.Facts != nil && st.Facts.Phase == "Escalated" && st.Facts.Reason == "needs_author" && st.Scope != nil && st.Scope.State == envelope.ScopeQuestion {
 		s.Status.Question = st.Scope.Question
+	}
+	if st.Facts != nil && st.Facts.Phase == "AwaitingHuman" && st.Facts.Reason == "plan_review" && st.Scope != nil && st.Scope.State == envelope.ScopeReady {
+		s.Status.ProposedPlan = &ProposedPlan{Task: st.Scope.Task, Touches: slices.Clone(st.Scope.Touches),
+			Steps: slices.Clone(st.Scope.Plan), Acceptance: slices.Clone(st.Scope.Acceptance)}
 	}
 	// Deciding happens in the web UI: judge "could decide" as the web UI would, so a CLI caller
 	// still learns an approval is needed, with a link and no command (D4).

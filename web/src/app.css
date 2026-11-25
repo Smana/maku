@@ -749,6 +749,12 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .need-title { margin: 0; font-weight: 700; }
 .need-what, .need-why { margin: 0; font-size: var(--text-small); }
 .need-why { color: var(--muted-foreground); }
+/* The proposed plan, folded under a plan-review card: what Approve approves, read in the room. */
+.need-plan { font-size: var(--text-small); }
+.need-plan > summary { cursor: pointer; color: var(--link); }
+.need-plan p { margin: 4px 0 0; }
+.need-plan .need-plan-head { color: var(--muted-foreground); }
+.need-plan ol, .need-plan ul { margin: 2px 0 0; padding-left: 20px; overflow-wrap: anywhere; }
 .need-act { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 4px; }
 .need-act button { font-weight: 700; padding: 0 14px; }
 .need-act input[type="text"] { flex: 1 1 200px; min-width: 140px; }

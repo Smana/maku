@@ -74,6 +74,10 @@ export interface CoordinationNode {
 export interface CoordinationEdge { from: string; to: string; kind: "artifact" | "integration"; name?: string; state: string }
 export interface CoordinationFlow { planVersion: number; planHash: string; nodes: CoordinationNode[]; edges: CoordinationEdge[]; restrictedChildren: number }
 
+// ProposedPlan is summary/v1's status.proposedPlan: the bounded task, the files it expects to touch,
+// its steps and its acceptance checks.
+export interface ProposedPlan { task: string; touches?: string[]; steps?: string[]; acceptance?: { check: string; proves: string }[] }
+
 export interface Summary {
   apiVersion: "summary/v1";
   room: string;
@@ -101,6 +105,8 @@ export interface Summary {
     reason?: string; // why the task waits (#59)
     reasonCode?: string; // the factory's raw reason code, the status line's key
     next?: string; // what happens or who acts next
+    // The scoper's ready plan while a plan-first task waits in plan review: agent-written, set as text.
+    proposedPlan?: ProposedPlan;
     // What a run runs on: model is its claim's spec.model, effort what its harness reported. The
     // present run's, and the last run's (the one before the present run, or the last when none is
     // present). Absent until the log says.
