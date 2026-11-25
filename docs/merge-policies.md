@@ -108,6 +108,17 @@ well as the policy's. A platform that keeps its own object of a catalog name lis
 `mergePolicies.catalog.exclude`; an unlabelled `MergePolicy` of a catalog name fails the install,
 naming it, until it is listed there or deleted.
 
+### Required workflow stages (`spec.requires`)
+
+A `MergePolicy` may declare `requires: [plan, tests, judge, review]` (at most 4 items) to require
+stages for tasks touching its paths. Class requirements add stages to whatever workflow a task runs
+and never remove one (`quick` under a class requiring `review` runs the reviewer). Requirements are
+applied at triage for the predicted class and evaluated late against the scoper's `touches` list and
+against the first pull request diff so label-path tasks touching regulated paths run each newly
+required stage once. `tests` is added only when the repository configures both `tests.paths` and
+`merge.contractCheck`; otherwise the factory narrates the unmet requirement and the merge gate hands
+the pull request to a maintainer with `required_stage_missing`.
+
 Every bound and catalog policy also inherits the central guardrails (`MergeGuardrails.WithDefaults`):
 when `mergeGuardrails` is unset on the `Factory`, `protectedFiles` starts with `^\.github/`,
 `^\.policy\.yml$` and `^CODEOWNERS$`, and `maxPatchFiles`, `maxModifiedLines` and `maxPerDay` default

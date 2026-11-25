@@ -68,7 +68,7 @@ func TestFactoryResourceCRDsCarryTheDesignRules(t *testing.T) {
 	}
 	v := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 	spec, status := v.Properties["spec"], v.Properties["status"]
-	for _, f := range []string{"repositoryRef", "classes", "merge", "requires", "live", "shadow", "harness", "harnessAllowed", "escalation", "checks", "testFirst"} {
+	for _, f := range []string{"repositoryRef", "classes", "merge", "live", "shadow", "harness", "harnessAllowed", "escalation", "checks", "testFirst"} {
 		if _, ok := spec.Properties[f]; ok {
 			t.Errorf("mergepolicies spec still declares %s", f)
 		}

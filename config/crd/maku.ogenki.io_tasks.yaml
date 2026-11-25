@@ -2199,6 +2199,36 @@ spec:
                       label or the intake''s), honoured or not.'
                     maxLength: 63
                     type: string
+                  requires:
+                    description: Requires records workflow stages added or unmet from
+                      MergePolicy.spec.requires (WR6).
+                    properties:
+                      by:
+                        description: By names the MergePolicy class whose spec.requires
+                          added stages to this task.
+                        maxLength: 63
+                        type: string
+                      diffChecked:
+                        description: DiffChecked records that class requires were
+                          evaluated against the diff once.
+                        type: boolean
+                      stages:
+                        description: Stages are the stages By added to this task.
+                        items:
+                          maxLength: 16
+                          type: string
+                        maxItems: 4
+                        type: array
+                      unmet:
+                        description: |-
+                          Unmet are stages required by a class that this repository could not run (e.g. tests
+                          without tests.paths or merge.contractCheck); the merge gate hands off as required_stage_missing.
+                        items:
+                          maxLength: 16
+                          type: string
+                        maxItems: 4
+                        type: array
+                    type: object
                   resolved:
                     type: boolean
                   source:

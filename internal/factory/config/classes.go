@@ -79,7 +79,16 @@ type MergeClass struct {
 	// the factory to adopt it (K11): RunLore's ready-to-merge.
 	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
+	// Requires names workflow stages that every task touching this class's paths must run (WR6):
+	// plan, tests, judge, review. Adds stages to any workflow and never removes one.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=16
+	// +kubebuilder:validation:items:Enum=plan;tests;judge;review
+	Requires []string `json:"requires,omitempty"`
 }
+
+// RequiredStages are the workflow stages a MergePolicy class may require (WR6).
+func RequiredStages() []string { return []string{"plan", "tests", "judge", "review"} }
 
 // Class returns a deep copy of m as a resolved Class with Live and Shadow unset.
 func (m MergeClass) Class() Class {
@@ -103,6 +112,7 @@ func (m MergeClass) Class() Class {
 		ReleaseAgeCheck:  cp.ReleaseAgeCheck,
 		CompanionFiles:   cp.CompanionFiles,
 		RequiredLabel:    cp.RequiredLabel,
+		Requires:         cp.Requires,
 	}
 }
 
@@ -135,6 +145,7 @@ func (c Class) MergeClass() MergeClass {
 		ReleaseAgeCheck:  cp.ReleaseAgeCheck,
 		CompanionFiles:   cp.CompanionFiles,
 		RequiredLabel:    cp.RequiredLabel,
+		Requires:         cp.Requires,
 	}
 }
 
@@ -209,6 +220,12 @@ type Class struct {
 	// the factory to adopt it (K11): RunLore's ready-to-merge.
 	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
+	// Requires names workflow stages that every task touching this class's paths must run (WR6):
+	// plan, tests, judge, review. Adds stages to any workflow and never removes one.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=16
+	// +kubebuilder:validation:items:Enum=plan;tests;judge;review
+	Requires []string `json:"requires,omitempty"`
 }
 
 // ApprovalLeaf asks a human about a pull request touching one of its paths, even in a live class.
@@ -392,6 +409,14 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 			if f.Within.Duration < 5*time.Minute || f.Within.Duration > 6*time.Hour {
 				bad("class %s: monitor.flux.within must be 5m..6h", name)
 			}
+		}
+	}
+	if len(cl.Requires) > 4 {
+		bad("class %s: requires has at most 4 stages", name)
+	}
+	for i, st := range cl.Requires {
+		if !slices.Contains(RequiredStages(), st) || slices.Index(cl.Requires, st) != i {
+			bad("class %s: requires %q is not one of %v, or is listed twice", name, st, RequiredStages())
 		}
 	}
 	for _, f := range []struct {

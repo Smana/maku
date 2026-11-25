@@ -20,7 +20,6 @@ var removedPolicySpecFields = map[string]string{
 	"escalation":     "removed, set Factory.spec.workflows.<workflow>.escalation",
 	"testFirst":      "removed, set Repository.spec.workflow.testFirst",
 	"checks":         "removed, set Factory.spec.workflows.<workflow>.checks",
-	"requires":       "removed, incomplete bindings are refused by the bound and parameter rules",
 	"live":           "removed, set mode: live on the Repository's mergePolicies binding",
 	"shadow":         "removed, set mode: shadow on the Repository's mergePolicies binding",
 }

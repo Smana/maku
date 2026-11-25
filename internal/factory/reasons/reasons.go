@@ -147,6 +147,7 @@ var table = map[string]Words{
 	"reentered_unpaused":            {Short: "the pause lifted, decided again", Long: "the class's pause lifted, so the gate decides it again", Next: ""},
 	"release_age_pending":           {Short: "the release is too new", Long: "the release age check has not passed yet", Next: "nothing to do: the task goes on when the release age check passes"},
 	"release_age_red":               {Short: "the release age check failed", Long: "the release age check failed, or was not posted by the adopted login", Next: ""},
+	"required_stage_missing":        {Short: "a required stage could not run", Long: "a stage required by the merge policy could not run on this repository", Next: ""},
 	"rereview_verdict_stale":        {Short: "the factory moved its head after the ap…", Long: "the factory moved its head after the approval, so it is reviewed again", Next: ""},
 	"resume_budget":                 {Short: "no budget to resume the task", Long: "the sandbox was lost and the task's token budget cannot cover another run", Next: ""},
 	"resumes_exhausted":             {Short: "the sandbox was lost again and the auto…", Long: "the sandbox was lost again and the automatic resumes are used up", Next: ""},

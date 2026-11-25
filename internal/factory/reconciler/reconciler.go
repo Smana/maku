@@ -1183,6 +1183,9 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 		w, _ = cfg.Workflow(name)
 	}
 	r.profileSpec(cfg, t, name, w)
+	if err := r.applyClassRequires(ctx, cfg, t, profile, d.PredictedClass); err != nil {
+		return err
+	}
 	if err := r.scopeAtTriage(ctx, t); err != nil {
 		return err // a note that cannot be read is retried, never read as none (SC4)
 	}

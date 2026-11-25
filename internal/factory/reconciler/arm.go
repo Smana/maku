@@ -676,6 +676,9 @@ func agentEvidence(in ArmInputs, cfg *config.Config, cl config.Class) string {
 	if e := runEvidence(in, cfg); e != "" {
 		return e
 	}
+	if e := missingRequiredStage(in, cfg, cl); e != "" {
+		return e
+	}
 	return verdictEvidence(in, cfg, cl)
 }
 

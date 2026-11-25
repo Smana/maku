@@ -106,3 +106,23 @@ func TestTheCardShowsTheTypicalCostOnlyWhenItExists(t *testing.T) {
 		t.Fatalf("with typical:\n%s", with.String())
 	}
 }
+
+func TestTheCardNamesTheRequiringClass(t *testing.T) {
+	card := CardOf(&envelope.TaskFacts{
+		Plan: []string{"implementer", "reviewer"},
+		Profile: &envelope.ProfileFact{
+			Name:            "standard",
+			Source:          "repository",
+			Cohort:          "treatment",
+			CeilingMicroUSD: 5_100_000,
+			RequiredBy:      "infrastructure",
+			RequiredStages:  []string{"plan"},
+		},
+	}, "Update ingress")
+	if !strings.Contains(card.Reason, "; the class infrastructure requires a plan") {
+		t.Fatalf("Reason = %q", card.Reason)
+	}
+	if len(card.Path) == 0 || card.Path[0] != "scoper" {
+		t.Fatalf("Path = %v, want scoper prepended", card.Path)
+	}
+}
