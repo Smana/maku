@@ -33,10 +33,6 @@ type ActResult struct {
 	Result          string `json:"result"`
 	Workflow        string `json:"workflow,omitempty"`
 	CeilingMicroUSD int64  `json:"ceilingMicroUSD,omitempty"`
-	// ConfirmedMicroUSD is the task's confirmed cost when it caps the step-up below the workflow's
-	// own ceiling, WorkflowCeilingMicroUSD; both unset otherwise.
-	ConfirmedMicroUSD       int64 `json:"confirmedMicroUSD,omitempty"`
-	WorkflowCeilingMicroUSD int64 `json:"workflowCeilingMicroUSD,omitempty"`
 }
 
 // Closed result codes answered by POST /v1/tasks/{task}/stops and /retries.
@@ -547,9 +543,6 @@ func (s *Server) actTask(w http.ResponseWriter, r *http.Request, retry bool) {
 				}
 				t.Annotations[factoryv1.AnnotationRetry] = fmt.Sprintf("%d:%s:deeper", t.Status.Retries, resolvedLogin)
 				out = ActResult{Result: ActSteppedUp, Workflow: target, CeilingMicroUSD: ceiling}
-				if wfc := workflowCeilingMicroUSD(cfg, t, target); t.Spec.MaxMicroUSD > 0 && wfc > ceiling {
-					out.ConfirmedMicroUSD, out.WorkflowCeilingMicroUSD = t.Spec.MaxMicroUSD, wfc
-				}
 			} else {
 				if t.Status.Phase != factoryv1.PhaseEscalated {
 					reply(w, http.StatusOK, ActResult{Result: ActNotEscalated})
@@ -617,11 +610,6 @@ func planDeeperRetry(cfg *config.Config, t *factoryv1.Task) (target string, ceil
 		return "", 0, ActDeeperOverCap
 	}
 	return target, ceiling, ""
-}
-
-// workflowCeilingMicroUSD is workflow's own task ceiling on t's repository, before any confirmed cap.
-func workflowCeilingMicroUSD(cfg *config.Config, t *factoryv1.Task, workflow string) int64 {
-	return int64(cfg.Tiers[cfg.EffectiveBudgetTier(cfg.RepositoryFor(t.Spec.Repository), workflow)].TaskUSD * 1e6)
 }
 
 func stoppableTask(t *factoryv1.Task) bool {

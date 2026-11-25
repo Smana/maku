@@ -69,6 +69,8 @@ type ProfileFact struct {
 	// CeilingMicroUSD and StepUpCeilingMicroUSD are the task's budget ceilings in micro-USD.
 	CeilingMicroUSD       int64 `json:"ceilingMicroUSD,omitempty"`
 	StepUpCeilingMicroUSD int64 `json:"stepUpCeilingMicroUSD,omitempty"`
+	// StepUpTo names the workflow a step-up would run, beside StepUpCeilingMicroUSD.
+	StepUpTo string `json:"stepUpTo,omitempty"`
 	// ConfirmedMicroUSD is the cost a person confirmed for the task (its cap), and
 	// WorkflowCeilingMicroUSD the workflow's own ceiling: the card says the cap is why the task's
 	// ceiling sits below the workflow's.
@@ -131,6 +133,8 @@ func (p ProfileFact) validate() error {
 		return errors.New("ceilingMicroUSD is out of range")
 	case p.StepUpCeilingMicroUSD < 0 || p.StepUpCeilingMicroUSD > MaxMicroUSD:
 		return errors.New("stepUpCeilingMicroUSD is out of range")
+	case utf8.RuneCountInString(p.StepUpTo) > 63:
+		return errors.New("stepUpTo is at most 63 characters")
 	case p.ConfirmedMicroUSD < 0 || p.ConfirmedMicroUSD > MaxMicroUSD:
 		return errors.New("confirmedMicroUSD is out of range")
 	case p.WorkflowCeilingMicroUSD < 0 || p.WorkflowCeilingMicroUSD > MaxMicroUSD:

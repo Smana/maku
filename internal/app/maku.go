@@ -1194,25 +1194,18 @@ func (r Maku) retry(ctx context.Context, c maku.Client, args []string) error {
 	}
 	if *deeper {
 		var res struct {
-			Workflow                string `json:"workflow"`
-			CeilingMicroUSD         int64  `json:"ceilingMicroUSD"`
-			ConfirmedMicroUSD       int64  `json:"confirmedMicroUSD"`
-			WorkflowCeilingMicroUSD int64  `json:"workflowCeilingMicroUSD"`
+			Workflow        string `json:"workflow"`
+			CeilingMicroUSD int64  `json:"ceilingMicroUSD"`
 		}
 		if len(f.Result) > 0 {
 			_ = json.Unmarshal(f.Result, &res)
 		}
 		line := pos[0] + ": running again deeper, on the same branch and pull request\n"
 		if res.Workflow != "" {
-			switch {
-			case res.ConfirmedMicroUSD > 0 && res.WorkflowCeilingMicroUSD > 0:
-				line = fmt.Sprintf("%s: running again under %s (capped at your confirmed %s; %s's ceiling is %s), on the same branch and pull request\n",
-					pos[0], res.Workflow, roomview.Dollars(float64(res.ConfirmedMicroUSD)/1e6),
-					res.Workflow, roomview.Dollars(float64(res.WorkflowCeilingMicroUSD)/1e6))
-			case res.CeilingMicroUSD > 0:
+			if res.CeilingMicroUSD > 0 {
 				line = fmt.Sprintf("%s: running again under %s (up to %s), on the same branch and pull request\n",
 					pos[0], res.Workflow, roomview.Dollars(float64(res.CeilingMicroUSD)/1e6))
-			default:
+			} else {
 				line = fmt.Sprintf("%s: running again under %s, on the same branch and pull request\n",
 					pos[0], res.Workflow)
 			}

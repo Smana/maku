@@ -164,7 +164,7 @@ func TestTheCardNamesTheOutcome(t *testing.T) {
 }
 
 // A confirmed cost below the workflow's own ceiling caps the task: the Cost row says so, and a
-// step-up figure the cap would cut says the step-up stays within it (gcp-0, 2026-11-25).
+// step-up above it says it is offered, not run (gcp-0, 2026-11-25; Maku #720).
 func TestTheCardSaysAConfirmedCostCapsIt(t *testing.T) {
 	cases := []struct {
 		name string
@@ -176,7 +176,11 @@ func TestTheCardSaysAConfirmedCostCapsIt(t *testing.T) {
 		{"capped, step-up", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 5.10, ConfirmedUSD: 5.10, WorkflowCeilingUSD: 5.10},
 			"up to $5.10 · a step-up stays within your $5.10"},
 		{"confirmed above the ceiling", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 13.60, ConfirmedUSD: 20, WorkflowCeilingUSD: 5.10},
-			"up to $5.10 · up to $13.60 if it steps up"},
+			"up to $5.10 · up to $13.60 if it steps up, within your $20.00"},
+		{"a step-up above the confirmed cost", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 13.60, StepUpTo: "careful", ConfirmedUSD: 5.10, WorkflowCeilingUSD: 5.10},
+			"up to $5.10 · a step-up to careful ($13.60) is offered, not run"},
+		{"a step-up above the confirmed cost, target unnamed", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 13.60, ConfirmedUSD: 5.10},
+			"up to $5.10 · a step-up ($13.60) is offered, not run"},
 		{"a step-up figure equal to the base", WorkflowCard{Workflow: "standard", CeilingUSD: 5.10, StepUpUSD: 5.10},
 			"up to $5.10"},
 	}

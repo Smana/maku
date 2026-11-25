@@ -909,4 +909,14 @@ func TestFactsCarryTheConfirmedCap(t *testing.T) {
 	if err := f.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	// A workflow with a step-up names it beside its ceiling, so the card can say it is offered.
+	cfg.HarnessProfiles["standard"] = config.HarnessProfile{Template: "pair", StepUp: "careful"}
+	task.Status.Profile.Name, task.Status.Profile.Source = "standard", "repository"
+	f = g.r.factsFor(cfg, task)
+	if p := f.Profile; p == nil || p.StepUpTo != "careful" || p.StepUpCeilingMicroUSD <= 0 {
+		t.Fatalf("step-up facts %+v", f.Profile)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
 }

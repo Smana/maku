@@ -319,6 +319,7 @@ func (r *Reconciler) factsForCtx(ctx context.Context, cfg *config.Config, t *v1a
 			if wf.StepUp != "" && !alreadyStepped(t.Status.Profile) && r.repo(cfg, t).StepUpMode() != "off" {
 				if target, ok := cfg.Workflow(wf.StepUp); ok {
 					f.Profile.StepUpCeilingMicroUSD = dollars(targetCeilingMicroUSD(cfg, t, target))
+					f.Profile.StepUpTo = wf.StepUp
 				}
 			}
 		}

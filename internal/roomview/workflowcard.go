@@ -23,6 +23,7 @@ type WorkflowCard struct {
 	Path              []string // implementer, reviewer, CI, merge gate
 	CeilingUSD        float64
 	StepUpUSD         float64 // 0: no step-up line
+	StepUpTo          string  // the workflow a step-up runs, when known
 	// ConfirmedUSD is the cost a person confirmed (the task's cap), WorkflowCeilingUSD the
 	// workflow's own ceiling: when the cap lowers the ceiling, the Cost row says so.
 	ConfirmedUSD       float64
@@ -163,6 +164,7 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 		Path:        path,
 		CeilingUSD:  float64(ceiling) / 1e6,
 		StepUpUSD:   float64(p.StepUpCeilingMicroUSD) / 1e6,
+		StepUpTo:    p.StepUpTo,
 		SteppedFrom: steppedFrom,
 
 		ConfirmedUSD:       float64(p.ConfirmedMicroUSD) / 1e6,
@@ -246,8 +248,9 @@ func CardOfPlan(c catalogue.Catalogue, workflow, source, by, suggested string) W
 }
 
 // CostLine formats the Cost row's value: ceiling, optional step-up ceiling, optional typical cost.
-// A confirmed cost below the workflow's own ceiling caps the task, a step-up included, and the row
-// says so rather than show a workflow's ceiling it will not reach.
+// A confirmed cost below the workflow's own ceiling caps the task, and the row says so rather than
+// show a workflow's ceiling it will not reach. Under a confirmed cost a step-up runs only when its
+// ceiling fits: one above it is offered to a maintainer, never run.
 func CostLine(c WorkflowCard) string {
 	if c.CeilingUSD <= 0 {
 		return ""
@@ -263,7 +266,15 @@ func CostLine(c WorkflowCard) string {
 	switch {
 	case c.SteppedFrom != "":
 		s += " · stepped up from " + c.SteppedFrom
-	case c.StepUpUSD > 0 && capped && c.StepUpUSD >= c.ConfirmedUSD:
+	case c.StepUpUSD > 0 && capped && c.StepUpUSD > c.ConfirmedUSD:
+		to := "a step-up"
+		if w := clean(c.StepUpTo); w != "" {
+			to += " to " + w
+		}
+		s += " · " + to + " (" + Dollars(c.StepUpUSD) + ") is offered, not run"
+	case c.StepUpUSD > c.CeilingUSD && capped:
+		s += " · up to " + Dollars(c.StepUpUSD) + " if it steps up, within your " + Dollars(c.ConfirmedUSD)
+	case c.StepUpUSD > 0 && capped:
 		s += " · a step-up stays within your " + Dollars(c.ConfirmedUSD)
 	case c.StepUpUSD > 0 && c.StepUpUSD > c.CeilingUSD:
 		s += " · up to " + Dollars(c.StepUpUSD) + " if it steps up"
