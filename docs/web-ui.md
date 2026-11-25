@@ -34,7 +34,7 @@ Above the table, filters refetch the list from the API: **mine** (issues you fil
 
 **New task** (primary) and **Open a live session**, at the right end of the filters row, open forms above the list.
 
-- **New task** plans through `/api/handoffs`: enter what should change, pick a repository (or leave it on Auto), and click **Plan**. It shows the workflow card (`Outcome`, `Workflow`, `Will run`, `Cost`), the planner's question if any, and the drafted issue. Maintainers can pick a described workflow, and any member can toggle **Plan first** before clicking **Start**. Unlinked viewers see a `/link/github` link and no **Start** button.
+- **New task** plans through `/api/handoffs`: enter what should change, pick a repository (or leave it on Auto), and click **Plan**. It shows the workflow card (`Outcome`, `Workflow`, `Will run`, `Cost`), the planner's question if any, and the drafted issue. Maintainers can pick a described workflow, and any member can toggle **Plan first**. Only maintainers get **Start**; unlinked viewers get a `/link/github` link.
 
   The factory App files and labels the issue; the factory starts it, as your task, only from the broker's record of your start ([broker-confirmed handoffs](security.md#authorization)).
 - **Open a live session** creates a room you own and drive, tied to no issue, then opens it.

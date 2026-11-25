@@ -583,6 +583,11 @@ func (c *Client) GitHubLink(ctx context.Context, sub string) (GitHubLink, bool, 
 
 const handoffStartRoute = "/v1/handoff-starts"
 
+// ErrHandoffStartsUnserved is a handoff start read the broker will not answer by retrying: 403 (it
+// does not serve the records to the factory) or a 404 without no_handoff_start (an older broker
+// without the route).
+var ErrHandoffStartsUnserved = errors.New("rooms: the broker serves no handoff starts to the factory")
+
 // HandoffStart is the broker's record of a web New task start (broker-confirmed handoff): the
 // handoff that filed Issue on Repository through the factory App, the ZITADEL sub it was started
 // for, the labels the App applied and when.
@@ -610,6 +615,8 @@ func (c *Client) HandoffStart(ctx context.Context, repository string, issue int)
 	switch {
 	case errors.As(err, &api) && api.Status == http.StatusNotFound && api.Reason == wire.ReasonNoHandoffStart:
 		return HandoffStart{}, false, nil
+	case errors.As(err, &api) && (api.Status == http.StatusForbidden || api.Status == http.StatusNotFound):
+		return HandoffStart{}, false, fmt.Errorf("%w: %w", ErrHandoffStartsUnserved, err)
 	case err != nil:
 		return HandoffStart{}, false, err
 	case out.Sub == "" || out.Issue != issue || !strings.EqualFold(out.Repository, repository):

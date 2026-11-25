@@ -5,6 +5,8 @@ package intake
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,5 +194,50 @@ func TestNoHandoffReaderRefusesTheAppLabel(t *testing.T) {
 	}
 	if n := len(tasks(t, c)); n != 0 || len(f.Comments(512)) != 1 {
 		t.Fatalf("tasks %d comments %q", n, f.Comments(512))
+	}
+}
+
+// A broker that will never serve the records (403, or no route) is not waited on past the grace,
+// and an unanswered check is not waited on past handoffGiveUp: both refuse as handoff_unconfirmed,
+// so the issue is never left waiting for ever.
+func TestAnUnconfirmableStartIsRefusedInTime(t *testing.T) {
+	unserved := func(context.Context, string, int) (HandoffStart, bool, error) {
+		return HandoffStart{}, false, fmt.Errorf("%w: broker: 403 not_permitted", ErrUnconfirmable)
+	}
+	down := func(context.Context, string, int) (HandoffStart, bool, error) {
+		return HandoffStart{}, false, errors.New("broker down")
+	}
+	for name, c := range map[string]struct {
+		starts HandoffStarts
+		sub    string
+		at     time.Duration
+		wait   bool
+	}{
+		"unserved, in the grace":        {starts: unserved, at: 30 * time.Second, wait: true},
+		"unserved, past the grace":      {starts: unserved, at: 3 * time.Minute},
+		"the broker down, for a while":  {starts: down, at: 10 * time.Minute, wait: true},
+		"the broker down, too long":     {starts: down, at: 16 * time.Minute},
+		"the link unanswered, too long": {starts: startRecords(webStart(512, "zdown")), at: 16 * time.Minute},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := forgetest.NewFake()
+			appFiled(f, 512)
+			p, cl := poller(t, f)
+			p.HandoffStarts, p.Logins, p.Now = c.starts, subLogins{}, func() time.Time { return t0.Add(c.at) }
+			err := p.Poll(t.Context())
+			if c.wait {
+				if len(f.Comments(512)) != 0 || len(f.Removed(512)) != 0 {
+					t.Fatalf("refused while waiting: %q", f.Comments(512))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			cs := f.Comments(512)
+			if n := len(tasks(t, cl)); n != 0 || len(cs) != 1 || !strings.Contains(cs[0], "could not be confirmed") || len(f.Removed(512)) != 1 {
+				t.Fatalf("tasks %d comments %q removed %q", n, cs, f.Removed(512))
+			}
+		})
 	}
 }

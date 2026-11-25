@@ -376,14 +376,14 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 	} else {
 		// Broker-confirmed handoff: the factory App's label on an issue the broker filed for a
 		// maintainer is that maintainer's; any other non-maintainer's label is refused.
-		c, wait, err := p.confirmedHandoff(ctx, cfg, n, gen, last)
+		c, wait, reason, err := p.confirmedHandoff(ctx, cfg, n, gen, last)
 		switch {
 		case err != nil:
 			return err
 		case wait:
 			return nil
 		case c == nil:
-			return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
+			return p.refuse(ctx, cfg, n, last, reason)
 		}
 		requester, handoff = c.Login, c
 	}

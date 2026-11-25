@@ -937,8 +937,16 @@ func TestHandoffStart(t *testing.T) {
 		}
 	}
 	r.b.fail["/v1/handoff-starts"], r.b.reason = http.StatusForbidden, wire.ReasonNotPermitted
-	if _, _, err := r.c.HandoffStart(ctx, "Smana/maku", 512); !errors.Is(err, ErrNotPermitted) {
+	if _, _, err := r.c.HandoffStart(ctx, "Smana/maku", 512); !errors.Is(err, ErrNotPermitted) || !errors.Is(err, ErrHandoffStartsUnserved) {
 		t.Fatalf("not permitted: %v", err)
+	}
+	r.b.fail["/v1/handoff-starts"], r.b.reason = http.StatusNotFound, "" // an older broker: no such route
+	if _, _, err := r.c.HandoffStart(ctx, "Smana/maku", 512); !errors.Is(err, ErrHandoffStartsUnserved) {
+		t.Fatalf("no route: %v", err)
+	}
+	r.b.fail["/v1/handoff-starts"], r.b.reason = http.StatusServiceUnavailable, wire.ReasonLogUnavailable
+	if _, _, err := r.c.HandoffStart(ctx, "Smana/maku", 512); err == nil || errors.Is(err, ErrHandoffStartsUnserved) {
+		t.Fatalf("a 503 is transient: %v", err)
 	}
 }
 

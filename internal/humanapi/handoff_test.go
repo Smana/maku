@@ -733,3 +733,50 @@ func mustPlanJSON(t *testing.T, p intake.Plan) []byte {
 	}
 	return b
 }
+
+type strangerCatalogue struct{ carefulCatalogue }
+
+func (strangerCatalogue) Catalogue(_ context.Context, _, _, _ string) (catalogue.Catalogue, error) {
+	return aiNativeRef(false), nil
+}
+
+// A writer the catalogue names as no maintainer is offered no Start, and Start files nothing: the
+// factory would publicly refuse the App's factory/ready on that issue (broker-confirmed handoff).
+func TestANonMaintainerIsOfferedNoStart(t *testing.T) {
+	st := newMemHandoffStore()
+	starter := &fakeIssueStarter{}
+	starts := &fakeHandoffStarts{}
+	w := world(nil)
+	w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev"}} })
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(strangerCatalogue{}), withHandoffs(st),
+		w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+			s.StartDefault = true
+			s.IssueStarter = starter
+			s.HandoffStarts = starts
+		})
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		req.Header = header("dev").Clone()
+		rec := httptest.NewRecorder()
+		e.srv.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+	cRec := post("/api/handoffs", `{"text":"the install link in README.md is dead"}`)
+	var created handoffCreateResponse
+	if cRec.Code != http.StatusOK || json.Unmarshal(cRec.Body.Bytes(), &created) != nil || created.ID == "" {
+		t.Fatalf("create = %d %s", cRec.Code, cRec.Body.String())
+	}
+	var checked handoffCheckResponse
+	chk := post("/api/handoffs/"+created.ID+"/check", `{}`)
+	if chk.Code != http.StatusOK || json.Unmarshal(chk.Body.Bytes(), &checked) != nil {
+		t.Fatalf("check = %d %s", chk.Code, chk.Body.String())
+	}
+	if checked.CanStart || checked.CanStartWhy != startNotMaintainer || !checked.Linked {
+		t.Fatalf("checked canStart=%v why=%q linked=%v", checked.CanStart, checked.CanStartWhy, checked.Linked)
+	}
+	rec := post("/api/handoffs/"+created.ID+"/start", `{}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"not_maintainer"`) ||
+		!strings.Contains(rec.Body.String(), "ask a maintainer") || len(starter.reqs) != 0 || len(starts.recs) != 0 {
+		t.Fatalf("start = %d %s, filed %d, recorded %d", rec.Code, rec.Body.String(), len(starter.reqs), len(starts.recs))
+	}
+}

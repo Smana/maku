@@ -1418,7 +1418,10 @@ func stagesRefresher(cfg func() *config.Config, reader client.Reader, ns string,
 func handoffStarts(broker *rooms.Client) intake.HandoffStarts {
 	return func(ctx context.Context, repository string, issue int) (intake.HandoffStart, bool, error) {
 		h, found, err := broker.HandoffStart(ctx, repository, issue)
-		if err != nil || !found {
+		switch {
+		case errors.Is(err, rooms.ErrHandoffStartsUnserved):
+			return intake.HandoffStart{}, false, fmt.Errorf("%w: %w", intake.ErrUnconfirmable, err)
+		case err != nil || !found:
 			return intake.HandoffStart{}, found, err
 		}
 		return intake.HandoffStart{Handoff: h.Handoff, Repository: h.Repository, Issue: h.Issue, Sub: h.Sub,

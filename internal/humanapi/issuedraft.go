@@ -23,6 +23,7 @@ const (
 	startNotLinked     = "not_linked"             // the caller has no GitHub link to check
 	startNoWrite       = "no_write"               // the caller cannot write to the repository, or the App cannot see it
 	startUnverified    = "unverified"             // ZITADEL, GitHub or the factory's catalogue could not answer
+	startNotMaintainer = "not_maintainer"         // web start: the catalogue says the caller maintains no repository it starts on
 )
 
 // startOffered reports whether the broker offers to start factory work on repo for p (UX3): false

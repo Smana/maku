@@ -37,6 +37,18 @@ type Logins interface {
 	Login(ctx context.Context, sub, repository string) (string, error)
 }
 
+// ErrUnconfirmable is a HandoffStarts answer that will not change by waiting: the broker does not
+// serve its start records to the factory (403 not_permitted, or a broker without the route).
+var ErrUnconfirmable = errors.New("the broker serves no handoff start records to the factory")
+
+// Refusal reasons of the broker-confirmed path.
+const (
+	reasonUnauthorisedLabeller = "unauthorised_labeller"
+	// reasonHandoffUnconfirmed: the App's label could not be checked against the broker's record,
+	// for its configuration or past handoffGiveUp of unanswered checks.
+	reasonHandoffUnconfirmed = "handoff_unconfirmed"
+)
+
 const (
 	// handoffGrace is how long the App's label waits for the broker's record: the broker records
 	// the start once GitHub has answered the filing, so a poll can read the label first.
@@ -44,6 +56,9 @@ const (
 	// handoffWindow bounds the label's distance from the record's time: the record follows the
 	// filing that applied the label, within one request.
 	handoffWindow = 10 * time.Minute
+	// handoffGiveUp bounds the wait on unanswered checks (the broker, the link, the permission):
+	// past it the label is refused, so an issue is never left waiting for ever.
+	handoffGiveUp = 15 * time.Minute
 )
 
 // handoffConfirmation is a broker-confirmed web start: the human it was started for and the
@@ -56,45 +71,66 @@ var workflowName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // confirmedHandoff answers a trigger label that is not a maintainer's (broker-confirmed handoff):
 // it starts a task only when the factory App applied it as the issue's first factory/ready label,
-// the broker recorded that
-// it filed this very issue from a web start within handoffWindow of that label, and the record's
-// sub resolves, through the factory's own link resolver, to a login that maintains and writes on
-// the repository. Nothing on the issue confirms anything: its body, its labels or an issue editor's
-// label never do. wait is true while the record may still be in flight, or a check went
-// unanswered (err).
-func (p *IssuePoller) confirmedHandoff(ctx context.Context, cfg *config.Config, n, gen int, last forge.LabelEvent) (c *handoffConfirmation, wait bool, err error) {
+// the broker recorded that it filed this very issue from a web start within handoffWindow of that
+// label, and the record's sub resolves, through the factory's own link resolver, to a login that
+// maintains and writes on the repository. Nothing on the issue confirms anything: its body, its
+// labels or an issue editor's label never do.
+//
+// It answers a confirmation, a refusal reason, or a wait: wait while the record may still be in
+// flight (handoffGrace), and while a check goes unanswered (err), up to handoffGiveUp.
+func (p *IssuePoller) confirmedHandoff(ctx context.Context, cfg *config.Config, n, gen int, last forge.LabelEvent) (c *handoffConfirmation, wait bool, reason string, err error) {
 	if p.HandoffStarts == nil || p.Logins == nil || gen != 1 || cfg.FactoryLogin == "" || !forge.SameLogin(last.Actor, cfg.FactoryLogin) {
-		return nil, false, nil // any other labeller is refused at once, as before
+		return nil, false, reasonUnauthorisedLabeller, nil // any other labeller is refused at once, as before
+	}
+	age := p.now().Sub(last.At)
+	refuse := func() (*handoffConfirmation, bool, string, error) {
+		return nil, false, reasonUnauthorisedLabeller, nil
+	}
+	unanswered := func(e error) (*handoffConfirmation, bool, string, error) {
+		if age < handoffGiveUp {
+			return nil, true, "", e // no answer is no refusal, for a while
+		}
+		p.log().Warn("a handoff start could not be confirmed: refused", "issue", n, "err", e)
+		return nil, false, reasonHandoffUnconfirmed, nil
 	}
 	repo := p.repo(cfg).Name
 	h, found, err := p.HandoffStarts(ctx, repo, n)
 	switch {
+	case errors.Is(err, ErrUnconfirmable):
+		if age < handoffGrace {
+			return nil, true, "", nil
+		}
+		p.log().Warn("the broker serves no handoff start records: refused", "issue", n, "err", err)
+		return nil, false, reasonHandoffUnconfirmed, nil
 	case err != nil:
-		return nil, true, fmt.Errorf("handoff start of %d: %w", n, err) // no answer is no refusal
+		return unanswered(fmt.Errorf("handoff start of %d: %w", n, err))
 	case !found:
-		return nil, p.now().Sub(last.At) < handoffGrace, nil
+		if age < handoffGrace {
+			return nil, true, "", nil
+		}
+		return refuse()
 	case h.Issue != n || !strings.EqualFold(h.Repository, repo) || h.Sub == "":
-		return nil, false, nil
+		return refuse()
 	}
 	if d := last.At.Sub(h.StartedAt); d > handoffWindow || d < -handoffWindow {
 		p.log().Info("a handoff start far from the label: not confirmed", "issue", n, "handoff", h.Handoff, "label_at", last.At, "started_at", h.StartedAt)
-		return nil, false, nil
+		return refuse()
 	}
 	login, err := p.Logins.Login(ctx, h.Sub, repo)
 	switch {
 	case errors.Is(err, ghidentity.ErrInactive):
-		return nil, false, nil
+		return refuse()
 	case err != nil:
-		return nil, true, fmt.Errorf("the handoff starter's login on %d: %w", n, err)
+		return unanswered(fmt.Errorf("the handoff starter's login on %d: %w", n, err))
 	case login == "" || !p.repo(cfg).IsMaintainer(login):
 		p.log().Info("a handoff start for a non-maintainer: not confirmed", "issue", n, "handoff", h.Handoff, "login", login)
-		return nil, false, nil
+		return refuse()
 	}
 	switch w, err := p.writer(ctx, login); {
 	case err != nil:
-		return nil, true, err
+		return unanswered(err)
 	case !w:
-		return nil, false, nil
+		return refuse()
 	}
 	c = &handoffConfirmation{Handoff: h.Handoff, Login: login}
 	for _, l := range h.Labels {
@@ -104,5 +140,5 @@ func (p *IssuePoller) confirmedHandoff(ctx context.Context, cfg *config.Config, 
 		}
 	}
 	p.log().Info("broker-confirmed handoff start", "issue", n, "handoff", h.Handoff, "requester", login, "labeller", last.Actor)
-	return c, false, nil
+	return c, false, "", nil
 }
