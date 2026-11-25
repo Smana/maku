@@ -1311,7 +1311,7 @@ func ProfileEscalated(from, to, trigger string, ceilingMicroUSD int64, run int, 
 
 // StepUpOffered tells a maintainer why Maku did not step a failed task up automatically and how to
 // run it again deeper by hand (WR4).
-func StepUpOffered(_ *v1alpha1.Task, from, to, trigger string, ceilingMicroUSD int64, why string) Event {
+func StepUpOffered(t *v1alpha1.Task, from, to, trigger string, ceilingMicroUSD int64, why string) Event {
 	var because string
 	switch why {
 	case "pinned":
@@ -1337,7 +1337,14 @@ func StepUpOffered(_ *v1alpha1.Task, from, to, trigger string, ceilingMicroUSD i
 	if ceilingMicroUSD > 0 {
 		ceil = fmt.Sprintf(" (up to %s)", formatMicroUSD(ceilingMicroUSD))
 	}
-	body := fmt.Sprintf("This task stopped under `%s`: %s. Maku did not step it up because %s. A maintainer can run it again deeper under `%s`%s: comment `/factory retry deeper`. Without a retry, it stops when its escalation expires.",
-		from, stepUpTriggerPhrase(trigger), because, to, ceil)
+	next := fmt.Sprintf("A maintainer can run it again deeper under `%s`%s: comment `/factory retry deeper`.", to, ceil)
+	if why == "capped" && t != nil && t.Spec.MaxMicroUSD > 0 {
+		// A retry deeper is refused over the confirmed cost: the higher cost is confirmed by starting
+		// the task again under the deeper workflow, which shows and confirms its ceiling.
+		because = fmt.Sprintf("`%s`%s costs more than the %s you confirmed", to, ceil, formatMicroUSD(t.Spec.MaxMicroUSD))
+		next = fmt.Sprintf("To run it under `%s`, confirm the higher cost: start it again with that workflow (New task, or `maku start --workflow %s`).", to, to)
+	}
+	body := fmt.Sprintf("This task stopped under `%s`: %s. Maku did not step it up because %s. %s Without a retry, it stops when its escalation expires.",
+		from, stepUpTriggerPhrase(trigger), because, next)
 	return Event{Key: "step-up-offered", Class: ClassNeedsYou, Body: body}
 }

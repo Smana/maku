@@ -46,7 +46,7 @@ const (
 	actRetriedLine            = "Retried."
 	actSteppedUpLine          = "Stepped up and queued."
 	actNoDeeperLine           = "This task has no deeper workflow to step up to."
-	actDeeperOverCapLine      = "Stepping up exceeds this task's budget cap."
+	actDeeperOverCapLine      = "Stepping up costs more than the cost confirmed for this task. To run the deeper workflow, start the task again with it (New task, or `maku start --workflow <name>`), which confirms its higher cost."
 	actStopNotMaintainerLine  = "Only a maintainer of this repository can stop a task."
 	actRetryNotMaintainerLine = "Only a maintainer of this repository can retry a task."
 	actNotRunningLine         = "This task is not running."

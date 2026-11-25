@@ -30,7 +30,7 @@ const rejections: Record<string, string> = {
   not_running: "The task has already ended.",
   not_escalated: "The task is not waiting for a retry.",
   no_deeper_workflow: "This task has no deeper workflow to step up to.",
-  deeper_over_cap: "Stepping up exceeds this task's budget cap.",
+  deeper_over_cap: "Stepping up costs more than the cost confirmed for this task. To run the deeper workflow, start the task again with it (New task, or maku start --workflow <name>), which confirms its higher cost.",
   unknown_task: "The factory has no task for this room.",
   act_not_enabled: "This action is not enabled on this broker.",
 };
