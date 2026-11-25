@@ -1326,6 +1326,10 @@ func StepUpOffered(_ *v1alpha1.Task, from, to, trigger string, ceilingMicroUSD i
 		because = "this repository asks first"
 	case "not_shown":
 		because = "the plan you confirmed did not show the stepped-up cost"
+	case "role":
+		because = "the run that stopped is not one this trigger steps up on its own"
+	case "measured":
+		because = "it runs in an arm of the workflow evaluation, which keeps the workflow triage drew"
 	default:
 		because = "automatic step-up is held back"
 	}

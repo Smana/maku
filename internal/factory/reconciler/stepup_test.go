@@ -706,3 +706,47 @@ func TestStepUpSkipsActiveProfile(t *testing.T) {
 		})
 	}
 }
+
+// ntgwm27i (ai-native-ref#508): a rescued task whose newest run is a reviewer's hits the task cap
+// before its retry starts. budget-task stops the next run, whatever role the last one had: the task
+// steps up as any unpinned task does, never escalating without a step or an offer.
+func TestABudgetTaskStepsUpWhateverRoleRanLast(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name, tk.Status.Profile.Cohort, tk.Status.Profile.Harness = "standard", "rescue", "openhands"
+		tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "reviewer", Trigger: "review", StartSeq: 4})
+	})
+	got := g.fail(t, tk, "budget-task")
+	s := got.Status.Profile.StepUp
+	if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Profile.Name != "careful" || s == nil || s.Trigger != "budget-task" || s.Mode != "auto" {
+		t.Fatalf("%s %q %+v %+v", got.Status.Phase, got.Status.Reason, got.Status.Profile, s)
+	}
+}
+
+// A step that exists but is not taken is offered, with the reason it was not: a run of a role the
+// trigger does not step, or an arm of the workflow evaluation. Never a bare escalation.
+func TestAStepNotTakenIsOfferedWithItsReason(t *testing.T) {
+	for name, edit := range map[string]func(*v1alpha1.Task){
+		"role": func(tk *v1alpha1.Task) {
+			tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "reviewer", Trigger: "review", StartSeq: 4})
+		},
+		"measured": func(tk *v1alpha1.Task) { tk.Status.Profile.Cohort = "control" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+				tk.Status.Profile.Name = "standard"
+				edit(tk)
+			})
+			got := g.fail(t, tk, "stalled")
+			wantEscalated(t, got, "stalled")
+			s := got.Status.Profile.StepUp
+			if s == nil || s.Mode != "offered" || s.To != "careful" || !outboxHas(got, "step-up-offered") {
+				t.Fatalf("StepUp %+v outbox %+v", s, got.Status.Outbox)
+			}
+			for _, o := range got.Status.Outbox {
+				if strings.HasPrefix(o.Key, "step-up-offered") && !strings.Contains(o.Body, "/factory retry deeper") {
+					t.Fatalf("offer %q", o.Body)
+				}
+			}
+		})
+	}
+}
