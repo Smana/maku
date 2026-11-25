@@ -32,8 +32,8 @@ Everything that happens in a room is an event in its log, assigned a gapless seq
 | **Tier** | `light`, `standard` or `frontier`: a run's logical model alias (`tier-*`), deadline and budget, fixed per run |
 | **Workflow** | Which roles work on a task (`template` names the ordered list): `quick` (implementer), `standard` (implementer + reviewer, default), `careful` (scoped first, judged before review), or `none` (adopted PR); see [shipped workflows](factory.md#the-shipped-workflows) |
 | **Budget** | Token or USD cap enforced outside the sandbox per run, task, day and person ([Budgets](factory.md#budgets)) |
-| **Class** | Change category matched by merge policy (`docs-links`, `revert`, an oracle class, or `review` when none matches) |
-| **Merge gate** | Decides whether an agent PR merges itself (`maku/merge-gate`): each bound class is `live` (merges when checks hold), **shadow** (decided identically without merging), or `"off"` |
+| **Policy** | One bounded merge rule (`docs-links`, `dead-links`, or one you define); no matching policy hands the pull request to a maintainer |
+| **Merge gate** | Decides whether an agent PR merges itself (`maku/merge-gate`): each bound policy is `live` (merges when checks hold), **shadow** (decided identically without merging), or `disabled` |
 | **Oracle class** | Class backed by a deterministic detector (`dead-links`) whose holdout check proves the PR fixed that exact finding |
 | **Split** | Breaking a broad task into bounded child tasks proposed by the scoper and approved with `/factory split` |
 | **Kill switch** | `agent-factory-stop` ConfigMap or `factory/stop` on the control issue: pauses intake and revokes active runs |

@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-// MergeClass is a MergePolicy's class conditions (MR8, MR9): what a policy declares, without
+// MergeClass is a policy's conditions: what it declares, without
 // mode (which belongs to each binding) or workflow fields (which moved to Factory.spec.workflows
 // and Repository.spec.workflow).
 // +kubebuilder:object:generate=true
@@ -22,8 +22,9 @@ type MergeClass struct {
 	// AllowedFiles: every changed path matches one of these regular expressions.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
+	// +kubebuilder:validation:items:Pattern=`^\^.*\$$`
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
-	// NarrowedFiles is a binding's allowedFiles over a policy that has its own (MR3): every changed
+	// NarrowedFiles is a binding's allowedFiles over a policy that has its own: every changed
 	// path matches one of these too. Set only by resolving a binding; refused on a MergePolicy.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
@@ -32,42 +33,42 @@ type MergeClass struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	ProtectedFiles []string `json:"protectedFiles,omitempty"`
-	// RequiresApproval asks a human about a pull request touching one of its paths, even in a live
-	// class (merge policies MP12).
+	// RequiresApproval asks a human about a pull request touching one of its paths, even in a live class.
 	// +kubebuilder:validation:MaxItems=16
 	RequiresApproval []ApprovalLeaf `json:"requiresApproval,omitempty"`
 	// ModifyOnly: no file is added, deleted, renamed or copied.
 	ModifyOnly bool `json:"modifyOnly,omitempty"`
 	// MaxPatchFiles caps the changed files and MaxModifiedLines their additions plus deletions,
-	// as GitHub counts them (policy-bot's modified_lines); 0 is no cap.
-	MaxPatchFiles    int `json:"maxPatchFiles,omitempty"`
+	// as GitHub counts them; 0 is no cap.
+	// +kubebuilder:validation:Minimum=0
+	MaxPatchFiles int `json:"maxPatchFiles,omitempty"`
+	// +kubebuilder:validation:Minimum=0
 	MaxModifiedLines int `json:"maxModifiedLines,omitempty"`
-	// DiffShape is a shape every changed line must have: links-only is R52's LinksOnly.
+	// DiffShape is the mechanical shape every changed line must have.
+	// +kubebuilder:validation:Enum=links-only;semver-patch;semver-minor;added-entry
 	// +kubebuilder:validation:MaxLength=512
 	DiffShape string `json:"diffShape,omitempty"`
-	// HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is
-	// a gate path, so the pull request cannot change them (loops L7).
+	// HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is a gate path, so the pull request cannot change them.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=1024
 	HoldoutChecks []string `json:"holdoutChecks,omitempty"`
 	// MaxPerDay caps this class's merges a day, under merge.maxPerDay; 0 is no cap of its own.
+	// +kubebuilder:validation:Minimum=0
 	MaxPerDay int `json:"maxPerDay,omitempty"`
-	// Evidence is how many clean shadow decisions a promotion needs (MR4): low is 5, for a class
-	// whose diff a shape or an oracle checks mechanically; standard, the default, is 20.
+	// Evidence is the clean shadow decisions a promotion needs: low is 5 when a shape or oracle
+	// checks the diff mechanically; standard, the default, is 20.
+	// +kubebuilder:default=standard
 	// +kubebuilder:validation:Enum=low;standard
 	Evidence string `json:"evidence,omitempty"`
-	// Oracle makes the class oracle-backed (MC4–MC6): its tasks are a detector's findings, and its
-	// gate holds only when the head no longer holds them and changes nothing else.
+	// Oracle makes the class oracle-backed: its tasks are a detector's findings, and its gate holds only when the head no longer holds them and changes nothing else.
 	Oracle *Oracle `json:"oracle,omitempty"`
-	// Monitor watches each merge of the class after it lands (merge gate classes MC7): main's CI
+	// Monitor watches each merge of the class after it lands: main's CI
 	// for every merge, the detector's next runs for an oracle class, Flux on the factory's cluster,
 	// and follow-up fixes for FollowUpWindow. Absent: no monitor, as before.
 	Monitor *Monitor `json:"monitor,omitempty"`
-	// Author is how the class's pull requests are authored (MC1's author row): absent, the agents
-	// App through a task's runs; Adopt, another author's pull requests the factory adopts (MC10).
+	// Author is how the class's pull requests are authored: absent, the agents App through a task's runs; Adopt, another author's pull requests the factory adopts.
 	Author *Author `json:"author,omitempty"`
-	// ReleaseAgeCheck names the commit status that holds the release age (MC11), posted by an
-	// adopted login: Renovate's renovate/stability-days.
+	// ReleaseAgeCheck names the commit status that holds the release age, posted by an adopted login: Renovate's renovate/stability-days.
 	// +kubebuilder:validation:MaxLength=1024
 	ReleaseAgeCheck string `json:"releaseAgeCheck,omitempty"`
 	// CompanionFiles are the paths an added-entry pull request may append to beside its one added
@@ -75,8 +76,7 @@ type MergeClass struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	CompanionFiles []string `json:"companionFiles,omitempty"`
-	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for
-	// the factory to adopt it (K11): RunLore's ready-to-merge.
+	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for the factory to adopt it: RunLore's ready-to-merge.
 	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
 	// Requires names workflow stages that every task touching this class's paths must run (WR6):
@@ -149,9 +149,7 @@ func (c Class) MergeClass() MergeClass {
 	}
 }
 
-// Class is one merge class (§5.2): live classes auto-merge once policy-bot agrees; a shadow
-// class is decided exactly like a live one and never armed until the wave (R32, owner,
-// 2026-09-27); an unmarked class is disabled. Never both.
+// Class is one merge policy: live merges when its conditions hold, shadow records the same decision without arming, and an unmarked class is disabled. Never both.
 // +kubebuilder:object:generate=true
 type Class struct {
 	// Description says what the class is for, in plain words, for the settings pages and
@@ -163,8 +161,9 @@ type Class struct {
 	// AllowedFiles: every changed path matches one of these regular expressions.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
+	// +kubebuilder:validation:items:Pattern=`^\^.*\$$`
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
-	// NarrowedFiles is a binding's allowedFiles over a policy that has its own (MR3): every changed
+	// NarrowedFiles is a binding's allowedFiles over a policy that has its own: every changed
 	// path matches one of these too. Set only by resolving a binding; refused on a MergePolicy.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
@@ -173,42 +172,42 @@ type Class struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	ProtectedFiles []string `json:"protectedFiles,omitempty"`
-	// RequiresApproval asks a human about a pull request touching one of its paths, even in a live
-	// class (merge policies MP12).
+	// RequiresApproval asks a human about a pull request touching one of its paths, even in a live class.
 	// +kubebuilder:validation:MaxItems=16
 	RequiresApproval []ApprovalLeaf `json:"requiresApproval,omitempty"`
 	// ModifyOnly: no file is added, deleted, renamed or copied.
 	ModifyOnly bool `json:"modifyOnly,omitempty"`
 	// MaxPatchFiles caps the changed files and MaxModifiedLines their additions plus deletions,
-	// as GitHub counts them (policy-bot's modified_lines); 0 is no cap.
-	MaxPatchFiles    int `json:"maxPatchFiles,omitempty"`
+	// as GitHub counts them; 0 is no cap.
+	// +kubebuilder:validation:Minimum=0
+	MaxPatchFiles int `json:"maxPatchFiles,omitempty"`
+	// +kubebuilder:validation:Minimum=0
 	MaxModifiedLines int `json:"maxModifiedLines,omitempty"`
-	// DiffShape is a shape every changed line must have: links-only is R52's LinksOnly.
+	// DiffShape is the mechanical shape every changed line must have.
+	// +kubebuilder:validation:Enum=links-only;semver-patch;semver-minor;added-entry
 	// +kubebuilder:validation:MaxLength=512
 	DiffShape string `json:"diffShape,omitempty"`
-	// HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is
-	// a gate path, so the pull request cannot change them (loops L7).
+	// HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is a gate path, so the pull request cannot change them.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=1024
 	HoldoutChecks []string `json:"holdoutChecks,omitempty"`
 	// MaxPerDay caps this class's merges a day, under merge.maxPerDay; 0 is no cap of its own.
+	// +kubebuilder:validation:Minimum=0
 	MaxPerDay int `json:"maxPerDay,omitempty"`
-	// Evidence is how many clean shadow decisions a promotion needs (MR4): low is 5, for a class
-	// whose diff a shape or an oracle checks mechanically; standard, the default, is 20.
+	// Evidence is the clean shadow decisions a promotion needs: low is 5 when a shape or oracle
+	// checks the diff mechanically; standard, the default, is 20.
+	// +kubebuilder:default=standard
 	// +kubebuilder:validation:Enum=low;standard
 	Evidence string `json:"evidence,omitempty"`
-	// Oracle makes the class oracle-backed (MC4–MC6): its tasks are a detector's findings, and its
-	// gate holds only when the head no longer holds them and changes nothing else.
+	// Oracle makes the class oracle-backed: its tasks are a detector's findings, and its gate holds only when the head no longer holds them and changes nothing else.
 	Oracle *Oracle `json:"oracle,omitempty"`
-	// Monitor watches each merge of the class after it lands (merge gate classes MC7): main's CI
+	// Monitor watches each merge of the class after it lands: main's CI
 	// for every merge, the detector's next runs for an oracle class, Flux on the factory's cluster,
 	// and follow-up fixes for FollowUpWindow. Absent: no monitor, as before.
 	Monitor *Monitor `json:"monitor,omitempty"`
-	// Author is how the class's pull requests are authored (MC1's author row): absent, the agents
-	// App through a task's runs; Adopt, another author's pull requests the factory adopts (MC10).
+	// Author is how the class's pull requests are authored: absent, the agents App through a task's runs; Adopt, another author's pull requests the factory adopts.
 	Author *Author `json:"author,omitempty"`
-	// ReleaseAgeCheck names the commit status that holds the release age (MC11), posted by an
-	// adopted login: Renovate's renovate/stability-days.
+	// ReleaseAgeCheck names the commit status that holds the release age, posted by an adopted login: Renovate's renovate/stability-days.
 	// +kubebuilder:validation:MaxLength=1024
 	ReleaseAgeCheck string `json:"releaseAgeCheck,omitempty"`
 	// CompanionFiles are the paths an added-entry pull request may append to beside its one added
@@ -216,8 +215,7 @@ type Class struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	CompanionFiles []string `json:"companionFiles,omitempty"`
-	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for
-	// the factory to adopt it (K11): RunLore's ready-to-merge.
+	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for the factory to adopt it: RunLore's ready-to-merge.
 	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
 	// Requires names workflow stages that every task touching this class's paths must run (WR6):

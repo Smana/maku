@@ -22,11 +22,14 @@ spec:
       name: Factory
       type: string
     - jsonPath: .status.classCount
-      name: Classes
+      name: Policies
       type: integer
     - jsonPath: .status.liveCount
       name: Live
       type: integer
+    - jsonPath: .status.conditions[?(@.type=="BindingsValid")].status
+      name: BindingsValid
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Accepted")].status
       name: Accepted
       type: string
@@ -222,10 +225,9 @@ spec:
                   MergePolicies binds the class-shape MergePolicies this repository uses (B3), one per class:
                   the policy's name, the mode, and this repository's parameters.
                 items:
-                  description: |-
-                    Binding is one repository's use of a MergePolicy (B3, B4): the policy's name, which is the class
-                    name (B1), the mode, and the parameters this repository supplies. A binding tightens or fills;
-                    it never widens what the policy says.
+                  description: 'Binding is one repository''s use of a MergePolicy:
+                    the policy''s name, mode, and parameters. A binding tightens or
+                    fills; it never widens what the policy says.'
                   properties:
                     allowedFiles:
                       description: |-
@@ -233,6 +235,7 @@ spec:
                         never both. AllowedFiles fills the policy's when it has none, and narrows it when it has (MR3).
                       items:
                         maxLength: 512
+                        pattern: ^\^.*\$$
                         type: string
                       maxItems: 64
                       type: array
@@ -434,8 +437,8 @@ spec:
                 description: Classes is one entry per binding (B10).
                 items:
                   description: |-
-                    BindingStatus is one class of a Repository (B10): the binding's mode, the policy generation it
-                    serves, and whether its current generation resolves.
+                    BindingStatus is one binding: its written mode, the mode actually served, the policy generation,
+                    and whether its current generation resolves.
                   properties:
                     accepted:
                       description: Accepted is always serialized, false included.
@@ -465,6 +468,14 @@ spec:
                       type: integer
                     reason:
                       maxLength: 64
+                      type: string
+                    servedMode:
+                      description: 'ServedMode is the resolved class''s actual mode:
+                        live, shadow, or disabled when nothing serves.'
+                      enum:
+                      - live
+                      - shadow
+                      - disabled
                       type: string
                   required:
                   - name
@@ -529,7 +540,7 @@ spec:
                   - status
                   - type
                   type: object
-                maxItems: 8
+                maxItems: 10
                 type: array
                 x-kubernetes-list-map-keys:
                 - type

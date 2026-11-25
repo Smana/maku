@@ -1,0 +1,36 @@
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: docs-scoped
+spec:
+  description: Prose changes in the documentation site, within a small daily bound.
+  allowedFiles: ['^docs/.+\.md$']
+  modifyOnly: true
+  maxPatchFiles: 5
+  maxModifiedLines: 100
+  maxPerDay: 2
+  evidence: standard
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata:
+  name: docs-site
+spec:
+  factoryRef: aws-0
+  repository: Example/docs-site
+  maintainers: [Smana]
+  triggerLabel: factory/ready
+  merge:
+    requiredChecks: [validate]
+    verifyChecks: [validate]
+    leakScanCheck: validate
+    mergerLogin: ogenki-agent-merger[bot]
+    verifyFor: 30m
+    revertWindow: 168h
+    approveToMerge: true
+    breaker: {window: 10, maxReverts: 1}
+  mergePolicies:
+    - name: docs-scoped
+      mode: shadow
+      allowedFiles: ['^docs/guides/.+\.md$']
+      holdoutChecks: [validate]

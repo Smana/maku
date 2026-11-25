@@ -174,3 +174,18 @@ tests:
     alert_rule_test:
       - {eval_time: 3m, alertname: AgentMeterInputExcludesCache, exp_alerts: [{exp_labels: {severity: warning, model: m}}]}
       - {eval_time: 70m, alertname: AgentMeterInputExcludesCache, exp_alerts: []}
+
+  # AgentFactoryBindingRefused: BindingsValid false for 15 minutes; not 14.
+  - interval: 1m
+    input_series:
+      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", namespace="agent-system", name="cloud-native-ref", type="BindingsValid", status="false"}', values: '1x20'}
+    alert_rule_test:
+      - {eval_time: 14m, alertname: AgentFactoryBindingRefused, exp_alerts: []}
+      - {eval_time: 16m, alertname: AgentFactoryBindingRefused, exp_alerts: [{exp_labels: {severity: warning, namespace: agent-system, name: cloud-native-ref}}]}
+  # AgentFactoryPolicyPausedLong: an operator pause for 24 hours; not 23.
+  - interval: 1m
+    input_series:
+      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", namespace="agent-system", name="cloud-native-ref", type="Paused", status="true"}', values: '1x1441'}
+    alert_rule_test:
+      - {eval_time: 23h, alertname: AgentFactoryPolicyPausedLong, exp_alerts: []}
+      - {eval_time: 24h1m, alertname: AgentFactoryPolicyPausedLong, exp_alerts: [{exp_labels: {severity: warning, namespace: agent-system, name: cloud-native-ref}}]}

@@ -208,6 +208,7 @@ type Set struct {
 	interventions        metric.Int64Counter
 	classMismatch        metric.Int64Counter
 	mergeDecisions       metric.Int64Counter
+	policyConsidered     metric.Int64Counter
 	tierFit              metric.Int64Counter
 	intakeErrors         metric.Int64Counter
 	configWireErrors     metric.Int64Counter
@@ -478,6 +479,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.mergeDecisions, err = meter.Int64Counter("agent_factory_merge_decisions_total",
 		metric.WithDescription("The merge gate's decisions by repository, class, verdict and reason (v2 D2, AM9); a wait is none."))
+	check(err)
+	s.policyConsidered, err = meter.Int64Counter("agent_factory_policy_considered_total",
+		metric.WithDescription("Each candidate policy that refused, by repository, policy and reason."))
 	check(err)
 	s.tierFit, err = meter.Int64Counter("agent_factory_tier_fit_total",
 		metric.WithDescription("After-the-fact tier fit per classifier (§7, SC-10)."))
@@ -1069,6 +1073,12 @@ func (s *Set) ClassMismatch(ctx context.Context, predicted, matched string) {
 func (s *Set) MergeDecision(ctx context.Context, class, verdict, reason string) {
 	s.mergeDecisions.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
 		attribute.String("verdict", verdict), attribute.String("reason", reason), s.repoOf(ctx)))
+}
+
+// PolicyConsidered counts a candidate policy that refused, with its reason, by repository and policy.
+func (s *Set) PolicyConsidered(ctx context.Context, repository, policy, reason string) {
+	s.policyConsidered.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", repository),
+		attribute.String("policy", policy), attribute.String("reason", reason)))
 }
 
 // TierFit counts a finished task's tier fit per classifier, OD-14's control group apart.

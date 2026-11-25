@@ -15,7 +15,7 @@ merges**: the repository's file is read, compared, re-decided and simulated, nev
 |---|---|
 | Onboard a repository with zero policy YAML | [Start here](#start-here) |
 | Understand selection, resolution and concepts | [Concepts](#concepts) |
-| Configure `policyManagement.stage` | [Rollout stages](#rollout-stages) |
+| Configure `policyManagement.stage` | [Repository-file authority](upgrading.md#repository-file-authority) |
 | Look up field tiers, check names or fields | [Reference](#reference) |
 | Copy one of the three worked examples | [Worked examples](#worked-examples) |
 | Browse repository-file binding recipes | [Recipes](#recipes) |
@@ -39,9 +39,11 @@ manifest and no `.policy.yml` rule is needed (`maku/merge-gate` is the gate stat
 2. On every agent pull request, the gate evaluates the diff against all candidate policies
    ([selection from the diff](#selection-from-the-diff)) and writes a `shadow_would_arm` record for
    each shadow policy that holds, regardless of any issue label.
-3. Merge the pull requests you agree with unchanged, and run one `factory/drill` revert for the
-   repository. Once a policy reaches its clean minimum (`5` for `evidence: low`, `20` for
-   `standard`), [promote it](#promotion-shadow-to-live) with a one-line `mode: live` binding.
+3. Merge the pull requests you agree with unchanged. For the first drill, choose one merged shadow
+   pull request, apply `factory/revert` and `factory/drill`, and let the merger open and merge the
+   revert. That single drill covers the repository: evidence now accumulates only from maintainer
+   merges at the exact judged head. Once a policy reaches its clean minimum (`5` for `evidence: low`,
+   `20` for `standard`), [promote it](#promotion-shadow-to-live) with a one-line `mode: live` binding.
 
 A binding overrides the catalog default for that policy: `mode: live` promotes it,
 `mode: disabled` turns a catalog policy off for the repository, and `allowedFiles`,
@@ -280,70 +282,7 @@ A shadow policy runs every row a live one does and records `shadow_would_arm` (o
 [promotion evidence](#promotion-shadow-to-live): only `shadow_would_arm` decisions merged unchanged
 at their head count. Grants are never consulted in shadow.
 
-### policy-bot, an optional integration
-
-By default `merge.policyBot` is `false` and `merge.gateStatus` is `true`: Maku posts `maku/merge-gate`
-on the pull request, branch protection requires that status, and no `.policy.yml` file is used.
-Self-modification of `.github/`, `.policy.yml`, `CODEOWNERS` and every holdout check's workflow is
-blocked directly by the gate (`gate_path` and the guardrail `protectedFiles`).
-
-When a repository opts in with `merge.policyBot: true` and `merge.policyBotLogin`, policy-bot reads
-`.policy.yml` from the base branch and posts `policy-bot: main`. The gate then requires that status
-in its fixed base: `success` lets the policy rows run; `error` is `gate_path`; anything else is
-`policy_pending`; a missing status or one from another login is `policy_absent`. Maku neither reads
-nor writes `.policy.yml`: under `merge.policyBot: true`, each policy that should arm needs a
-hand-written `low-risk:` rule in `.policy.yml` approving only pull requests within that policy's
-paths and sizes and excluding `.github/` and `.policy.yml`:
-
-```yaml
-policy:
-  approval:
-    - or:
-        - human-authored
-        - "low-risk: docs-small"
-approval_rules:
-  - name: "low-risk: docs-small"
-    if:
-      has_author_in: {users: ["ogenki-agents[bot]"]}
-      only_has_contributors_in: {users: ["ogenki-agents[bot]"]}
-      from_branch: {pattern: '^agent/[a-z2-7]{8}$'}
-      only_changed_files: {paths: ['^docs/.+\.md$']}
-      no_changed_files: {paths: ['^\.policy\.yml$', '^\.github/', '^CODEOWNERS$']}
-      file_not_added: {paths: ['.*']}
-      file_not_deleted: {paths: ['.*']}
-      modified_lines: {total: "< 41"}
-```
-
-Land `.policy.yml` and `.github/agent-factory.yaml` in one human-merged pull request so policy-bot
-evaluates the rule from the merge on.
-
-## Rollout stages
-
-```mermaid
-flowchart LR
-  s1["read<br/>observe fence file, compare"] --> s2["simulate<br/>maku policy diff | simulate + dual="]
-  s2 --> s3["manage (default)<br/>repository authority, grants, promotion UI"]
-```
-
-`policyManagement.stage` controls how far repository-file management, simulation and the settings UI
-are enabled (`manage` when omitted):
-
-| `stage` | Needs | Does | Merge authority | Exit / verification |
-|---|---|---|---|---|
-| `read` | — | Each fence read parses, validates and resolves `.github/agent-factory.yaml` and compares it with the central policies | Central | `maku_factory_policy_central_divergence == 0` and no `maku_factory_policy_load_errors_total` series |
-| `simulate` | — | Everything in `read`, plus `maku policy diff`, `maku policy simulate`, and live dual evaluation (`policy=` and `dual=` on every decision record) | Central | Simulator matches conformance fixtures; a week with no `agreement="unexplained"` |
-| `manage` | Broker `factoryURL` when set explicitly on the broker; `human.approvalMemory: true` for saved grants | Everything in `simulate`, plus `classAuthority: repository` where a `Repository` sets it, approval-memory lookups, `/v1/policy/evidence` and `/v1/policy/repositories` on the factory, and `/settings/*` and promotions on the broker | Central unless a `Repository` sets `classAuthority: repository` | Promotion pull requests and grant lifecycle verified |
-
-The broker reads its own `policyManagement` block (`stage` and `operators`) with the same validation
-rules (`internal/config/config.go`). A config breaking a rule below fails the rollout:
-
-| Rule | Message |
-|---|---|
-| `stage` is `read`, `simulate` or `manage` | `policyManagement.stage "…" is one of read, simulate, manage` |
-| The six legacy switches were removed | Refused at config load and CRD admission ([upgrading](upgrading.md#merge-policies-removals)) |
-| `classAuthority: repository` needs `stage: manage` | `classAuthority repository needs policyManagement.stage manage` |
-| A cut-over entry declares no central `classes` or `mergePolicies` | `classAuthority repository: classes are declared centrally too, two authoritative sources (MP15): remove them` |
-| Broker `stage: manage`, set explicitly, needs `factoryURL` | `policyManagement.stage manage needs factoryURL: …`. Left unset, a broker without `factoryURL` starts and serves no settings page |
+Repository-file authority and the legacy rollout stages are documented in [upgrading](upgrading.md#repository-file-authority).
 
 ## Reference
 
@@ -434,25 +373,27 @@ mergePolicies:
 What a resolved policy may require, set on the policy, the binding, or both as [the combination
 rules](#policies-and-bindings) allow. An empty value is refused rather than read as absent.
 
-| Field | Tier | Type | Gate reason when it refuses | Constraint |
+| Field | Meaning and unit | Default and who sets it | Refusal reason | Example |
 |---|---|---|---|---|
-| `allowedFiles` | Essential | list of regexp | `file_not_allowed` | Each starts with `^` and ends with `$`: matched against the whole path |
-| `maxPatchFiles` | Essential | int ≥ 1 | `patch_too_large` | At most the guardrail's |
-| `maxModifiedLines` | Essential | int ≥ 1 | `patch_too_large` | Additions plus deletions, GitHub's count. At most the guardrail's |
-| `maxPerDay` | Essential | int ≥ 1 | `auto_merge_cap` | Policy daily cap, at most the guardrail's |
-| `evidence` | Essential | `low` \| `standard` (default) | none: sets the clean shadow decisions promotion needs, 5 or 20 | Policy only. `low` needs a `diffShape` (or the built-in shape of `docs-links`) or an `oracle` |
-| `description` | Essential | string ≤ 280 chars | none: documentation only | Policy only |
-| `diffShape` | Shape and checks | `links-only` \| `semver-patch` \| `semver-minor` \| `added-entry` | `class_mismatch` | Policy only. Semver shapes and `added-entry` need `author.adopt`; semver needs `modifyOnly: true`; `semver-minor` is shadow only; `added-entry` needs `allowedFiles`, `holdoutChecks`, `requiredLabel` and no `modifyOnly` |
-| `modifyOnly` | Shape and checks | `true` | `file_added_or_deleted` | Policy only. Renames and copies count as added |
-| `protectedFiles` | Shape and checks | list of regexp | `file_protected` | Unanchored; a rename from a protected path counts |
-| `holdoutChecks` | Shape and checks | list of check names | `holdout_red`; waits `holdout_pending` | SUCCESS reported by GitHub Actions on the head; their workflow is a gate path |
-| `releaseAgeCheck` | Shape and checks | commit status name | `release_age_red`; waits `release_age_pending` | Policy only. Needs `author.adopt`; the status must be posted by an adopted login |
-| `monitor` | Shape and checks | `{verification, oracleRuns, flux, followUpWindow}` | post-merge revert or regression | Policy only; `flux` uses `Repository.spec.merge.fluxSource` |
-| `oracle` | Expert | `{probe: dead-links, maxFindings: 1..16}`, the binding's `oracleWorkflow` | `oracle_finding_open`, `oracle_unrequested` | Needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly`, `allowedFiles`, and `maxModifiedLines` ≥ 2 × `maxFindings` when set. See [oracle classes](factory.md#oracle-classes) |
-| `companionFiles` | Expert | list of regexp | `class_mismatch` | Anchored like `allowedFiles`; needs `added-entry` |
-| `requiredLabel` | Expert | string, 1–50 characters | `label_missing`, `label_not_adopted` | Needs `author.adopt`; set by an adopted login |
-| `author.adopt` | Expert | `{logins, branches}` | `not_adopted_author`, `branch_not_allowed` | Policy only; adopts bot pull requests ([adopted classes](factory.md#adopted-classes)) |
-| `requiresApproval[].changedFiles` | Expert | list of regexp | asks with `approval_required` | Unanchored |
+| `allowedFiles` | Regular expressions for paths that may change, each anchored `^…$` | Unset: unbounded unless a `diffShape` bounds it; policy and/or binding | `file_not_allowed`; admission also rejects an unanchored pattern | `['^website/content/.+\.md$']` |
+| `maxPatchFiles` | Changed file count, integer ≥ 0 (`0` means no cap) | Guardrail default 10; policy or binding may lower | `patch_too_large`; an explicit binding raise is `OverPolicy` | `5` |
+| `maxModifiedLines` | Additions plus deletions, integer ≥ 0 | Guardrail default 300; policy or binding may lower | `patch_too_large` | `100` |
+| `maxPerDay` | Automatic merges per UTC day, integer ≥ 0 | Guardrail default 5, also an unset repository `merge.maxPerDay`; policy or binding may lower | `auto_merge_cap` | `2` |
+| `merge.paused` | Operator pause for all automatic policy decisions: `{reason}` | Unset; `Repository.spec.merge` or central merge defaults. A maintainer's approve-to-merge still works | `paused`; alerts after 24 hours | `{reason: Incident freeze}` |
+| `merge.autoRevert` | Merge the factory's green revert only at the head GitHub created | `false`; `Repository.spec.merge` or central merge defaults. No `revert` policy needed | Revert waits for a maintainer on a missing or moved head | `true` |
+| `evidence` | Clean decisions before promotion: `low` 5, `standard` 20 | `standard`; policy only, `low` needs `diffShape` or `oracle` | Admission: `evidence: low needs diffShape or oracle` | `standard` |
+| `description` | Plain sentence for settings and `kubectl get`, ≤ 280 characters | Empty; policy only, never read by the gate | None | `Fixes broken links in docs` |
+| `diffShape` | Mechanical diff shape: `links-only`, `semver-patch`, `semver-minor`, `added-entry` | Unset; policy only (`docs-links` is `links-only` built in) | `class_mismatch`; `Unsupported value` at admission | `links-only` |
+| `modifyOnly` | Forbid add/delete/rename/copy/mode change | `false`; policy only | `file_added_or_deleted` | `true` |
+| `protectedFiles` | Unanchored regular expressions for paths that always refuse | Central guardrails add `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`; policy and binding add more | `file_protected` | `['^docs/superpowers/']` |
+| `holdoutChecks` | GitHub Actions check names that must return `SUCCESS` | `mergeGuardrails.mandatoryChecks` plus policy/binding additions | `holdout_red`; waits `holdout_pending` | `['Check the documentation links 🔗']` |
+| `releaseAgeCheck` | Commit status proving an adopted release has aged | Unset; policy only, needs `author.adopt` | `release_age_red`; waits `release_age_pending` | `renovate/stability-days` |
+| `monitor` | Post-merge checks: `{verification, oracleRuns, flux, followUpWindow}` | No monitor; policy only, `flux` uses `Repository.spec.merge.fluxSource` | Post-merge revert or regression; missing source is `MissingParameter` | `{followUpWindow: 168h}` |
+| `oracle` | Detector findings and cap: `{probe: dead-links, maxFindings: 1..16}`; binding supplies `oracleWorkflow` | No oracle; policy and binding | `oracle_finding_open`, `oracle_unrequested` | `{probe: dead-links, maxFindings: 2}` |
+| `companionFiles` | Anchored paths an `added-entry` PR may append to | Empty; policy or binding, needs `added-entry` | `class_mismatch` | `['^index\.md$']` |
+| `requiredLabel` | Label an adopted PR must carry from an adopted login | Empty; policy or binding, needs `author.adopt` | `label_missing`, `label_not_adopted` | `ready-to-merge` |
+| `author.adopt` | External authors and branches adopted instead of the agents App: `{logins, branches}` | Agents App; policy only | `not_adopted_author`, `branch_not_allowed` | `{logins: ['renovate[bot]'], branches: ['^renovate/']}` |
+| `requiresApproval[].changedFiles` | Unanchored paths that still need a maintainer, even when live | Empty; policy and binding union | `approval_required`; `shadow_would_require_approval` in shadow | `[{changedFiles: ['^docs/architecture/']}]` |
 
 #### Names from other tools
 
@@ -483,7 +424,7 @@ All three blocks live at the top level of the factory's config (or `Factory.spec
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every bound policy's `holdoutChecks` |
 | `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0, read as `10`, `300` and `5` | A policy cap above it is clamped; an explicit binding cap above it is `GuardrailMismatch`; one without it inherits it |
 | `mergeGuardrails.maxGrantLifetime` | duration | 0, read as `2160h` (90 days) | `0` to `8760h`. Every lookup expires a grant older than this since its creation or last renewal |
-| `policyManagement.stage` | `read` \| `simulate` \| `manage` | `manage` | See [the stages](#rollout-stages) |
+| `policyManagement.stage` | `read` \| `simulate` \| `manage` | `manage` | See [the stages](upgrading.md#repository-file-authority) |
 | `policyManagement.operators` | list of GitHub logins | none: no exception can be approved | Read by the broker |
 | `repositories[].classAuthority` | `central` \| `repository` | `central` | `repository` needs `policyManagement.stage: manage` and no central `classes` or `mergePolicies` |
 
@@ -1263,11 +1204,11 @@ An example output, with plausible values:
 NAME                                   ACCEPTED   READY   REPOS   STOPPED   AGE
 factory.maku.ogenki.io/aws-0           True       True    2       false     12d
 
-NAME                                     REPO                  FACTORY   CLASSES   LIVE   ACCEPTED   CONNECTED   AGE
-repository.maku.ogenki.io/ai-native-ref  Smana/ai-native-ref   aws-0     4         0      True       True        12d
+NAME                                     REPO                  FACTORY   POLICIES   LIVE   ACCEPTED   CONNECTED   AGE
+repository.maku.ogenki.io/ai-native-ref  Smana/ai-native-ref   aws-0     4          0      True       True        12d
 
-NAME                                   CONSUMERS   CURRENT   LIVE   ACCEPTED   AGE
-mergepolicy.maku.ogenki.io/dead-links  2           1         0      True       3d
+NAME                                   CONSUMERS   CURRENT   LIVE   DESCRIPTION                              AGE
+mergepolicy.maku.ogenki.io/dead-links  2           1         0      Retargets dead external links             3d
 ```
 
 The status and each of its conditions carry one `observedGeneration`: the generation the factory
@@ -1281,6 +1222,8 @@ error, the first time it refuses a generation, and one `binding refused` line pe
 |---|---|---|
 | `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `Invalid`. A `MergePolicy` refused with a generation still serving reads `serving generation 3; generation 4 refused: …` |
 | `BindingsValid` | a `Repository` with bindings | `True` `BindingsValid`; `False` `BindingsRefused`, the message naming each refused binding: `refused: dead-links (MissingParameter)` |
+| `Ready` | `Repository` | `True` `Ready`; `False` when a generation or any binding is refused, even when a last good class still serves; `Unknown` `Pending` before the first read |
+| `Paused` | `Repository` | `True` `OperatorPaused` while `spec.merge.paused` is set, with the operator's reason; `False` `NotPaused` |
 | `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
 | `RepositoryFileValid` | `Repository` | `True` `Valid`, or `FenceOnly` (the file gives only `factory:` and the repository is under central authority, so the central policies decide); `False` `Invalid` (the file does not parse, is in the removed `classes:` shape, or, under repository authority, binds no policy); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
 | `InSync` | `Repository` | `True` `InSync`, or `FenceOnly`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
@@ -1288,9 +1231,9 @@ error, the first time it refuses a generation, and one `binding refused` line pe
 | `Ready` | `Factory` | `True` `Ready`; `True` `ServingLastGood` (a newer generation was refused and the last accepted one keeps serving: the message reads `serving generation 3; generation 4 refused`, and `Accepted` carries the error); `False` `NotAccepted` (nothing is served), `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
 A `Repository` reports its `authority` (`central` or `repository`), its resolved `merge` and
-`mergeDefaulted`, and one entry per evaluated policy in `classes[]`: its `mode`, the
-`policyGeneration` it serves, `accepted` with `reason` and `message`, and the last decision as
-`verdict:reason` with its time. A `MergePolicy` reports its `consumers[]` (each binding `Repository`,
+`mergeDefaulted`, and one entry per binding in `classes[]`: the written `mode`, the `servedMode`
+actually in force, the `policyGeneration` it serves, `accepted` with `reason` and `message`, and the
+last decision as `verdict:reason` with its time. A `MergePolicy` reports its `consumers[]` (each binding `Repository`,
 its mode, the generation it serves, whether it resolved and why not), `consumerCount`, `currentCount`
 (consumers serving its current generation) and `liveCount`. The last decision is kept in memory and
 is best-effort: it is empty after a restart or a leader change, until the next decision. Every
