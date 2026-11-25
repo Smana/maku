@@ -59,6 +59,8 @@ type TaskRequest struct {
 	Profile string `json:"profile,omitempty"`
 	// StepUpShown is true when the confirmed plan showed the "if it steps up" cost figure (WR4).
 	StepUpShown bool `json:"stepUpShown,omitempty"`
+	// Outcome is the task outcome the confirmed plan carried (phase F); empty is change.
+	Outcome string `json:"outcome,omitempty"`
 	// Incident is an internal principal's finding (RA3); a sponsored principal's request refuses it.
 	Incident *Incident `json:"incident,omitempty"`
 }
@@ -137,6 +139,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		out(http.StatusBadRequest, "bad_json")
 		return
 	case !intakeName(in.Class) || !intakeName(in.Suggested) || !intakeName(in.Profile):
+		out(http.StatusBadRequest, "bad_json")
+		return
+	case in.Outcome != "" && !config.ValidOutcome(in.Outcome):
 		out(http.StatusBadRequest, "bad_json")
 		return
 	case key == "" || len(key) > maxKeyLen:
@@ -432,9 +437,9 @@ func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.S
 		Spec: factoryv1.TaskSpec{
 			Source: factoryv1.Source{Kind: "api", Ref: ref, Key: "api:" + sp.Name + ":" + key, RequestedBy: sp.Principal(),
 				Sponsor: factoryv1.Person(login), OnBehalfOf: in.OnBehalfOf, Trust: "untrusted", ContentSHA256: hex.EncodeToString(sum[:])},
-			Repository: in.Repository, Text: clean, DataClass: in.DataClass, MaxMicroUSD: maxUSD, IssueAuthor: login}}
-	if in.Class != "" || in.Suggested != "" || in.Profile != "" || in.StepUpShown {
-		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login, StepUpShown: in.StepUpShown}
+			Repository: in.Repository, Text: clean, DataClass: in.DataClass, Outcome: in.Outcome, MaxMicroUSD: maxUSD, IssueAuthor: login}}
+	if in.Class != "" || in.Suggested != "" || in.Profile != "" || in.StepUpShown || in.Outcome != "" {
+		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login, StepUpShown: in.StepUpShown, Outcome: in.Outcome}
 	}
 	if err := s.Rooms.Create(ctx, t); apierrors.IsAlreadyExists(err) {
 		reader := client.Reader(s.Rooms)

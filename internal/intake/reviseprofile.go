@@ -28,6 +28,7 @@ func IsProfileRevision(base, candidate Plan) bool {
 		changed = changed || c.Profile != b.Profile
 		c.Profile, c.Suggestion = b.Profile, b.Suggestion
 		if c.Index != b.Index || c.Title != b.Title || c.Body != b.Body || c.Class != b.Class ||
+			NormalizeOutcome(c.Outcome) != NormalizeOutcome(b.Outcome) ||
 			!slices.Equal(c.Roles, b.Roles) || !slices.Equal(c.DependsOn, b.DependsOn) {
 			return false
 		}

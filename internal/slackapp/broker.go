@@ -418,9 +418,21 @@ const handoffCheckTool = "handoff_check"
 // workflows they may choose. workflow nil changes nothing; a value pins that workflow ("" for the
 // factory's choice), which re-validates the stored plan and stores its new hash. It files nothing.
 func (b Broker) HandoffCheck(ctx context.Context, id, onBehalfOf string, workflow *string) (HandoffChecked, error) {
+	return b.handoffCheck(ctx, id, onBehalfOf, workflow, nil)
+}
+
+// HandoffCheckOutcome is handoff_check setting the stored plan's outcome (e.g. plan-first).
+func (b Broker) HandoffCheckOutcome(ctx context.Context, id, onBehalfOf, outcome string) (HandoffChecked, error) {
+	return b.handoffCheck(ctx, id, onBehalfOf, nil, &outcome)
+}
+
+func (b Broker) handoffCheck(ctx context.Context, id, onBehalfOf string, workflow, outcome *string) (HandoffChecked, error) {
 	args := map[string]any{"id": id, "on_behalf_of": onBehalfOf}
 	if workflow != nil {
 		args["workflow"] = *workflow
+	}
+	if outcome != nil {
+		args["outcome"] = *outcome
 	}
 	sc, err := b.call(ctx, handoffCheckTool, args)
 	if err != nil {

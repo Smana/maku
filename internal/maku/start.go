@@ -62,12 +62,15 @@ type planShape struct {
 type planView struct {
 	Repository string `json:"repository"`
 	Issues     []struct {
-		Index      int    `json:"index"`
-		Title      string `json:"title"`
-		Body       string `json:"body"`
-		Class      string `json:"class"`
-		Profile    string `json:"profile"`
-		Suggestion *struct {
+		Index           int    `json:"index"`
+		Title           string `json:"title"`
+		Body            string `json:"body"`
+		Class           string `json:"class"`
+		Profile         string `json:"profile"`
+		Outcome         string `json:"outcome,omitempty"`
+		OutcomeInferred bool   `json:"outcomeInferred,omitempty"`
+		OutcomeNote     string `json:"outcomeNote,omitempty"`
+		Suggestion      *struct {
 			Profile string   `json:"profile"`
 			Roles   []string `json:"roles"`
 			Merge   struct {
@@ -89,13 +92,18 @@ type governed struct {
 }
 
 // planLabels are the labels start applies before factory/ready: workflow:<p> when the plan pins
-// one, unless the catalogue says this developer does not maintain the repository.
+// one (unless the catalogue says this developer does not maintain the repository), plus an outcome
+// label when the confirmed plan carries plan-first or report.
 func (g *governed) planLabels() []string {
 	is := g.view.Issues[0]
-	if is.Profile == "" || (g.Maintainer != nil && !*g.Maintainer) {
-		return nil
+	var out []string
+	if is.Profile != "" && (g.Maintainer == nil || *g.Maintainer) {
+		out = append(out, "workflow:"+is.Profile)
 	}
-	return []string{"workflow:" + is.Profile}
+	if is.Outcome == "plan-first" || is.Outcome == "report" {
+		out = append(out, is.Outcome)
+	}
+	return out
 }
 
 // dollars is a plan's USD ceiling as a person reads it: two decimals, from the cent up.
@@ -228,10 +236,13 @@ func parseRenderedWorkflow(text string) string {
 	return ""
 }
 
-func (r *Relay) checkHandoff(ctx context.Context, id, workflow string) (*handoffCheckShape, any) {
+func (r *Relay) checkHandoff(ctx context.Context, id, workflow, outcome string) (*handoffCheckShape, any) {
 	callArgs := map[string]any{"id": id}
 	if workflow != "" {
 		callArgs["workflow"] = workflow
+	}
+	if outcome != "" {
+		callArgs["outcome"] = outcome
 	}
 	text, sc, isErr, err := r.callBroker(ctx, "handoff_check", callArgs)
 	if err != nil {
@@ -278,7 +289,7 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	elicit := r.forms
 	r.mu.Unlock()
 
-	checked, refused := r.checkHandoff(ctx, a.ID, "")
+	checked, refused := r.checkHandoff(ctx, a.ID, "", "")
 	if refused != nil {
 		return refused
 	}
@@ -359,6 +370,14 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 		}
 	}
 
+	defaultPlanFirst := len(checked.view.Issues) > 0 && checked.view.Issues[0].Outcome == "plan-first"
+	props["plan_first"] = map[string]any{
+		"type":        "boolean",
+		"title":       "Plan first",
+		"default":     defaultPlanFirst,
+		"description": "Approve the plan before implementation starts",
+	}
+
 	meta := renderStartCard(checked, defaultWF, allChoices)
 	if n := len(checked.view.Issues); n > 1 {
 		meta += fmt.Sprintf("The plan holds %d issues: this files the first.\n\n", n)
@@ -396,16 +415,28 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 		return out
 	}
 
+	wantWF := ""
 	if len(allChoices) > 1 {
 		if chosenWF := formString(res.Content["workflow"]); chosenWF != "" && chosenWF != defaultWF {
-			rechecked, ref := r.checkHandoff(ctx, a.ID, chosenWF)
-			if ref != nil {
-				return ref
-			}
-			checked = rechecked
-			draft = checked.draft()
-			offer = draft.CanStart && r.Label != nil
+			wantWF = chosenWF
 		}
+	}
+	wantOutcome := ""
+	if pf, ok := formBool(res.Content["plan_first"]); ok && pf != defaultPlanFirst {
+		if pf {
+			wantOutcome = "plan-first"
+		} else {
+			wantOutcome = "change"
+		}
+	}
+	if wantWF != "" || wantOutcome != "" {
+		rechecked, ref := r.checkHandoff(ctx, a.ID, wantWF, wantOutcome)
+		if ref != nil {
+			return ref
+		}
+		checked = rechecked
+		draft = checked.draft()
+		offer = draft.CanStart && r.Label != nil
 	}
 
 	startNow, chosen := formBool(res.Content["start"])
@@ -452,8 +483,11 @@ func renderStartCard(checked *handoffCheckShape, defaultWF string, allChoices []
 	source := "repository"
 	suggested := ""
 	var roles []string
+	var outcome, outcomeNote string
+	var outcomeInferred bool
 	if len(checked.view.Issues) > 0 {
 		is := checked.view.Issues[0]
+		outcome, outcomeInferred, outcomeNote = is.Outcome, is.OutcomeInferred, is.OutcomeNote
 		if is.Profile != "" {
 			source = "label"
 		}
@@ -478,14 +512,19 @@ func renderStartCard(checked *handoffCheckShape, defaultWF string, allChoices []
 		path = append(slices.Clone(roles), "CI", "merge gate")
 	}
 	card := roomview.WorkflowCard{
-		Workflow:   defaultWF,
-		Reason:     roomview.Reason(source, "", suggested, "", nil),
-		Path:       path,
-		CeilingUSD: ceiling,
-		StepUpUSD:  stepUpUSD,
+		Outcome:         outcome,
+		OutcomeInferred: outcomeInferred,
+		Workflow:        defaultWF,
+		Reason:          roomview.Reason(source, "", suggested, "", nil),
+		Path:            path,
+		CeilingUSD:      ceiling,
+		StepUpUSD:       stepUpUSD,
 	}
 	var b strings.Builder
 	_ = roomview.WorkflowCardText(&b, card, roomview.Options{Format: roomview.Text})
+	if outcomeNote != "" {
+		b.WriteString(outcomeNote + "\n")
+	}
 	var others []workflowChoice
 	for _, c := range allChoices {
 		if c.Name != defaultWF {

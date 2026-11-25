@@ -240,6 +240,9 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 			// here it is only held to the shape a profile's name has, since it lands in a body and a label.
 			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile is a workflow's name", is.Index))
 		}
+		if is.Outcome != "" && !ValidOutcome(is.Outcome) {
+			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: outcome %s is not one of change, plan-first, review, report", is.Index, strconv.Quote(is.Outcome)))
+		}
 		if s := is.Suggestion; s != nil {
 			if n := utf8.RuneCountInString(s.Why); n > MaxWhyRunes {
 				return refuse(ReasonPlanTooLarge,

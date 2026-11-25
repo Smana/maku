@@ -412,7 +412,7 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 	if len(sections) != 4 {
 		t.Fatalf("%d section blocks, want 4: %+v", len(sections), sections)
 	}
-	for i, wantHead := range []string{"*Repository*\n", "*Issue*\n", "*Workflow* ", "*Editing*\n"} {
+	for i, wantHead := range []string{"*Repository*\n", "*Issue*\n", "*Outcome* ", "*Editing*\n"} {
 		b := sections[i]
 		if b.Type != "section" || b.Text == nil || b.Text.Type != "mrkdwn" {
 			t.Fatalf("section %d is %+v", i, b)
@@ -425,13 +425,13 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 		}
 	}
 
-	// Two buttons, one value: the hash and the revision the message showed.
+	// Three buttons, one value: the hash and the revision the message showed.
 	actions := blocks[len(blocks)-2]
-	if actions.Type != "actions" || len(actions.buttons(t)) != 2 {
+	if actions.Type != "actions" || len(actions.buttons(t)) != 3 {
 		t.Fatalf("the actions block is %+v", actions)
 	}
 	value := proposalValue(p.Hash, p.Rev)
-	wantStyle := map[string]string{actionProposalConfirm: "primary", actionProposalCancel: "danger"}
+	wantStyle := map[string]string{actionProposalConfirm: "primary", actionProposalPlanFirst: "", actionProposalCancel: "danger"}
 	seen := map[string]bool{}
 	for _, e := range actions.buttons(t) {
 		style, ok := wantStyle[e.ActionID]
@@ -447,13 +447,13 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 			t.Errorf("button %q has no plain text: %+v", e.ActionID, e.Text)
 		}
 	}
-	if !seen[actionProposalConfirm] || !seen[actionProposalCancel] {
+	if !seen[actionProposalConfirm] || !seen[actionProposalPlanFirst] || !seen[actionProposalCancel] {
 		t.Errorf("the buttons are %v", seen)
 	}
 	// A button's text is a text object — the opposite of the context element's string — so the two
 	// shapes are asserted where Slack reads them.
 	actionElements, ok := wireBlocks(t, raw)[len(blocks)-2]["elements"].([]any)
-	if !ok || len(actionElements) != 2 {
+	if !ok || len(actionElements) != 3 {
 		t.Fatalf("the actions block's elements are %+v", actionElements)
 	}
 	if button, ok := actionElements[0].(map[string]any); !ok {

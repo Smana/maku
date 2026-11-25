@@ -1172,6 +1172,11 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 		return err
 	}
 	t.Spec.Template, t.Spec.PredictedClass, t.Spec.DataClass = d.Template, d.PredictedClass, d.DataClass
+	if d.Outcome != "" && d.Outcome != config.OutcomeChange {
+		t.Spec.Outcome = d.Outcome
+	} else if t.Spec.Outcome != "" {
+		t.Spec.Outcome = config.OutcomeChange
+	}
 	t.Spec.Budget = triage.Ceiling(d.Budget, t.Spec.MaxMicroUSD) // F4: a task without a ceiling keeps its class budget, byte for byte
 	var profile *v1alpha1.ProfileStatus
 	if !triage.Investigates(cfg, t) && !cfg.Investigates(d.Template) { // a task routed to investigate never takes part in the evaluation

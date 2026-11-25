@@ -98,14 +98,18 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	}
 	var notes []string
 	if legacy {
-		notes = []string{LegacyLabelNote}
+		notes = append(notes, LegacyLabelNote)
+	}
+	outcome, outcomeNote := ResolveOutcome(cfg, t)
+	if outcomeNote != "" {
+		notes = append(notes, outcomeNote)
 	}
 	// Declared is no pin (P8): only an honoured profile pin is labeled.
 	cohort := CohortOf(t.Name, pin.Honoured(), cfg.Evaluation.ControlPercent)
 	if oracle(cfg, t, class) {
 		// MC6: the findings are the task and the oracle its verifier: one implementer at tier light,
 		// no classifier call, so no control group either (OD-14 measures the classifier).
-		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Budget: BudgetFor(cfg, "light"),
+		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Outcome: outcome, Budget: BudgetFor(cfg, "light"),
 			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}, Declared: declared,
 			Pinned: pin.Honoured(), Pin: pin, Cohort: cohort, Notes: notes}, nil
 	}
@@ -131,7 +135,7 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if Investigates(cfg, t) {
 		source = "runlore" // Matrix keys on the source kind: both take investigate
 	}
-	return Decision{Template: Matrix(class, source, tier), PredictedClass: class, DataClass: dataClass,
+	return Decision{Template: Matrix(class, source, tier), PredictedClass: class, DataClass: dataClass, Outcome: outcome,
 		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Pinned: pin.Honoured(), Pin: pin, Cohort: cohort, Notes: notes}, nil
 }
 

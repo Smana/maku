@@ -107,6 +107,11 @@ type TaskSpec struct {
 	// Every run of the task gets it as spec.dataClass (C3, OD-13).
 	// +kubebuilder:validation:Enum=public;internal
 	DataClass string `json:"dataClass"`
+	// Outcome is what the task produces (phase F): unset is change (a pull request).
+	// +kubebuilder:validation:Enum=change;plan-first;review;report
+	// +kubebuilder:validation:MaxLength=16
+	// +optional
+	Outcome string `json:"outcome,omitempty"`
 	// Intent, not authority: it picks team and budget; only policy-bot merges (§2).
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
@@ -1205,4 +1210,9 @@ type TaskIntake struct {
 	// StepUpShown is true when the confirmed plan carried the "if it steps up" cost figure (WR4).
 	// +optional
 	StepUpShown bool `json:"stepUpShown,omitempty"`
+	// Outcome is the outcome the confirmed plan carried (phase F); unset is change.
+	// +kubebuilder:validation:Enum=change;plan-first;review;report
+	// +kubebuilder:validation:MaxLength=16
+	// +optional
+	Outcome string `json:"outcome,omitempty"`
 }

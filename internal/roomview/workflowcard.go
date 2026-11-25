@@ -13,15 +13,35 @@ import (
 	"github.com/Smana/maku/internal/factory/catalogue"
 )
 
-// WorkflowCard is the four facts every surface shows where a task is named (WR3).
+// WorkflowCard is the facts every surface shows where a task is named (WR3, phase F).
 type WorkflowCard struct {
 	Title, Repository string
+	Outcome           string   // change (or ""), plan-first, review, report
+	OutcomeInferred   bool     // true when Outcome was inferred rather than explicit or default
+	ReviewPR          int      // pull request number when Outcome is review
 	Workflow, Reason  string   // Reason is built by Reason(), never model text
 	Path              []string // implementer, reviewer, CI, merge gate
 	CeilingUSD        float64
 	StepUpUSD         float64 // 0: no step-up line
 	SteppedFrom       string  // non-empty after a step-up
 	TypicalUSD        float64 // 0 until phase D has data for the class
+}
+
+// OutcomeWords renders a task's outcome in plain English for the workflow card's first row.
+func OutcomeWords(outcome string, reviewPR int) string {
+	switch outcome {
+	case "plan-first":
+		return "a plan to approve, then a pull request"
+	case "review":
+		if reviewPR > 0 {
+			return fmt.Sprintf("a review of #%d", reviewPR)
+		}
+		return "a review of a pull request"
+	case "report":
+		return "findings on the issue"
+	default:
+		return "a pull request"
+	}
 }
 
 // Dollars formats a USD amount as a person reads it: two decimals, from the cent up.
@@ -125,9 +145,15 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 	if ceiling == 0 && f.Spend != nil {
 		ceiling = f.Spend.LimitMicroUSD
 	}
+	reviewPR := 0
+	if f.Outcome == "review" && f.PR != nil {
+		reviewPR = f.PR.Number
+	}
 	return WorkflowCard{
 		Title:       title,
 		Repository:  repoOf(urlOf(f.Issue), prURL(f.PR)),
+		Outcome:     f.Outcome,
+		ReviewPR:    reviewPR,
 		Workflow:    p.Name,
 		Reason:      reason,
 		Path:        path,
@@ -242,11 +268,15 @@ func WorkflowCardText(w io.Writer, c WorkflowCard, o Options) error {
 			r.line(r.token(repo, false))
 		}
 	}
+	outcomeVal := r.text(OutcomeWords(c.Outcome, c.ReviewPR), false)
+	if c.OutcomeInferred && c.Outcome != "" && c.Outcome != "change" {
+		outcomeVal += " (inferred)"
+	}
 	wf := r.text(c.Workflow, false)
 	if reason := strings.TrimSpace(c.Reason); reason != "" {
 		wf += " · " + r.text(reason, false)
 	}
-	rows := [][2]string{{"Workflow", wf}}
+	rows := [][2]string{{"Outcome", outcomeVal}, {"Workflow", wf}}
 	if len(c.Path) > 0 {
 		parts := make([]string, len(c.Path))
 		for i, step := range c.Path {

@@ -110,6 +110,8 @@ type DraftRequest struct {
 	// Offers are the classes each candidate's catalogue offers, keyed by lowercase repository: the
 	// prompt lists them per candidate with their profiles, in place of Classes for that candidate.
 	Offers map[string]map[string]Class
+	// Outcomes are the task outcomes this factory offers (phase F). Empty means [change] only.
+	Outcomes []string
 	// Candidate is the broker-verified revision to re-plan. It is serialized as its own JSON
 	// envelope, separately from Context's 4 KiB bound; settled text and Decisions are data to preserve.
 	Candidate *Plan
@@ -135,6 +137,7 @@ type DraftIssue struct {
 	Title     string   `json:"title"`
 	Body      string   `json:"body"`
 	Class     string   `json:"class"`
+	Outcome   string   `json:"outcome,omitempty"`
 	DependsOn []int    `json:"dependsOn"`
 	Roles     []string `json:"roles"`
 	BudgetUSD float64  `json:"budgetUSD"`
@@ -178,6 +181,7 @@ type GovernedRequest struct {
 	Classes      []string
 	candidate    *Plan                       // plan revisions only; coordination's typed outputs have no candidate
 	offers       map[string]map[string]Class // the plan's catalogue classes; coordination's have none
+	outcomes     []string                    // the factory's offered outcomes (phase F)
 	refused      string                      // the plan's retry only: the refusal of the last reply
 	SystemPrompt string
 }
@@ -193,7 +197,7 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 		prompt += revisionSystemPrompt
 	}
 	usage, err := m.Generate(ctx, GovernedRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, candidate: req.Candidate, offers: req.Offers, refused: req.Refused, SystemPrompt: prompt}, &d)
+		Classes: req.Classes, candidate: req.Candidate, offers: req.Offers, outcomes: req.Outcomes, refused: req.Refused, SystemPrompt: prompt}, &d)
 	if err != nil {
 		return Draft{}, Usage{}, err
 	}
@@ -213,7 +217,7 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 // each caller's own type is its contract; the bounds of its fields are the caller's to hold.
 func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usage, error) {
 	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, Candidate: req.candidate, Offers: req.offers, Refused: req.refused})
+		Classes: req.Classes, Candidate: req.candidate, Offers: req.offers, Outcomes: req.outcomes, Refused: req.refused})
 	if err != nil {
 		return Usage{}, err
 	}

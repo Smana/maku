@@ -35,6 +35,10 @@ type ComposeIn struct {
 	// and the string that says so (`channel:C1.maxCostUSD`). Zero means no channel ceiling.
 	CeilingUSD    float64
 	CeilingSource string
+	// Text is the person's request, used for deterministic-first outcome inference (phase F).
+	Text string
+	// Outcomes are the task outcomes this factory offers (phase F); empty means [change].
+	Outcomes []string
 	// Logger receives the one line naming every value the reply named that the config owns. A nil
 	// logger discards it: the plan is the answer, and the line is the operator's.
 	Logger *slog.Logger
@@ -114,14 +118,22 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 		// The classes the money comes from, in issue order: sumCeilings adds them up, once, for
 		// this path and for the composer's (CD17).
 		chosen = append(chosen, class)
+		outcome, inferred, outcomeNote := ResolveOutcome(in.Text, is.Outcome, in.Outcomes)
+		storedOutcome := ""
+		if outcome != OutcomeChange {
+			storedOutcome = outcome
+		}
 		p.Issues = append(p.Issues, Issue{
-			Index:      i + 1,
-			Title:      checked.Title,
-			Body:       checked.Body,
-			Class:      is.Class,
-			Roles:      slices.Clone(class.Roles),
-			DependsOn:  earlier(is.DependsOn, i+1),
-			Suggestion: suggest(class, is.Suggestion, i+1, &dropped),
+			Index:           i + 1,
+			Title:           checked.Title,
+			Body:            checked.Body,
+			Class:           is.Class,
+			Outcome:         storedOutcome,
+			OutcomeInferred: inferred,
+			OutcomeNote:     outcomeNote,
+			Roles:           slices.Clone(class.Roles),
+			DependsOn:       earlier(is.DependsOn, i+1),
+			Suggestion:      suggest(class, is.Suggestion, i+1, &dropped),
 		})
 	}
 	ceiling, source := sumCeilings(chosen)

@@ -145,7 +145,7 @@ func (a *App) interaction(ctx context.Context, body []byte) string {
 	switch in.ActionID {
 	case actionApprove, actionDeny:
 		return a.approvalAction(ctx, in)
-	case actionProposalConfirm, actionProposalCancel, actionProposalProfile:
+	case actionProposalConfirm, actionProposalPlanFirst, actionProposalCancel, actionProposalProfile:
 		return a.proposalAction(ctx, in) // CD7's controls: a different family, the same door
 	case actionActConfirm, actionActCancel, actionActStop, actionActRetry, actionActRetryDeeper:
 		return a.actAction(ctx, in)
@@ -332,7 +332,7 @@ func parseInteraction(body []byte) (interaction, bool) {
 // controls (CD7). Any other id is §6 step 3's ignored, as it always was.
 func knownAction(actionID string) bool {
 	switch actionID {
-	case actionApprove, actionDeny, actionProposalConfirm, actionProposalCancel, actionProposalProfile,
+	case actionApprove, actionDeny, actionProposalConfirm, actionProposalPlanFirst, actionProposalCancel, actionProposalProfile,
 		actionActConfirm, actionActCancel, actionActStop, actionActRetry, actionActRetryDeeper:
 		return true
 	}

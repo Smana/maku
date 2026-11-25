@@ -26,6 +26,8 @@ type TaskRequest struct {
 	Class, Suggested, Profile string
 	// StepUpShown is true when the confirmed plan showed the "if it steps up" cost figure (WR4).
 	StepUpShown bool
+	// Outcome is the task outcome the confirmed plan carried (phase F); empty is change.
+	Outcome string
 }
 
 // TaskResult is the factory's answer: the task and its room (the same id), the issue filed (0
@@ -204,7 +206,8 @@ func (f Factory) CreateTask(ctx context.Context, r TaskRequest) (TaskResult, err
 		Suggested   string  `json:"suggested,omitempty"`
 		Profile     string  `json:"profile,omitempty"`
 		StepUpShown bool    `json:"stepUpShown,omitempty"`
-	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref, r.Class, r.Suggested, r.Profile, r.StepUpShown})
+		Outcome     string  `json:"outcome,omitempty"`
+	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref, r.Class, r.Suggested, r.Profile, r.StepUpShown, r.Outcome})
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("runrequest: %w", err)
 	}

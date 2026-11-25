@@ -126,3 +126,39 @@ func TestTheCardNamesTheRequiringClass(t *testing.T) {
 		t.Fatalf("Path = %v, want scoper prepended", card.Path)
 	}
 }
+
+func TestTheCardNamesTheOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		outcome  string
+		inferred bool
+		reviewPR int
+		wantRow  string
+	}{
+		{"default change", "", false, 0, "Outcome    a pull request\n"},
+		{"explicit change", "change", false, 0, "Outcome    a pull request\n"},
+		{"plan-first", "plan-first", false, 0, "Outcome    a plan to approve, then a pull request\n"},
+		{"plan-first inferred", "plan-first", true, 0, "Outcome    a plan to approve, then a pull request (inferred)\n"},
+		{"review with PR", "review", false, 42, "Outcome    a review of #42\n"},
+		{"report", "report", true, 0, "Outcome    findings on the issue (inferred)\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var b strings.Builder
+			c := WorkflowCard{
+				Outcome:         tc.outcome,
+				OutcomeInferred: tc.inferred,
+				ReviewPR:        tc.reviewPR,
+				Workflow:        "standard",
+				Reason:          "this repository's default",
+				Path:            []string{"implementer", "reviewer", "CI", "merge gate"},
+				CeilingUSD:      5.10,
+			}
+			if err := WorkflowCardText(&b, c, Options{Format: Text}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(b.String(), tc.wantRow) {
+				t.Fatalf("card does not open with %q:\n%s", tc.wantRow, b.String())
+			}
+		})
+	}
+}

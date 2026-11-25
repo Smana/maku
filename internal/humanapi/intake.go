@@ -439,15 +439,17 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		}
 	}
 
+	offeredOutcomes := s.planOutcomes(ctx, p, a.OnBehalfOf, candidates)
 	compose := intake.ComposeIn{Surface: run.surface, Model: s.Intake.alias(), Now: s.Intake.now(),
 		Rev: planRev, Round: 1, RoundsLeft: s.Intake.MaxRounds - 1,
-		Classes: s.Intake.Classes, Offers: offers, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
+		Classes: s.Intake.Classes, Offers: offers, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource,
+		Text: a.Text, Outcomes: offeredOutcomes, Logger: s.log()}
 	if revised != nil {
 		compose.Rev, compose.Round, compose.RoundsLeft = revised.Rev, revised.Round, revised.RoundsLeft
 	}
 	dreq := intake.DraftRequest{
 		Text: a.Text, Context: a.modelContext(), Candidates: candidates, Classes: classNames(s.Intake.Classes),
-		Offers: offers, Candidate: revised}
+		Offers: offers, Outcomes: offeredOutcomes, Candidate: revised}
 	// One plan's deadline bounds both the draft and its one retry.
 	deadline := time.Now().Add(model.CallDeadline())
 	plan, usage, err := s.draftPlan(ctx, model, dreq, compose)
@@ -850,6 +852,19 @@ func allowMap(repos []string) map[string]bool {
 		out[r] = true
 	}
 	return out
+}
+
+// planOutcomes reads the factory's offered outcomes from the first candidate's catalogue.
+// Empty means [change] only.
+func (s *Server) planOutcomes(ctx context.Context, p authn.Principal, onBehalfOf string, candidates []string) []string {
+	if s.Catalogue == nil || len(candidates) == 0 {
+		return nil
+	}
+	cat, err := s.Catalogue.Get(ctx, p, candidates[0], onBehalfOf)
+	if err != nil || len(cat.Outcomes) == 0 {
+		return nil
+	}
+	return cat.Outcomes
 }
 
 // intakeGuard is the guard for one effective requester: the allowlist, the visibility read, and the

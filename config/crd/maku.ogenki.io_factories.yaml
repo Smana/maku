@@ -495,6 +495,20 @@ spec:
                     maxItems: 64
                     type: array
                 type: object
+              outcomes:
+                description: |-
+                  Outcomes are the task outcomes this factory offers (phase F): change by default.
+                  An outcome not listed here falls back to change.
+                items:
+                  enum:
+                  - change
+                  - plan-first
+                  - review
+                  - report
+                  maxLength: 16
+                  type: string
+                maxItems: 4
+                type: array
               prices:
                 additionalProperties:
                   description: |-

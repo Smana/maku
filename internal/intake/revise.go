@@ -43,6 +43,9 @@ func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, er
 		// A pin is its own edit kind: no marker is answered and no round is spent (P5).
 		return reviseProfile(base, candidate)
 	}
+	if IsOutcomeRevision(base, candidate) {
+		return reviseOutcome(base, candidate)
+	}
 	if maxRounds < 1 || base.Round < 0 {
 		return Plan{}, refuse(ReasonPlannerInvalid, "revision round and maxRounds must be positive")
 	}
@@ -193,6 +196,7 @@ func revisionMaterialChanged(base, candidate Plan) string {
 	for i := range base.Issues {
 		before, after := base.Issues[i], candidate.Issues[i]
 		if after.Index != before.Index || after.Title != before.Title || after.Class != before.Class || after.Profile != before.Profile ||
+			NormalizeOutcome(after.Outcome) != NormalizeOutcome(before.Outcome) ||
 			!slices.Equal(after.Roles, before.Roles) || !slices.Equal(after.DependsOn, before.DependsOn) {
 			return fmt.Sprintf("candidate issue %d changed protected material", i+1)
 		}

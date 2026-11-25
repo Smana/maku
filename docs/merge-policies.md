@@ -121,6 +121,11 @@ required stage once. `tests` is added only when the repository configures both `
 `merge.contractCheck`; otherwise the factory narrates the unmet requirement and the merge gate hands
 the pull request to a maintainer with `required_stage_missing`.
 
+Two-human sign-off on a pull request is enforced by a GitHub branch ruleset requiring two approvals,
+without the merger App on that ruleset's bypass list: `merge.approveToMerge` merges via an ordinary
+`mergePullRequest` call, so GitHub refuses the merge until two people have approved. The plan gate's
+**Approve** approves the scope before implementation and is not an approval of the pull request.
+
 Every bound and catalog policy also inherits the central guardrails (`MergeGuardrails.WithDefaults`):
 when `mergeGuardrails` is unset on the `Factory`, `protectedFiles` starts with `^\.github/`,
 `^\.policy\.yml$` and `^CODEOWNERS$`, and `maxPatchFiles`, `maxModifiedLines` and `maxPerDay` default
