@@ -543,7 +543,7 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
 		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), StartDefault: startDefault, StartExcept: startExcept,
-		Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
+		Dashboards: dashboards, RoomActs: h.EffectiveRoomActs(), Unsafe: cfg.Install.Unsafe,
 		FactoryInstall: factoryInstall(cfg)}, nil
 }
 

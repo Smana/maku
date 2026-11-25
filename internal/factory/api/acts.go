@@ -52,10 +52,166 @@ const (
 	ActPlanApproved     = "plan_approved"
 	ActPlanRevised      = "plan_revised"
 	ActPlanSplit        = "plan_split"
+	ActSplitAccepted    = "split_accepted"
+	ActSplitDeclined    = "split_declined"
+	ActNoSplit          = "no_split"
 
 	maxActBody  = 4 << 10
 	maxPlanNote = 1024
 )
+
+// SplitRequest is the POST /v1/tasks/{task}/splits body (phase G1): accept or decline a proposed split.
+type SplitRequest struct {
+	OnBehalfOf string `json:"onBehalfOf,omitempty"`
+	Decision   string `json:"decision"`
+}
+
+func (s *Server) splitTask(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
+	p, err := s.Auth.Authenticate(r)
+	switch {
+	case errors.Is(err, authn.ErrForbidden):
+		refuse(w, http.StatusForbidden, "not_permitted")
+		return
+	case err != nil:
+		refuse(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sp := cfg.SponsoredBy(p.ID)
+	humanSplit := !p.Sponsored && !p.Internal && p.Kind == envelope.ActorHuman
+	if !humanSplit && (!p.Sponsored || p.Internal || sp == nil) {
+		refuse(w, http.StatusForbidden, reasonSponsoredOnly)
+		return
+	}
+	ctx := r.Context()
+	if s.Stopped != nil && s.Stopped(ctx) {
+		refuse(w, http.StatusServiceUnavailable, "kill_switch")
+		return
+	}
+	var in SplitRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxActBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil || dec.More() {
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if humanSplit {
+		if in.OnBehalfOf != "" {
+			refuse(w, http.StatusForbidden, reasonSponsoredOnly)
+			return
+		}
+	} else if in.OnBehalfOf == "" {
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if in.Decision != "accept" && in.Decision != "decline" {
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	taskName := r.PathValue("task")
+	if !envelope.ValidID(taskName) {
+		reply(w, http.StatusOK, ActResult{Result: ActUnknownTask})
+		return
+	}
+
+	var resolvedLogin string
+	for attempt := 1; ; attempt++ {
+		t, found, err := s.existing(ctx, taskName)
+		if err != nil {
+			s.failAct(ctx, w, p.ID, "tasks_unavailable", err)
+			return
+		}
+		if !found {
+			reply(w, http.StatusOK, ActResult{Result: ActUnknownTask})
+			return
+		}
+		if attempt == 1 {
+			var repo string
+			var rc *config.Repository
+			var login string
+			var code int
+			var reason string
+			if humanSplit {
+				repo = t.Spec.Repository
+				rc = cfg.RepositoryFor(repo)
+				if rc == nil {
+					refuse(w, http.StatusForbidden, "repository_not_allowed")
+					return
+				}
+				login, code, reason = s.linkedLogin(ctx, p, repo)
+			} else {
+				repo = canonicalRepository(sp.Repositories, t.Spec.Repository)
+				rc = cfg.RepositoryFor(repo)
+				if !slices.Contains(sp.Repositories, repo) || rc == nil {
+					refuse(w, http.StatusForbidden, "repository_not_allowed")
+					return
+				}
+				id, ok := strings.CutPrefix(in.OnBehalfOf, "slack:")
+				team, user, slash := strings.Cut(id, "/")
+				if !ok || !slash || team == "" || user == "" {
+					reply(w, http.StatusOK, ActResult{Result: ActNotLinked})
+					return
+				}
+				login, code, reason = s.onBehalfLogin(ctx, sp, in.OnBehalfOf, repo)
+			}
+			switch reason {
+			case "":
+			case "not_linked":
+				reply(w, http.StatusOK, ActResult{Result: ActNotLinked})
+				return
+			default:
+				refuse(w, code, reason)
+				return
+			}
+			if !rc.IsMaintainer(login) {
+				reply(w, http.StatusOK, ActResult{Result: ActNotMaintainer})
+				return
+			}
+			canWrite, err := s.actLoginWrites(ctx, repo, login)
+			if err != nil {
+				s.failAct(ctx, w, p.ID, "access_unverified", err)
+				return
+			}
+			if !canWrite {
+				reply(w, http.StatusOK, ActResult{Result: ActNotMaintainer})
+				return
+			}
+			resolvedLogin = strings.ToLower(login)
+		}
+		if t.Status.Phase != factoryv1.PhaseEscalated || t.Status.Reason != "split_proposed" ||
+			t.Status.Split == nil || t.Status.Split.State != "proposed" {
+			reply(w, http.StatusOK, ActResult{Result: ActNoSplit})
+			return
+		}
+		payload, err := json.Marshal(struct {
+			Decision string `json:"decision"`
+			By       string `json:"by"`
+			Seq      int64  `json:"seq"`
+		}{Decision: in.Decision, By: resolvedLogin, Seq: t.Status.Split.Seq})
+		if err != nil {
+			s.failAct(ctx, w, p.ID, "tasks_unavailable", err)
+			return
+		}
+		base := t.DeepCopy()
+		if t.Annotations == nil {
+			t.Annotations = map[string]string{}
+		}
+		t.Annotations[factoryv1.AnnotationSplitDecision] = string(payload)
+		err = s.Rooms.Patch(ctx, t, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+		if err == nil {
+			resCode := ActSplitAccepted
+			if in.Decision == "decline" {
+				resCode = ActSplitDeclined
+			}
+			reply(w, http.StatusOK, ActResult{Result: resCode})
+			return
+		}
+		if !apierrors.IsConflict(err) || attempt == 3 {
+			s.failAct(ctx, w, p.ID, "tasks_unavailable", err)
+			return
+		}
+	}
+}
 
 // PlanRequest is the POST /v1/tasks/{task}/plans body (phase F3): approve, revise (with a
 // one-line note), or split.

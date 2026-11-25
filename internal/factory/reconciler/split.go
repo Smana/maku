@@ -114,10 +114,18 @@ func (r *Reconciler) proposeSplit(ctx context.Context, cfg *config.Config, t *v1
 	return nil
 }
 
-// escalatedSplit is the escalated wait of a task with a split (SL4, SR8, SR9). A proposed split
-// waits for /factory split, read before /factory retry. An approved parent, escalated on its
-// family's budget, never runs an implementer: only its expiry ends it. done is false when escalated
-// goes on as for any task.
+// SplitDecisionAnnotation is the JSON shape stored on AnnotationSplitDecision by
+// POST /v1/tasks/{task}/splits (phase G1).
+type SplitDecisionAnnotation struct {
+	Decision string `json:"decision"` // accept | decline
+	By       string `json:"by"`
+	Seq      int64  `json:"seq"`
+}
+
+// escalatedSplit is the escalated wait of a task with a split (SL4, SR8, SR9, phase G1). A
+// proposed split waits for POST /v1/tasks/{task}/splits or /factory split, read before
+// /factory retry. An approved parent, escalated on its family's budget, never runs an implementer:
+// only its expiry ends it. done is false when escalated goes on as for any task.
 func (r *Reconciler) escalatedSplit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	sp := t.Status.Split
 	switch {
@@ -128,11 +136,68 @@ func (r *Reconciler) escalatedSplit(ctx context.Context, cfg *config.Config, t *
 	case sp.State != SplitProposed || t.Status.Reason != ReasonSplitProposed:
 		return false, nil
 	}
+	if decision, c, ok, err := r.splitDecisionAnnotation(ctx, cfg, t); err != nil || ok {
+		if err != nil {
+			return false, err
+		}
+		if decision == "decline" {
+			return true, r.declineSplit(ctx, cfg, t, c)
+		}
+		return true, r.approveSplit(ctx, cfg, t, c)
+	}
 	c, ok, err := r.command(ctx, cfg, t, pr, cmdSplit)
 	if err != nil || !ok {
 		return false, err
 	}
 	return true, r.approveSplit(ctx, cfg, t, c)
+}
+
+func (r *Reconciler) splitDecisionAnnotation(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (string, forge.Comment, bool, error) {
+	raw := t.Annotations[v1alpha1.AnnotationSplitDecision]
+	if raw == "" {
+		return "", forge.Comment{}, false, nil
+	}
+	var dec SplitDecisionAnnotation
+	if err := json.Unmarshal([]byte(raw), &dec); err != nil {
+		return "", forge.Comment{}, false, nil
+	}
+	if dec.Seq != t.Status.Split.Seq || dec.By == "" || (dec.Decision != "accept" && dec.Decision != "decline") {
+		return "", forge.Comment{}, false, nil
+	}
+	id := retryAnnotationID("split:" + raw)
+	if slices.Contains(t.Status.Handled, id) || !r.repo(cfg, t).IsMaintainer(dec.By) || r.CanWrite == nil {
+		return "", forge.Comment{}, false, nil
+	}
+	w, err := r.CanWrite(ctx, t.Spec.Repository, dec.By)
+	if err != nil {
+		return "", forge.Comment{}, false, fmt.Errorf("write check of %s: %w", dec.By, err)
+	}
+	if !w {
+		return "", forge.Comment{}, false, nil
+	}
+	return dec.Decision, forge.Comment{ID: id, Author: dec.By, At: r.Now()}, true, nil
+}
+
+// declineSplit is SL4 (b) via POST /v1/tasks/{task}/splits (phase G1): the split is declined and
+// the task runs whole on its existing scope, matching /factory retry on a proposed split.
+func (r *Reconciler) declineSplit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, c forge.Comment) error {
+	if err := r.resolveRetried(ctx, cfg, t); err != nil {
+		return err
+	}
+	markHandled(t, c.ID)
+	r.leaveSplit(ctx, t, SplitDeclined)
+	after := t.Status.Reason
+	t.Status.Retries++
+	t.Status.RetriedBy = v1alpha1.Person(c.Author)
+	t.Status.NextTrigger = "retry"
+	r.intervention(ctx, cfg, t, "retry")
+	next := v1alpha1.PhaseQueued
+	if t.Status.RoomRef == "" {
+		next = v1alpha1.PhaseTriaged
+	}
+	r.to(t, next, "")
+	narrateLater(t, narrate.Retrying(t, c.Author, after))
+	return nil
 }
 
 // approveSplit is SL4 (a) and SL11: the approver pays for every part, so their day is checked first,

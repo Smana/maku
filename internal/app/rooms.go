@@ -51,10 +51,13 @@ func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Cl
 	if err != nil {
 		return nil, err
 	}
-	if cfg.FactoryURL != "" { // #644, WR4: a task's cancel, discard and retry, with the caller's own token
+	if cfg.FactoryURL != "" { // #644, WR4, phase G1: task acts with the caller's own token
 		f := runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
 		actor.Cancels = f
 		actor.Retries = f
+		actor.Answers = f
+		actor.Splits = f
+		actor.Plans = f
 	}
 	var links ghidentity.LinkReader
 	if st, ok := roomLog.(githubLinkStore); ok && cfg.Human.GitHubLink != nil {
@@ -96,7 +99,7 @@ func humanActor(h config.HumanConfig, roomLog humanapi.ActLog, red humanapi.Reda
 	}
 	groups := h.EffectiveGroups()
 	return &humanapi.Actor{Log: roomLog, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
-		Runs: runs, Redactor: red, Rooms: rooms, Requester: requester,
+		Runs: runs, Redactor: red, Rooms: rooms, Requester: requester, RoomActs: h.EffectiveRoomActs(),
 		OnReject: func(ctx context.Context, reason string) {
 			m.Rejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 		},

@@ -58,13 +58,15 @@ func (e ErrRefused) Error() string {
 // clipped to "refused", so a factory's free text never reaches a model.
 var refusalCodes = []string{"kill_switch", "bad_json", "idempotency_key_required", "bad_data_class", "bad_ref",
 	"repository_not_allowed", "repository_not_owned", "meter_unpriced", "max_cost_required", "max_cost_over_principal",
-	"max_cost_over_class", "unauthenticated", "not_permitted", "not_linked", "link_unverified", "access_unverified", "not_a_maintainer", "sponsored_only", "invalid_draft", "bad_text", "tasks_unavailable",
+	"max_cost_over_class", "unauthenticated", "not_permitted", "not_linked", "link_unverified", "access_unverified", "not_a_maintainer", "sponsored_only", "invalid_draft", "invalid_decisions", "bad_text", "tasks_unavailable",
 	"principal_task_cap", "daily_task_cap", "ledger_unavailable", "principal_budget_exhausted", "intake_failed", "idempotency_conflict",
 	"human_only"}
 
 var actResults = []string{
 	"stopped", "retried", "stepped_up", "cancelled", "discarded",
 	"answered_restarted", "answered",
+	"split_accepted", "split_declined", "no_split",
+	"plan_approved", "plan_revised", "plan_split", "no_plan",
 	"not_linked", "not_maintainer", "not_allowed",
 	"not_running", "not_escalated", "no_question", "unknown_task",
 	"no_deeper_workflow", "deeper_over_cap",
@@ -106,6 +108,28 @@ func (f Factory) RetryTaskHuman(ctx context.Context, task string, deeper bool, a
 // AnswerTask posts onBehalfOf and text to the factory's POST /v1/tasks/{task}/answers with accessToken.
 func (f Factory) AnswerTask(ctx context.Context, task, onBehalfOf, text, accessToken string) (string, error) {
 	return f.actTask(ctx, "answers", task, onBehalfOf, text, accessToken)
+}
+
+// AnswerTaskHuman posts a human's own answer to the factory's POST /v1/tasks/{task}/answers with accessToken.
+func (f Factory) AnswerTaskHuman(ctx context.Context, task, text, accessToken string) (string, error) {
+	return f.postAct(ctx, "answers", task, struct {
+		Text string `json:"text"`
+	}{Text: text}, accessToken)
+}
+
+// SplitTaskHuman posts a human's split decision (accept or decline) to POST /v1/tasks/{task}/splits.
+func (f Factory) SplitTaskHuman(ctx context.Context, task, decision, accessToken string) (string, error) {
+	return f.postAct(ctx, "splits", task, struct {
+		Decision string `json:"decision"`
+	}{Decision: decision}, accessToken)
+}
+
+// PlanTaskHuman posts a human's plan decision (approve, revise with note, or split) to POST /v1/tasks/{task}/plans.
+func (f Factory) PlanTaskHuman(ctx context.Context, task, decision, note, accessToken string) (string, error) {
+	return f.postAct(ctx, "plans", task, struct {
+		Decision string `json:"decision"`
+		Note     string `json:"note,omitempty"`
+	}{Decision: decision, Note: note}, accessToken)
 }
 
 // CancelTask posts the caller's own cancel, or with discard their discard, to the factory's POST

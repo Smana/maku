@@ -82,6 +82,10 @@ const makuUsage = `usage: maku <command>
                                   branch and closes its issue as not planned (a GitHub App cannot delete an issue).
                                   The task's owner or a maintainer of its repository only
   retry <task> [--deeper]         queue a fresh run of an escalated task; --deeper steps it up once (also on a no-op task)
+  answer <task> "<one line>"      answer a task's open question, recording the decision on the issue (and restarting for a maintainer)
+  split accept|decline <task>     accept a proposed split (charged to you) or decline it to run the task whole
+  plan approve|split <task>       approve a proposed plan to start implementation, or split it into parts
+  plan revise <task> "<comment>"  ask the planner to revise a proposed plan once with your one-line comment
   stages [--repository owner/name] [--class c] [--json]
                                   per-stage cost and effect report for ended tasks of a repository
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
@@ -278,7 +282,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "retry", "stages", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "retry", "answer", "split", "plan", "stages", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -376,6 +380,12 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.cancel(ctx, c, args)
 	case "retry":
 		return r.retry(ctx, c, args)
+	case "answer":
+		return r.answer(ctx, c, args)
+	case "split":
+		return r.split(ctx, c, args)
+	case "plan":
+		return r.plan(ctx, c, args)
 	case "run":
 		return r.quickstartRun(ctx, cfg, c, args)
 	}
@@ -1047,6 +1057,113 @@ func (r Maku) retry(ctx context.Context, c maku.Client, args []string) error {
 		return err
 	}
 	_, err = io.WriteString(r.Out, maku.SafeText(pos[0]+": queued for another run\n"))
+	return err
+}
+
+// answer replies to a task's open scoper question with a single-line answer (phase G3). The
+// one-line rule is checked locally before sending, matching AppendDecision; the factory writes
+// the decision into the issue's ## Decisions section and restarts the task for a maintainer.
+func (r Maku) answer(ctx context.Context, c maku.Client, args []string) error {
+	pos, err := flags(flag.NewFlagSet("answer", flag.ContinueOnError), args)
+	if err != nil || len(pos) < 2 {
+		return fmt.Errorf("answer <task> \"<one line>\": %w", errors.Join(err, errors.New("a task and a one-line answer")))
+	}
+	text, err := maku.ValidateAnswer(strings.Join(pos[1:], " "))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, actTimeout)
+	defer cancel()
+	f, err := c.Act(ctx, pos[0], map[string]any{"kind": "answer", "text": text})
+	if err != nil {
+		return err
+	}
+	if f.Rejected != "" {
+		return fmt.Errorf("rejected: %s", maku.Explain(f.Rejected))
+	}
+	var res struct {
+		Result string `json:"result"`
+	}
+	if len(f.Result) > 0 {
+		_ = json.Unmarshal(f.Result, &res)
+	}
+	line := pos[0] + ": answered; the decision is on the issue and the task is restarting\n"
+	if res.Result == "answered" {
+		line = pos[0] + ": answered; the decision is on the issue and a maintainer restarts the task\n"
+	}
+	_, err = io.WriteString(r.Out, maku.SafeText(line))
+	return err
+}
+
+// split accepts or declines a task's proposed split (phase G3).
+func (r Maku) split(ctx context.Context, c maku.Client, args []string) error {
+	pos, err := flags(flag.NewFlagSet("split", flag.ContinueOnError), args)
+	if err != nil || len(pos) != 2 || (pos[0] != "accept" && pos[0] != "decline") {
+		return fmt.Errorf("split accept|decline <task>: %w", errors.Join(err, errors.New("accept or decline and one task")))
+	}
+	decision, task := pos[0], pos[1]
+	ctx, cancel := context.WithTimeout(ctx, actTimeout)
+	defer cancel()
+	f, err := c.Act(ctx, task, map[string]any{"kind": "split", "decision": decision})
+	if err != nil {
+		return err
+	}
+	if f.Rejected != "" {
+		return fmt.Errorf("rejected: %s", maku.Explain(f.Rejected))
+	}
+	line := task + ": split accepted; its parts open one at a time, charged to you\n"
+	if decision == "decline" {
+		line = task + ": split declined; the task is queued to run whole\n"
+	}
+	_, err = io.WriteString(r.Out, maku.SafeText(line))
+	return err
+}
+
+// plan approves, splits, or asks for a one-line revision of a task's proposed plan (phase G3).
+func (r Maku) plan(ctx context.Context, c maku.Client, args []string) error {
+	pos, err := flags(flag.NewFlagSet("plan", flag.ContinueOnError), args)
+	if err != nil || len(pos) < 2 {
+		return fmt.Errorf("plan approve|split <task> | plan revise <task> \"<one comment>\": %w",
+			errors.Join(err, errors.New("a decision and a task")))
+	}
+	decision, task := pos[0], pos[1]
+	action := map[string]any{"kind": "plan", "decision": decision}
+	switch decision {
+	case "approve", "split":
+		if len(pos) != 2 {
+			return fmt.Errorf("plan %s <task>: expected one task", decision)
+		}
+	case "revise":
+		if len(pos) < 3 {
+			return errors.New("plan revise <task> \"<one comment>\": a task and a one-line comment are required")
+		}
+		note, err := maku.ValidateAnswer(strings.Join(pos[2:], " "))
+		if err != nil {
+			return err
+		}
+		action["note"] = note
+	default:
+		return fmt.Errorf("plan: unknown decision %q (expected approve, revise or split)", decision)
+	}
+	ctx, cancel := context.WithTimeout(ctx, actTimeout)
+	defer cancel()
+	f, err := c.Act(ctx, task, action)
+	if err != nil {
+		return err
+	}
+	if f.Rejected != "" {
+		return fmt.Errorf("rejected: %s", maku.Explain(f.Rejected))
+	}
+	var line string
+	switch decision {
+	case "approve":
+		line = task + ": plan approved; implementation is queued\n"
+	case "split":
+		line = task + ": plan split; its parts open one at a time\n"
+	case "revise":
+		line = task + ": revision requested; the planner runs once more with your comment\n"
+	}
+	_, err = io.WriteString(r.Out, maku.SafeText(line))
 	return err
 }
 

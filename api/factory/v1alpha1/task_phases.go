@@ -57,6 +57,10 @@ const AnnotationRetry = "agents.ogenki.io/retry"
 // POST /v1/tasks/{task}/plans (phase F3).
 const AnnotationPlanDecision = "agents.ogenki.io/plan-decision"
 
+// AnnotationSplitDecision carries a split decision (accept, decline) posted to
+// POST /v1/tasks/{task}/splits (phase G1).
+const AnnotationSplitDecision = "agents.ogenki.io/split-decision"
+
 // AnnotationRevert records a maintainer's factory/revert on an auto-merged PR, within the window (§6.4).
 const AnnotationRevert = "agents.ogenki.io/revert"
 

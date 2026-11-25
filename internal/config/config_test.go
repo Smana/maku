@@ -1465,3 +1465,39 @@ func TestSessionStartRefused(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadRoomActs(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.Human.RoomActs, []string{"answer", "retry"}) {
+		t.Fatalf("default roomActs = %v, want [answer retry]", c.Human.RoomActs)
+	}
+	c, err = Load(write(t, valid+"  roomActs: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Human.RoomActs == nil || len(c.Human.RoomActs) != 0 {
+		t.Fatalf("explicit empty roomActs = %#v, want empty non-nil slice", c.Human.RoomActs)
+	}
+	c, err = Load(write(t, valid+"  roomActs: [answer, retry, split, plan, file, stop]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.Human.RoomActs, KnownRoomActs) {
+		t.Fatalf("all roomActs = %v, want %v", c.Human.RoomActs, KnownRoomActs)
+	}
+	for name, tc := range map[string]struct {
+		doc, want string
+	}{
+		"unknown act":   {valid + "  roomActs: [answer, teleport]\n", "not one of"},
+		"duplicate act": {valid + "  roomActs: [answer, answer]\n", "listed twice"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(write(t, tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

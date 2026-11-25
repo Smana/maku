@@ -20,6 +20,7 @@ import (
 
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/prpattern"
@@ -98,6 +99,24 @@ type TaskRetrier interface {
 	RetryTaskHuman(ctx context.Context, task string, deeper bool, accessToken string) (runrequest.RetryResult, error)
 }
 
+// TaskAnswerer reaches the factory's answers route with the caller's own token (phase G1);
+// runrequest.Factory implements it.
+type TaskAnswerer interface {
+	AnswerTaskHuman(ctx context.Context, task, text, accessToken string) (string, error)
+}
+
+// TaskSplitter reaches the factory's splits route with the caller's own token (phase G1);
+// runrequest.Factory implements it.
+type TaskSplitter interface {
+	SplitTaskHuman(ctx context.Context, task, decision, accessToken string) (string, error)
+}
+
+// TaskPlanner reaches the factory's plans route with the caller's own token (phase G1);
+// runrequest.Factory implements it.
+type TaskPlanner interface {
+	PlanTaskHuman(ctx context.Context, task, decision, note, accessToken string) (string, error)
+}
+
 // Actor serves humans' act frames: every write a human makes to a room. Log,
 // Groups, Runs and Redactor are required; Rooms is required for invite and new
 // rooms, Requester for start_run.
@@ -111,7 +130,17 @@ type Actor struct {
 	// Cancels is the factory's cancel and discard of the room's task (#644); nil refuses both.
 	Cancels TaskCanceller
 	// Retries is the factory's retry (plain or deeper) of the room's task (WR4); nil refuses both.
-	Retries  TaskRetrier
+	Retries TaskRetrier
+	// Answers, Splits, and Plans reach the factory's task-act routes with the caller's own token
+	// (phase G1); nil falls back to type-asserting Cancels (runrequest.Factory implements all of
+	// them) and refuses with factory_unavailable when absent.
+	Answers TaskAnswerer
+	Splits  TaskSplitter
+	Plans   TaskPlanner
+	// RoomActs is human.roomActs (phase G): the room act kinds enabled on this broker, among
+	// answer, retry, split, plan, file, stop. Nil takes config.DefaultRoomActs ([answer, retry]);
+	// a non-nil empty slice disables all gated room acts.
+	RoomActs []string
 	OnReject func(ctx context.Context, reason string)
 	// OnDecided observes a human decision's wait since its request
 	// (rooms_approval_decision_seconds).
@@ -159,6 +188,7 @@ const (
 	rejectExpired        = "approval_expired" // the decision reached the store after the deadline
 	rejectFourEyes       = "four_eyes"        // OD-16: the decider prompted the run
 	rejectTooLarge       = "too_large"        // a fork's prefix over the store's caps
+	rejectActNotEnabled  = "act_not_enabled"  // phase G: act kind not in human.roomActs
 )
 
 // maxReason bounds a take's reason, which the driver event carries.
@@ -195,8 +225,30 @@ var kinds = map[string]policy.Action{"remove_queued": policy.RemoveQueued, "prom
 	// #644: stopping closes the task, which is the owner's; the factory then asks for a maintainer
 	// of the repository or the task's requester, with write on it.
 	"cancel": policy.Close,
-	// WR4: retrying is authorized by the factory (maintainer with write on the task's repository).
-	"retry": policy.Read}
+	// Phase G1: room acts require room membership (Collaborator or Owner, never a watcher);
+	// the factory, never the broker, decides who may act on the task.
+	"answer": policy.Chat,
+	"split":  policy.Chat,
+	"plan":   policy.Chat,
+	"retry":  policy.Chat,
+	"stop":   policy.Chat}
+
+// roomActKinds are the act kinds gated by human.roomActs (phase G).
+var roomActKinds = map[string]bool{
+	"answer": true,
+	"retry":  true,
+	"split":  true,
+	"plan":   true,
+	"stop":   true,
+}
+
+func (a *Actor) roomActEnabled(kind string) bool {
+	allowed := a.RoomActs
+	if allowed == nil {
+		allowed = config.DefaultRoomActs
+	}
+	return slices.Contains(allowed, kind)
+}
 
 var deliveries = map[string]policy.Action{"none": policy.Chat, "queued": policy.Queue, "steering": policy.Steer}
 
@@ -254,6 +306,9 @@ func (a *Actor) HandleVia(ctx context.Context, p authn.Principal, via, session s
 	if !policy.Allowed(sub, pa) {
 		return reject(rejectNotPermitted)
 	}
+	if roomActKinds[act.Kind] && !a.roomActEnabled(act.Kind) {
+		return reject(rejectActNotEnabled)
+	}
 	// Every other action writes this room, and an invite must not change the Room
 	// first (review 4.2 M2). A fork writes only the new room, but a sealed room
 	// forks only for its owners, agents-admin included (ruling M3).
@@ -276,10 +331,16 @@ func (a *Actor) HandleVia(ctx context.Context, p authn.Principal, via, session s
 		ev, ack.Result, why = a.startRun(ctx, p, room, act, d)
 	case "fork":
 		ev, ack.Result, why = a.fork(ctx, p, sub.Role == policy.Owner, room, act, d)
-	case "cancel":
+	case "cancel", "stop":
 		why = a.cancel(ctx, p, room, act)
 	case "retry":
 		ack.Result, why = a.retry(ctx, p, room, act)
+	case "answer":
+		ack.Result, why = a.answer(ctx, p, room, act)
+	case "split":
+		ack.Result, why = a.split(ctx, p, room, act)
+	case "plan":
+		ack.Result, why = a.plan(ctx, p, room, act)
 	default:
 		ev, why = a.dispatch(ctx, p, room, st, act, via, d)
 	}
@@ -342,6 +403,92 @@ func (a *Actor) cancel(ctx context.Context, p authn.Principal, room *v1alpha1.Ro
 	return res // not_maintainer, not_linked, not_running, unknown_task
 }
 
+// answer forwards a room member's one-line answer to POST /v1/tasks/{task}/answers as p (phase G1).
+func (a *Actor) answer(ctx context.Context, p authn.Principal, room *v1alpha1.Room, act Action) (json.RawMessage, string) {
+	if strings.TrimSpace(act.Text) == "" || strings.ContainsAny(act.Text, "\r\n") {
+		return nil, rejectBadAction
+	}
+	answerer := a.Answers
+	if answerer == nil {
+		answerer, _ = a.Cancels.(TaskAnswerer)
+	}
+	if answerer == nil || p.AccessToken == "" {
+		return nil, rejectNoFactory
+	}
+	res, err := answerer.AnswerTaskHuman(ctx, room.Name, act.Text, p.AccessToken)
+	var refused runrequest.ErrRefused
+	switch {
+	case errors.As(err, &refused):
+		return nil, refused.Reason
+	case err != nil:
+		return nil, rejectNoFactory
+	case res == "answered_restarted" || res == "answered":
+		return envelope.Must(map[string]any{"result": res}), ""
+	}
+	return nil, res
+}
+
+// split forwards a room member's split decision (accept or decline) to POST /v1/tasks/{task}/splits
+// as p (phase G1). The factory verifies maintainer + write standing and charges the approver.
+func (a *Actor) split(ctx context.Context, p authn.Principal, room *v1alpha1.Room, act Action) (json.RawMessage, string) {
+	if act.Decision != "accept" && act.Decision != "decline" {
+		return nil, rejectBadAction
+	}
+	splitter := a.Splits
+	if splitter == nil {
+		splitter, _ = a.Cancels.(TaskSplitter)
+	}
+	if splitter == nil || p.AccessToken == "" {
+		return nil, rejectNoFactory
+	}
+	res, err := splitter.SplitTaskHuman(ctx, room.Name, act.Decision, p.AccessToken)
+	var refused runrequest.ErrRefused
+	switch {
+	case errors.As(err, &refused):
+		return nil, refused.Reason
+	case err != nil:
+		return nil, rejectNoFactory
+	case res == "split_accepted" || res == "split_declined":
+		return envelope.Must(map[string]any{"result": res}), ""
+	}
+	return nil, res
+}
+
+// plan forwards a room member's plan-gate decision (approve, revise with note, or split) to
+// POST /v1/tasks/{task}/plans as p (phase G1).
+func (a *Actor) plan(ctx context.Context, p authn.Principal, room *v1alpha1.Room, act Action) (json.RawMessage, string) {
+	switch act.Decision {
+	case "approve", "split":
+		if strings.TrimSpace(act.Note) != "" {
+			return nil, rejectBadAction
+		}
+	case "revise":
+		if strings.TrimSpace(act.Note) == "" || strings.ContainsAny(act.Note, "\r\n") {
+			return nil, rejectBadAction
+		}
+	default:
+		return nil, rejectBadAction
+	}
+	planner := a.Plans
+	if planner == nil {
+		planner, _ = a.Cancels.(TaskPlanner)
+	}
+	if planner == nil || p.AccessToken == "" {
+		return nil, rejectNoFactory
+	}
+	res, err := planner.PlanTaskHuman(ctx, room.Name, act.Decision, act.Note, p.AccessToken)
+	var refused runrequest.ErrRefused
+	switch {
+	case errors.As(err, &refused):
+		return nil, refused.Reason
+	case err != nil:
+		return nil, rejectNoFactory
+	case res == "plan_approved" || res == "plan_revised" || res == "plan_split":
+		return envelope.Must(map[string]any{"result": res}), ""
+	}
+	return nil, res
+}
+
 // logAct writes the one line an act leaves, for whoever asks who did what and
 // why it was refused. It names the act, never its text or reason: those are
 // human payloads, and the room log keeps them redacted. Every field the frame
@@ -376,6 +523,20 @@ func logAct(ctx context.Context, l *slog.Logger, p authn.Principal, room string,
 			dec = "invalid"
 		}
 		attrs = append(attrs, "approval", strings.ToValidUTF8(id, "?"), "decision", dec)
+	}
+	if kind == "split" {
+		dec := act.Decision
+		if dec != "accept" && dec != "decline" {
+			dec = "invalid"
+		}
+		attrs = append(attrs, "decision", dec)
+	}
+	if kind == "plan" {
+		dec := act.Decision
+		if dec != "approve" && dec != "revise" && dec != "split" {
+			dec = "invalid"
+		}
+		attrs = append(attrs, "decision", dec)
 	}
 	if ack.Rejected != "" {
 		l.WarnContext(ctx, "human act", append(attrs, "outcome", "refused", "reason", ack.Rejected)...)

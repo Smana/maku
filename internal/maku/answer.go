@@ -18,15 +18,24 @@ import (
 	"github.com/Smana/maku/internal/mcpwire"
 )
 
-// AppendDecision appends one confirmed, single-line answer to an issue's Decisions section. Existing
-// text is retained byte for byte; the new issue-local number follows the greatest existing record.
-func AppendDecision(body, answer string) (string, error) {
+// ValidateAnswer checks that answer is a single non-blank line, matching AppendDecision's rule.
+func ValidateAnswer(answer string) (string, error) {
 	if strings.ContainsAny(answer, "\r\n") {
 		return "", fmt.Errorf("invalid_answer: a decision must be one line")
 	}
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
 		return "", fmt.Errorf("invalid_answer: a decision must not be blank")
+	}
+	return answer, nil
+}
+
+// AppendDecision appends one confirmed, single-line answer to an issue's Decisions section. Existing
+// text is retained byte for byte; the new issue-local number follows the greatest existing record.
+func AppendDecision(body, answer string) (string, error) {
+	answer, err := ValidateAnswer(answer)
+	if err != nil {
+		return "", err
 	}
 	records, err := sanitize.DecisionRecords(body)
 	if err != nil {

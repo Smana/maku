@@ -144,7 +144,7 @@ func (s *Server) roomctlSetup(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.principal(w, r); !ok {
 		return
 	}
-	s.writeSetup(w, s.Dashboards)
+	s.writeSetup(w, s.Dashboards, s.effectiveRoomActs())
 }
 
 // publicSetup is GET /.well-known/maku: the same
@@ -152,7 +152,17 @@ func (s *Server) roomctlSetup(w http.ResponseWriter, r *http.Request) {
 // issuer, the client id and the project id are public by design (a native app has no secret) and
 // the CLI setup view shows them to any member. The proxy in front must let this path through
 // unauthenticated.
-func (s *Server) publicSetup(w http.ResponseWriter, _ *http.Request) { s.writeSetup(w, nil) }
+func (s *Server) publicSetup(w http.ResponseWriter, _ *http.Request) { s.writeSetup(w, nil, nil) }
+
+func (s *Server) effectiveRoomActs() []string {
+	if s.RoomActs != nil {
+		return s.RoomActs
+	}
+	if s.Actor != nil && s.Actor.RoomActs != nil {
+		return s.Actor.RoomActs
+	}
+	return slices.Clone(config.DefaultRoomActs)
+}
 
 // Dashboard is one link template the room page fills with a room's ids (human.dashboards):
 // {room}, {run}, {task}, {created} and {ended}, each URL-encoded, and a link whose value is missing hidden.
@@ -161,7 +171,7 @@ type Dashboard struct {
 	URL   string `json:"url"`
 }
 
-func (s *Server) writeSetup(w http.ResponseWriter, dashboards []Dashboard) {
+func (s *Server) writeSetup(w http.ResponseWriter, dashboards []Dashboard, roomActs []string) {
 	read := func(f func() string) string {
 		if f == nil {
 			return ""
@@ -179,13 +189,16 @@ func (s *Server) writeSetup(w http.ResponseWriter, dashboards []Dashboard) {
 		HumanMode string `json:"humanMode"`
 		// Dashboards are the templates, absent when none is configured.
 		Dashboards []Dashboard `json:"dashboards,omitempty"`
+		// RoomActs are the phase-G room acts enabled on this broker (human.roomActs), served to
+		// signed-in callers only.
+		RoomActs []string `json:"roomActs,omitempty"`
 		// Preset and TokenUse say how maku signs in (v4 D8): additive, so an older maku reads the
 		// zitadel answer it always did. Scopes and Audience are left out when empty.
 		Preset   string   `json:"preset"`
 		TokenUse string   `json:"tokenUse"`
 		Scopes   []string `json:"scopes,omitempty"`
 		Audience string   `json:"audience,omitempty"`
-	}{s.PublicURL, s.Issuer, read(s.RoomctlClient), read(s.ProjectID), version.Version, cmp.Or(s.HumanMode, config.HumanModeOIDC), dashboards,
+	}{s.PublicURL, s.Issuer, read(s.RoomctlClient), read(s.ProjectID), version.Version, cmp.Or(s.HumanMode, config.HumanModeOIDC), dashboards, roomActs,
 		cmp.Or(s.Preset, config.PresetZITADEL), cmp.Or(s.TokenUse, config.TokenUseAccess), s.Scopes, read(s.Audience)})
 }
 

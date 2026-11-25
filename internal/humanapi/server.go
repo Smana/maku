@@ -215,6 +215,9 @@ type Server struct {
 	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the
 	// settings pages and the policy API. Nil serves neither: each path is the mux's 404.
 	Policy *Policy
+	// RoomActs is human.roomActs (phase G): the room acts enabled over a room's connection.
+	// Nil takes config.DefaultRoomActs ([answer, retry]).
+	RoomActs []string
 
 	// Connection bounds; zero takes the default.
 	HelloWait time.Duration // the first frame must arrive within it (10 s)
@@ -260,6 +263,9 @@ func (s *Server) Routes() http.Handler {
 	}
 	if s.Actor != nil && s.Actor.Writes == nil {
 		s.Actor.Writes = s.writes // HR28: the room page's digest-bound decisions, as Slack's step 10
+	}
+	if s.Actor != nil && s.Actor.RoomActs == nil && s.RoomActs != nil {
+		s.Actor.RoomActs = s.RoomActs
 	}
 	mux := http.NewServeMux()
 	index, assets := http.NotFoundHandler(), http.NotFoundHandler()

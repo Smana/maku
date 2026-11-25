@@ -674,4 +674,141 @@ func TestPlanRouteApproveReviseSplit(t *testing.T) {
 	if !strings.Contains(updated.Annotations[factoryv1.AnnotationPlanDecision], `"note":"keep cache untouched"`) {
 		t.Fatalf("annotation = %q", updated.Annotations[factoryv1.AnnotationPlanDecision])
 	}
+	// Authenticated human caller also works on /plans.
+	if got := actResult(t, postAct(t, env.srv, "human", "/v1/tasks/3buqdlot/plans", `{"decision":"approve"}`)); got != api.ActPlanApproved {
+		t.Fatalf("human approve: got %q, want %q", got, api.ActPlanApproved)
+	}
+}
+
+func TestASplitAcceptChargesTheApprover(t *testing.T) {
+	splitTask := makeActTask("3buqdlot", factoryv1.PhaseEscalated, "split_proposed")
+	splitTask.Spec.Source.RequestedBy = "github:contributor"
+	splitTask.Spec.IssueAuthor = "contributor"
+	splitTask.Spec.Split = &factoryv1.SplitSpec{MaxChildren: 3, FamilyMicroUSD: 20_400_000, ChildTier: "standard"}
+	splitTask.Status.Scope = &factoryv1.ScopeStatus{State: "ready", Seq: 1}
+	splitTask.Status.Split = &factoryv1.SplitStatus{State: "proposed", Seq: 1, Of: 2}
+	splitTask.Status.RoomRef = "3buqdlot"
+
+	other := makeActTask("4buqdlot", factoryv1.PhaseImplementing, "")
+
+	env := newActEnv(t, splitTask, other)
+	cfg := env.rec.Cfg.Current()
+	cfg.Tiers["standard"] = config.Tier{Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45, RunUSD: 2.55, TaskUSD: 5.10}
+	cfg.Budgets.PerPerson = config.PerPerson{Enabled: true, DailyUSD: 5}
+	cfg.Budgets.EnforcePrincipal = true
+	env.srv.Auth = actTokens{
+		"slack":   {Kind: envelope.ActorSystem, ID: "system:slack-app", Sponsored: true, AccessToken: "slack"},
+		"human":   {Kind: envelope.ActorHuman, ID: "human:291", Sub: "zsub-smana", Groups: []string{"agents-admin"}},
+		"contrib": {Kind: envelope.ActorHuman, ID: "human:292", Sub: "zsub-contrib", Groups: []string{"agents-member"}},
+	}
+
+	sc := envelope.Scope{
+		State:      "ready",
+		Task:       "Fix both links.",
+		Touches:    []string{"docs/page-1.md", "docs/page-2.md"},
+		Plan:       []string{"Fix each page."},
+		Acceptance: []envelope.Acceptance{{Check: "task docs", Proves: "links resolve"}},
+	}
+	sp := envelope.Split{
+		Why: "Two independent pages.",
+		Children: []envelope.Scope{
+			{State: "ready", Task: "Fix page 1.", Touches: []string{"docs/page-1.md"}, Plan: []string{"Fix 1."}, Acceptance: []envelope.Acceptance{{Check: "task docs", Proves: "p1"}}},
+			{State: "ready", Task: "Fix page 2.", Touches: []string{"docs/page-2.md"}, Plan: []string{"Fix 2."}, Acceptance: []envelope.Acceptance{{Check: "task docs", Proves: "p2"}}},
+		},
+	}
+	env.roomLog.evs = append(env.roomLog.evs, envelope.Event{
+		Seq:   1,
+		RunID: "scoper01",
+		Type:  envelope.Handoff,
+		Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:scoper01", Role: "triager"},
+		Payload: envelope.Must(envelope.HandoffPayload{
+			FromRole: "triager",
+			ToRole:   "implementer",
+			Summary:  "Scoped and split.",
+			Commit:   strings.Repeat("c", 40),
+			Scope:    &sc,
+			Split:    &sp,
+		}),
+	})
+
+	// Non-split task returns no_split; non-maintainer returns not_maintainer; invalid decision returns 400.
+	if got := actResult(t, postAct(t, env.srv, "human", "/v1/tasks/4buqdlot/splits", `{"decision":"accept"}`)); got != api.ActNoSplit {
+		t.Fatalf("non-split task: got %q, want %q", got, api.ActNoSplit)
+	}
+	if got := actResult(t, postAct(t, env.srv, "contrib", "/v1/tasks/3buqdlot/splits", `{"decision":"accept"}`)); got != api.ActNotMaintainer {
+		t.Fatalf("non-maintainer: got %q, want %q", got, api.ActNotMaintainer)
+	}
+	if rec := postAct(t, env.srv, "human", "/v1/tasks/3buqdlot/splits", `{"decision":"maybe"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid decision: got %d, want 400", rec.Code)
+	}
+
+	// Human maintainer accepts the split via POST /v1/tasks/{task}/splits.
+	if got := actResult(t, postAct(t, env.srv, "human", "/v1/tasks/3buqdlot/splits", `{"decision":"accept"}`)); got != api.ActSplitAccepted {
+		t.Fatalf("accept: got %q, want %q", got, api.ActSplitAccepted)
+	}
+
+	// Reconcile: transitions Escalated -> Split with ApprovedBy=github:smana, then opens part 1 charged to github:smana.
+	tk := reconcileTask(t, env.rec, "3buqdlot", 2)
+	if tk.Status.Phase != factoryv1.PhaseSplit || tk.Status.Split.State != "approved" || tk.Status.Split.ApprovedBy != "github:smana" {
+		t.Fatalf("parent after accept: phase=%s split=%+v", tk.Status.Phase, tk.Status.Split)
+	}
+	if len(tk.Status.Split.Children) != 1 {
+		t.Fatalf("expected part 1 opened, got %+v", tk.Status.Split.Children)
+	}
+	var child factoryv1.Task
+	if err := env.client.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: tk.Status.Split.Children[0].Task}, &child); err != nil {
+		t.Fatal(err)
+	}
+	if child.Spec.Source.RequestedBy != "github:smana" {
+		t.Fatalf("child RequestedBy = %q, want github:smana (the approver, not original requester)", child.Spec.Source.RequestedBy)
+	}
+
+	// Also verify decline via POST /v1/tasks/{task}/splits queues the task whole.
+	decl := makeActTask("5buqdlot", factoryv1.PhaseEscalated, "split_proposed")
+	decl.Spec.Split = &factoryv1.SplitSpec{MaxChildren: 3, FamilyMicroUSD: 20_400_000, ChildTier: "standard"}
+	decl.Status.Scope = &factoryv1.ScopeStatus{State: "ready", Seq: 1}
+	decl.Status.Split = &factoryv1.SplitStatus{State: "proposed", Seq: 1, Of: 2}
+	decl.Status.RoomRef = "5buqdlot"
+	if err := env.client.Create(t.Context(), decl); err != nil {
+		t.Fatal(err)
+	}
+	if got := actResult(t, postAct(t, env.srv, "human", "/v1/tasks/5buqdlot/splits", `{"decision":"decline"}`)); got != api.ActSplitDeclined {
+		t.Fatalf("decline: got %q, want %q", got, api.ActSplitDeclined)
+	}
+	declAfter := reconcileTask(t, env.rec, "5buqdlot", 1)
+	if declAfter.Status.Phase != factoryv1.PhaseQueued || declAfter.Status.Split.State != "declined" {
+		t.Fatalf("declined split: phase=%s split=%+v", declAfter.Status.Phase, declAfter.Status.Split)
+	}
+}
+
+func TestHumanAnswerRoute(t *testing.T) {
+	tk := makeActTask("6buqdlot", factoryv1.PhaseEscalated, "needs_author")
+	tk.Spec.IssueAuthor = "contributor"
+	env := newActEnv(t, tk)
+	env.srv.Auth = actTokens{
+		"human":   {Kind: envelope.ActorHuman, ID: "human:291", Sub: "zsub-smana", Groups: []string{"agents-admin"}},
+		"contrib": {Kind: envelope.ActorHuman, ID: "human:292", Sub: "zsub-contrib", Groups: []string{"agents-member"}},
+		"nowrite": {Kind: envelope.ActorHuman, ID: "human:293", Sub: "zsub-nowrite", Groups: []string{"agents-member"}},
+	}
+	env.forge.SetIssue(makeQuestionIssue("contributor"))
+
+	// Human non-author non-writer is refused with not_allowed.
+	if got := actResult(t, postAct(t, env.srv, "nowrite", "/v1/tasks/6buqdlot/answers", `{"text":"nope"}`)); got != api.AnswerNotAllowed {
+		t.Fatalf("outsider: got %q, want %q", got, api.AnswerNotAllowed)
+	}
+	// Human author writes the decision only.
+	if got := actResult(t, postAct(t, env.srv, "contrib", "/v1/tasks/6buqdlot/answers", `{"text":"author answer"}`)); got != api.AnswerWritten {
+		t.Fatalf("author: got %q, want %q", got, api.AnswerWritten)
+	}
+	// Human maintainer writes and restarts.
+	if got := actResult(t, postAct(t, env.srv, "human", "/v1/tasks/6buqdlot/answers", `{"text":"maintainer answer"}`)); got != api.AnswerRestarted {
+		t.Fatalf("maintainer: got %q, want %q", got, api.AnswerRestarted)
+	}
+	iss, err := env.forge.Issue(t.Context(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(iss.Body, "D1: author answer (@contributor)") || !strings.Contains(iss.Body, "D2: maintainer answer (@Smana)") {
+		t.Fatalf("issue body = %q", iss.Body)
+	}
 }

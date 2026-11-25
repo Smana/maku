@@ -28,6 +28,7 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/wire"
@@ -1085,5 +1086,181 @@ func TestADecisionPastItsDeadlineIsApprovalExpired(t *testing.T) {
 	f := act(a, room, "human:own", 1, nil, Action{Kind: "decide", ApprovalID: "ap1", Decision: "approved"})
 	if f.Rejected != "approval_expired" || !slices.Equal(rejected, []string{"approval_expired"}) || decided != 0 {
 		t.Fatalf("ack %+v, rejected %v, decided %d", f, rejected, decided)
+	}
+}
+
+type fakeRoomActs struct {
+	answers []struct{ task, text, token string }
+	splits  []struct{ task, decision, token string }
+	plans   []struct{ task, decision, note, token string }
+	retries []struct {
+		task, token string
+		deeper      bool
+	}
+	cancels []struct {
+		task, token string
+		discard     bool
+	}
+	answerRes string
+	splitRes  string
+	planRes   string
+	retryRes  runrequest.RetryResult
+	cancelRes string
+	err       error
+}
+
+func (f *fakeRoomActs) AnswerTaskHuman(_ context.Context, task, text, accessToken string) (string, error) {
+	f.answers = append(f.answers, struct{ task, text, token string }{task, text, accessToken})
+	return f.answerRes, f.err
+}
+
+func (f *fakeRoomActs) SplitTaskHuman(_ context.Context, task, decision, accessToken string) (string, error) {
+	f.splits = append(f.splits, struct{ task, decision, token string }{task, decision, accessToken})
+	return f.splitRes, f.err
+}
+
+func (f *fakeRoomActs) PlanTaskHuman(_ context.Context, task, decision, note, accessToken string) (string, error) {
+	f.plans = append(f.plans, struct{ task, decision, note, token string }{task, decision, note, accessToken})
+	return f.planRes, f.err
+}
+
+func (f *fakeRoomActs) RetryTaskHuman(_ context.Context, task string, deeper bool, accessToken string) (runrequest.RetryResult, error) {
+	f.retries = append(f.retries, struct {
+		task, token string
+		deeper      bool
+	}{task, accessToken, deeper})
+	return f.retryRes, f.err
+}
+
+func (f *fakeRoomActs) CancelTask(_ context.Context, task string, discard bool, accessToken string) (string, error) {
+	f.cancels = append(f.cancels, struct {
+		task, token string
+		discard     bool
+	}{task, accessToken, discard})
+	return f.cancelRes, f.err
+}
+
+func actWithToken(a *Actor, room *v1alpha1.Room, who string, groups []string, seq int64, action Action) wire.ServerFrame {
+	raw, _ := json.Marshal(action)
+	p := authn.Principal{Kind: envelope.ActorHuman, ID: who, Groups: groups, AccessToken: "tok-" + who}
+	return a.Handle(context.Background(), p, true, "s1", room, wire.ClientFrame{Type: wire.FrameAct, ClientSeq: seq, Action: raw})
+}
+
+func TestAnAnswerActReachesTheFactoryAsTheViewer(t *testing.T) {
+	a, _, room := fixture("system:factory")
+	fa := &fakeRoomActs{answerRes: "answered_restarted"}
+	a.Answers = fa
+
+	f := actWithToken(a, room, "human:col", []string{"agents-member"}, 1, Action{Kind: "answer", Text: "use task check"})
+	if f.Rejected != "" {
+		t.Fatalf("unexpected rejection: %+v", f)
+	}
+	if len(fa.answers) != 1 || fa.answers[0] != (struct{ task, text, token string }{"3kq7x2ma", "use task check", "tok-human:col"}) {
+		t.Fatalf("answers = %+v", fa.answers)
+	}
+	if !strings.Contains(string(f.Result), `"answered_restarted"`) {
+		t.Fatalf("result = %s", f.Result)
+	}
+	// Multi-line answer is refused as bad_action before reaching the factory.
+	if f := actWithToken(a, room, "human:col", []string{"agents-member"}, 2, Action{Kind: "answer", Text: "line1\nline2"}); f.Rejected != "bad_action" {
+		t.Fatalf("multiline answer: %+v", f)
+	}
+	// Factory refusal propagates as the ack's rejection code.
+	fa.answerRes = "not_allowed"
+	if f := actWithToken(a, room, "human:col", []string{"agents-member"}, 3, Action{Kind: "answer", Text: "nope"}); f.Rejected != "not_allowed" {
+		t.Fatalf("factory refusal: %+v", f)
+	}
+}
+
+func TestAnActOutsideRoomActsIsRefused(t *testing.T) {
+	a, _, room := fixture("system:factory")
+	fa := &fakeRoomActs{
+		answerRes: "answered",
+		splitRes:  "split_accepted",
+		planRes:   "plan_approved",
+		retryRes:  runrequest.RetryResult{Result: "retried"},
+		cancelRes: "cancelled",
+	}
+	a.Answers, a.Splits, a.Plans, a.Retries, a.Cancels = fa, fa, fa, fa, fa
+
+	// Default RoomActs is [answer, retry]: split, plan, and stop are refused with act_not_enabled.
+	for i, action := range []Action{
+		{Kind: "split", Decision: "accept"},
+		{Kind: "plan", Decision: "approve"},
+		{Kind: "stop"},
+	} {
+		if f := actWithToken(a, room, "human:col", []string{"agents-member"}, int64(i+1), action); f.Rejected != rejectActNotEnabled {
+			t.Fatalf("%s with default roomActs: got %+v, want %s", action.Kind, f, rejectActNotEnabled)
+		}
+	}
+	if len(fa.splits) != 0 || len(fa.plans) != 0 || len(fa.cancels) != 0 {
+		t.Fatalf("refused acts must not call factory: %+v", fa)
+	}
+
+	// Explicit empty RoomActs refuses answer and retry too.
+	a.RoomActs = []string{}
+	for i, action := range []Action{
+		{Kind: "answer", Text: "yes"},
+		{Kind: "retry"},
+	} {
+		if f := actWithToken(a, room, "human:col", []string{"agents-member"}, int64(i+10), action); f.Rejected != rejectActNotEnabled {
+			t.Fatalf("%s with empty roomActs: got %+v, want %s", action.Kind, f, rejectActNotEnabled)
+		}
+	}
+
+	// Enabling split, plan, stop allows them to reach the factory as the viewer.
+	a.RoomActs = []string{"answer", "retry", "split", "plan", "stop"}
+	if f := actWithToken(a, room, "human:col", []string{"agents-member"}, 20, Action{Kind: "split", Decision: "accept"}); f.Rejected != "" {
+		t.Fatalf("enabled split: %+v", f)
+	}
+	if f := actWithToken(a, room, "human:col", []string{"agents-member"}, 21, Action{Kind: "plan", Decision: "approve"}); f.Rejected != "" {
+		t.Fatalf("enabled plan: %+v", f)
+	}
+	if f := actWithToken(a, room, "human:col", []string{"agents-member"}, 22, Action{Kind: "stop"}); f.Rejected != "" {
+		t.Fatalf("enabled stop: %+v", f)
+	}
+	if len(fa.splits) != 1 || fa.splits[0].token != "tok-human:col" ||
+		len(fa.plans) != 1 || fa.plans[0].token != "tok-human:col" ||
+		len(fa.cancels) != 1 || fa.cancels[0].token != "tok-human:col" {
+		t.Fatalf("calls = %+v", fa)
+	}
+}
+
+func TestAWatcherMayNotAct(t *testing.T) {
+	a, _, room := fixture("system:factory")
+	room.Spec.Members = append(room.Spec.Members, v1alpha1.Member{Principal: "human:watch", Role: "watcher"})
+	a.RoomActs = []string{"answer", "retry", "split", "plan", "stop"}
+	fa := &fakeRoomActs{
+		answerRes: "answered",
+		splitRes:  "split_accepted",
+		planRes:   "plan_approved",
+		retryRes:  runrequest.RetryResult{Result: "retried"},
+		cancelRes: "cancelled",
+	}
+	a.Answers, a.Splits, a.Plans, a.Retries, a.Cancels = fa, fa, fa, fa, fa
+
+	acts := []Action{
+		{Kind: "answer", Text: "yes"},
+		{Kind: "retry"},
+		{Kind: "split", Decision: "accept"},
+		{Kind: "plan", Decision: "approve"},
+		{Kind: "stop"},
+	}
+	for _, who := range []struct {
+		id     string
+		groups []string
+	}{
+		{"human:watch", []string{"agents-member"}},     // explicit watcher member
+		{"human:bystander", []string{"agents-member"}}, // implicit watcher via member group
+		{"human:stranger", nil},                        // non-member
+	} {
+		for i, action := range acts {
+			if f := actWithToken(a, room, who.id, who.groups, int64(i+1), action); f.Rejected != rejectNotPermitted {
+				t.Fatalf("%s sending %s: got %+v, want %s", who.id, action.Kind, f, rejectNotPermitted)
+			}
+		}
+	}
+	if len(fa.answers)+len(fa.retries)+len(fa.splits)+len(fa.plans)+len(fa.cancels) != 0 {
+		t.Fatalf("watcher/non-member must never reach factory: %+v", fa)
 	}
 }
