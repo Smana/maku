@@ -451,6 +451,17 @@ func PlanProposed(t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, room
 		"- `/factory plan revise <comment>` — run the scoper once more with your note\n"+
 		"- `/factory plan split` — approve the proposed split into parts\n\n"+
 		"Room: [the room](%s).", room)
+	// Plan commands held before this plan existed answer no plan: named, never applied to this one.
+	var early []string
+	for _, h := range t.Status.Held {
+		if strings.HasPrefix(h.Command, "plan-") {
+			early = append(early, fmt.Sprintf("`/factory %s` by @%s", strings.Replace(h.Command, "-", " ", 1), h.Author))
+		}
+	}
+	if len(early) > 0 {
+		fmt.Fprintf(&b, "\n\n**Posted before this plan existed, not applied:** %s. A plan command answers the plan it was "+
+			"posted on: answer this one above.", strings.Join(early, ", "))
+	}
 	return Event{Key: fmt.Sprintf("plan-proposed-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 

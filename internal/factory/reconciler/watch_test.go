@@ -66,11 +66,13 @@ func TestRequestChangesStartsARevision(t *testing.T) {
 	g.f.SetPR(pr12(changes(800, "Smana", "older than the run", 2*time.Hour),
 		changes(850, "someone", "not a maintainer", 10*time.Minute), latest))
 	tk := g.reconcile(t, "3buqdlot", 1)
+	// The non-maintainer's review is not input, and is answered so, once (no silent drops).
 	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.NextTrigger != "human" || !slices.Equal(g.log.reviews(), []int64{901}) ||
-		!slices.Equal(tk.Status.Handled, []int64{901}) {
+		!slices.Equal(tk.Status.Handled, []int64{850, 901}) {
 		t.Fatalf("%s %s %+v %v", tk.Status.Phase, tk.Status.NextTrigger, g.log.queue, tk.Status.Handled)
 	}
-	if c := g.f.Comments(12); len(c) != 1 || !strings.Contains(c[0], "revising after @Smana's review") {
+	if c := g.f.Comments(12); len(c) != 2 || !strings.Contains(c[0], "your Request changes review was not acted on") ||
+		strings.Contains(c[0], "not a maintainer") || !strings.Contains(c[1], "revising after @Smana's review") {
 		t.Fatalf("%q", c)
 	}
 	if !strings.Contains(g.log.queue[0].Text, untrustedHeader) || g.log.ref(901) == 0 {
@@ -470,7 +472,8 @@ func TestRetryRevivesAnEscalatedTask(t *testing.T) {
 }
 
 // A command counts only as a maintainer's own line, unedited, posted since the escalation and not
-// acted on yet. Anything else is dropped without an answer (T1).
+// acted on yet. Someone else's is answered as not acted on (no silent drops); anything else that is
+// not a command is not one.
 func TestOnlyAMaintainersFreshCommandRetries(t *testing.T) {
 	edited := retryBy(81, "Smana", time.Minute)
 	edited.Edited = true
@@ -491,8 +494,15 @@ func TestOnlyAMaintainersFreshCommandRetries(t *testing.T) {
 			g := newRig(t, tk, roomOf("3buqdlot"))
 			g.f.SetComments(7, c)
 			got := g.reconcile(t, "3buqdlot", 2)
-			if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Retries != 0 || len(eventCommentBodies(g.f, 7)) != 1 {
+			want := 1
+			if c.Author == "someone" {
+				want = 2 // the one reply, once over two passes
+			}
+			if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Retries != 0 || len(eventCommentBodies(g.f, 7)) != want {
 				t.Fatalf("%s %d %q", got.Status.Phase, got.Status.Retries, eventCommentBodies(g.f, 7))
+			}
+			if want == 2 && !strings.Contains(eventCommentBodies(g.f, 7)[1], "`/factory retry` was not acted on") {
+				t.Fatalf("%q", eventCommentBodies(g.f, 7))
 			}
 		})
 	}
@@ -529,7 +539,13 @@ func TestARetryNeedsWriteOnTheTasksRepository(t *testing.T) {
 			if err := g.c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &tk); err != nil {
 				t.Fatal(err)
 			}
-			if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Retries != 0 || len(tk.Status.Handled) != 0 || len(eventCommentBodies(g.f, 7)) != 1 {
+			// Read only: refused and answered once; a failing lookup waits; no checker reads nothing.
+			handled, comments := 0, 1
+			if name == "read only" {
+				handled, comments = 1, 2
+			}
+			if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Retries != 0 || len(tk.Status.Handled) != handled ||
+				len(eventCommentBodies(g.f, 7)) != comments {
 				t.Fatalf("%s %d %v %q", tk.Status.Phase, tk.Status.Retries, tk.Status.Handled, eventCommentBodies(g.f, 7))
 			}
 			if tc.check != nil && !slices.Equal(asked, []ask{{"Smana/cloud-native-ref", "Smana"}}) {

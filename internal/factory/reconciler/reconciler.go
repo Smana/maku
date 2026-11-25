@@ -265,6 +265,7 @@ type Reconciler struct {
 	probes    probeClock // when each task's issue was last probed for a deletion (#644)
 	ledger    mergeLedger
 	mon       monitorCache
+	held      heldScans
 }
 
 // SetupWithManager watches Tasks and the AgentRuns that carry a task label.
@@ -495,11 +496,24 @@ func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 			return err
 		}
 		if stop {
-			return r.stop(ctx, cfg, t, why)
+			err := r.stop(ctx, cfg, t, why)
+			r.settleHeld(t, nil) // the task ended: its held commands expire
+			return err
 		}
 	}
 	// H1: a writer run whose shadow pass failed is retried here, on any later pass (audit only).
 	r.shadowPending(ctx, cfg, t)
+	// Early commands are held before the phase's handler runs, and settled after it: applied,
+	// or expired with a reply.
+	inPhase := r.heldInPhase(t)
+	r.holdCommands(ctx, cfg, t)
+	err := r.stepPhase(ctx, cfg, t)
+	r.settleHeld(t, inPhase)
+	return err
+}
+
+// stepPhase runs the handler of the task's phase.
+func (r *Reconciler) stepPhase(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	switch t.Status.Phase {
 	case v1alpha1.PhaseReceived:
 		return r.received(ctx, cfg, t)

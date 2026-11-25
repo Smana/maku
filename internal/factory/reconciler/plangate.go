@@ -108,6 +108,7 @@ func (r *Reconciler) enterPlanGate(ctx context.Context, cfg *config.Config, t *v
 	if n > 0 {
 		narrateLater(t, narrate.PlanProposed(t, sc, validSplit, cfg.RoomsURL))
 	}
+	dropPlanHeld(t) // named in that comment, never applied to this plan
 	return nil
 }
 
@@ -272,6 +273,7 @@ func (r *Reconciler) readPlanAnswer(ctx context.Context, cfg *config.Config, t *
 			return planAnswer{}, false, err
 		}
 		if !allowed {
+			r.refuseInput(cfg, t, c.ID, c.Author, t.Spec.Issue, "`/factory plan "+dec+"`")
 			continue
 		}
 		if !found || c.At.After(best.At) {

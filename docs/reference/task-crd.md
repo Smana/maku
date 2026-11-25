@@ -48,6 +48,8 @@ creating it twice is the dedup. Source: `api/factory/v1alpha1/task_types.go`.
 | `status.roomSeq`, `status.facts` | The task's message sequence in its room; the facts last written there |
 | `status.nextTrigger`, `status.nextRole` | Why the next run exists; the verifier it is for |
 | `status.handled` | GitHub review and comment ids already acted on |
+| `status.held` | Up to 16 maintainers' commands posted before the phase they apply in: `id` (the comment), `command` (`retry`, `retry-deeper`, `retry-openhands`, `split`, `fix`, `plan-approve`, `plan-revise`, `plan-split`), `author`, `at`. Each leaves when applied or expired ([Commands posted early](../factory.md#commands-posted-early-and-input-that-is-not-acted-on)) |
+| `status.refusals` | Up to 16 `login`, `at`: the last "not acted on" reply to each person, at most one an hour |
 | `status.configHash` | The config that triaged the task |
 | `status.contract` | `runId`, `commit` (40 hex), `files`, `ids` (1 to 50 each): the tester's commit as GitHub recorded it. Set once, when its push is read; every implementer run is held to it |
 | `status.scope` | `state` (`ready`, `question`, `assumed`, `missing`, `failed`) and `seq` (the scope's handoff): the scoper's outcome, kept when the task stops |

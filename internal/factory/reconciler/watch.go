@@ -215,9 +215,14 @@ func (r *Reconciler) changesRequested(cfg *config.Config, t *v1alpha1.Task, pr f
 	since := current(t).Started
 	var out []forge.Review
 	for _, rv := range openChangeRequests(pr.Reviews, false) {
-		if r.repo(cfg, t).IsMaintainer(rv.Author) && !slices.Contains(t.Status.Handled, rv.ID) && (since == nil || rv.At.After(since.Time)) {
-			out = append(out, rv)
+		if slices.Contains(t.Status.Handled, rv.ID) || (since != nil && !rv.At.After(since.Time)) {
+			continue
 		}
+		if !r.repo(cfg, t).IsMaintainer(rv.Author) { // advice to a maintainer, and told so
+			r.refuseInput(cfg, t, rv.ID, rv.Author, pr.Number, "your Request changes review")
+			continue
+		}
+		out = append(out, rv)
 	}
 	slices.SortFunc(out, func(a, b forge.Review) int { return cmp.Compare(a.ID, b.ID) })
 	return out
@@ -300,13 +305,15 @@ const (
 )
 
 // command is the newest maintainer comment carrying verb alone on a line, on the task's issue or
-// on pr (the zero PR when the task has none), posted since the task entered its phase and not yet
-// acted on, whose author holds write on the task's repository (asked last, of the newest
-// candidate only). Anyone else's command is dropped without an answer (T1), so it cannot make the
-// factory talk. An edited comment never counts: its text may not be its author's. A failing
+// on pr (the zero PR when the task has none), posted since the task entered its phase, or held
+// from before it (held.go), and not yet acted on, whose author holds write on the task's
+// repository (asked last, of the newest candidate only). Anyone else's command is not acted on
+// (T1) and answered so, at most once per person an hour (refuseInput); so is a maintainer's
+// without write. An edited comment never counts: its text may not be its author's. A failing
 // write check is an error: the command waits for the next reconcile.
 func (r *Reconciler) command(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR, verb string) (forge.Comment, bool, error) {
 	all := slices.Clone(pr.Comments)
+	prComments := len(all)
 	if t.Spec.Issue > 0 {
 		cs, err := r.gh(ctx).RecentComments(ctx, t.Spec.Issue)
 		if err != nil {
@@ -314,11 +321,25 @@ func (r *Reconciler) command(ctx context.Context, cfg *config.Config, t *v1alpha
 		}
 		all = append(all, cs...)
 	}
+	for _, h := range heldComments(t, verb) { // a held comment counts even once it is past the 50 newest
+		if !slices.ContainsFunc(all, func(c forge.Comment) bool { return c.ID == h.ID }) {
+			all = append(all, h)
+		}
+	}
 	var found forge.Comment
 	ok := false
-	for _, c := range all {
-		if c.Edited || !r.repo(cfg, t).IsMaintainer(c.Author) || slices.Contains(t.Status.Handled, c.ID) || !commandLine(c.Body, verb) ||
-			(t.Status.PhaseSince != nil && !c.At.After(t.Status.PhaseSince.Add(-retrySkew))) {
+	for i, c := range all {
+		if c.Edited || slices.Contains(t.Status.Handled, c.ID) || !commandLine(c.Body, verb) ||
+			(t.Status.PhaseSince != nil && !c.At.After(t.Status.PhaseSince.Add(-retrySkew)) && !isHeld(t, c.ID)) ||
+			forge.SameLogin(c.Author, cfg.FactoryLogin) {
+			continue
+		}
+		if !r.repo(cfg, t).IsMaintainer(c.Author) {
+			on := target(t)
+			if i < prComments {
+				on = pr.Number
+			}
+			r.refuseInput(cfg, t, c.ID, c.Author, on, "`"+verb+"`")
 			continue
 		}
 		if !ok || c.At.After(found.At) {
@@ -331,6 +352,9 @@ func (r *Reconciler) command(ctx context.Context, cfg *config.Config, t *v1alpha
 	w, err := r.CanWrite(ctx, t.Spec.Repository, found.Author)
 	if err != nil {
 		return forge.Comment{}, false, fmt.Errorf("write check of %s: %w", found.Author, err)
+	}
+	if !w {
+		r.refuseInput(cfg, t, found.ID, found.Author, target(t), "`"+verb+"`")
 	}
 	return found, w, nil
 }
