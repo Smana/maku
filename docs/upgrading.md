@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Opt-in OpenCode harness](#opt-in-opencode-harness)
 - [Workflows as stage lists and custom roles](#workflows-as-stage-lists-and-custom-roles)
 - [Independent stage switches and `scoper.planTier`](#independent-stage-switches-and-scoperplantier)
 - [A task steps up once](#a-task-steps-up-once)
@@ -44,6 +45,10 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
 
+## Opt-in OpenCode harness
+
+`AgentRun.spec.harness` now accepts `opencode` beside `openhands` (the default remains `openhands`). Upgrades require no values change unless you opt in: set `runController.images.opencode.tag` by digest in `charts/maku` to enable the OpenCode runner image and add `ghcr.io/smana/maku-opencode` to the run-pod admission policy. `maku_factory_task_outcomes_total`, `maku_factory_task_usd_total`, and `maku_factory_run_cost_usd` gain a bounded `harness` label (`openhands` or `opencode`, default `openhands`), and `cohort` adds `rescue` for explicit `/factory retry harness=openhands` rescues. See [Opt-in OpenCode harness](opencode-harness.md).
+
 ## Workflows as stage lists and custom roles
 
 Each workflow in `Factory.spec.workflows` can now be written as one readable definition with `budget` (`light`, `standard`, or `frontier`) and an ordered `stages` list (`scoper`, `tester`, `implementer`, `reviewer`). The shipped `quick`, `standard`, and `careful` presets and `maku install --print` now use this list form directly, without requiring separate `templates` or `loops` rows.
@@ -51,7 +56,6 @@ Each workflow in `Factory.spec.workflows` can now be written as one readable def
 Existing workflows written with `template`, `tier`, `checks`, and `loops` rows keep loading unchanged; setting `stages` alongside legacy keys (`template`, `tier`, `loop`, `checks`) on the same workflow is refused. Setting a top-level `templates` block emits a deprecation warning in this release and will be refused in the next minor; migrate custom template definitions (such as a two-role `solo`) into `workflows.<name>.stages`.
 
 `Factory.spec.roles` accepts up to 16 custom read-only roles (`capability: read`), each pointing to a relative brief file (at most 16 KiB) under the factory's configuration directory. Custom roles execute with the `reviewer` run role (read-only GitHub token) and record their declared name in `agents.ogenki.io/persona`. The `maku-factory` chart exposes `roleBriefs` to project brief files under `/etc/agent-factory/config/roles/`.
-
 ## Independent stage switches and `scoper.planTier`
 
 Each `loops` row now accepts independent stage keys `ask`, `plan`, and `review` beside `tests`, `search`, `judge`, and `split`. `plan: true` is equivalent to `scope: scoper` (`plan: false` to `scope: off`); setting a contradicting `plan` and `scope` on the same row is refused. `review` resolves the template for a workflow that names none (`pair` when `true`, `solo` when `false`) and is refused if it contradicts an explicit template. Existing platform rows that omit `ask`, `plan`, and `review` resolve as before (`plan` from `scope`, `review` from the template, `ask` from the scoper). The shipped presets now include a `quick` row (`review: false`) and set `ask: true` on `default`, `quick`, and `careful`. `Factory.spec.scoper.planTier` (`light`, `standard`, or `frontier`; unset is `light`) chooses the tier the scoper runs at; `maku install --print` writes `frontier`.

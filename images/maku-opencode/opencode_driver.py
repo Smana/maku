@@ -411,9 +411,12 @@ class OpenCodeDriver(HarnessDriver):
 
     def events(self, conversation_id: str, cursor: str = "") -> EventPage:
         q_sid = urllib.parse.quote(conversation_id, safe="")
-        path = f"/api/session/{q_sid}/message?limit=100&order=asc"
+        # OpenCode 2.3.0 rejects combining `cursor` with `order` (InvalidCursorError);
+        # the cursor token already encodes the sort order.
         if cursor:
-            path += "&cursor=" + urllib.parse.quote(cursor, safe="")
+            path = f"/api/session/{q_sid}/message?limit=100&cursor=" + urllib.parse.quote(cursor, safe="")
+        else:
+            path = f"/api/session/{q_sid}/message?limit=100&order=asc"
         resp = self._request("GET", path, timeout=15)
         items: list[dict] = []
         for msg in resp.get("data") or []:

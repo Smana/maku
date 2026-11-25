@@ -101,20 +101,10 @@ def search(
     answer = ""
     cursor = ""
     seen: set[str] = set()
+    seen_running = False
 
-    while True:
-        if clock() - started > deadline_s:
-            driver.interrupt(sid)
-            _append_ledger(ledger, {
-                "outcome": "budget",
-                "reason": "deadline",
-                "model": model,
-                "effort": effort,
-                "toolCalls": tool_calls,
-                "tokens": {"input": input_tokens, "output": output_tokens},
-            })
-            raise BudgetExceeded(f"search exceeded {deadline_s}s deadline")
-
+    def _drain() -> None:
+        nonlocal cursor, tool_calls, input_tokens, output_tokens, answer
         page = driver.events(sid, cursor)
         if page.next_cursor:
             cursor = page.next_cursor
@@ -135,6 +125,21 @@ def search(
                 if isinstance(usage, dict):
                     input_tokens += int(usage.get("input") or 0)
                     output_tokens += int(usage.get("output") or 0)
+
+    while True:
+        if clock() - started > deadline_s:
+            driver.interrupt(sid)
+            _append_ledger(ledger, {
+                "outcome": "budget",
+                "reason": "deadline",
+                "model": model,
+                "effort": effort,
+                "toolCalls": tool_calls,
+                "tokens": {"input": input_tokens, "output": output_tokens},
+            })
+            raise BudgetExceeded(f"search exceeded {deadline_s}s deadline")
+
+        _drain()
 
         total_tokens = input_tokens + output_tokens
         if total_tokens > max_tokens:
@@ -161,7 +166,11 @@ def search(
             raise BudgetExceeded(f"search exceeded {max_steps} steps")
 
         st = driver.status(sid)
-        if st in ("finished", "idle"):
+        if st == "running":
+            seen_running = True
+        if st == "finished" or (st == "idle" and (seen_running or answer)):
+            _drain()
+            total_tokens = input_tokens + output_tokens
             out = _truncate(answer, max_chars)
             _append_ledger(ledger, {
                 "outcome": "complete",
@@ -179,6 +188,8 @@ def search(
                 outcome="complete",
             )
         if st in ("error", "stuck"):
+            _drain()
+            total_tokens = input_tokens + output_tokens
             _append_ledger(ledger, {
                 "outcome": "error",
                 "model": model,
@@ -195,6 +206,8 @@ def search(
                 outcome="error",
             )
         if st == "paused":
+            _drain()
+            total_tokens = input_tokens + output_tokens
             _append_ledger(ledger, {
                 "outcome": "interrupted",
                 "model": model,

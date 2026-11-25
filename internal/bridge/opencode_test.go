@@ -63,9 +63,25 @@ func (f *fakeOpenCodeServer) start(t *testing.T) *httptest.Server {
 				"model":   map[string]string{"providerID": "maku", "id": "agent-default", "variant": f.variant},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/session/"+f.sessionID+"/message":
+			q := r.URL.Query()
+			if q.Get("cursor") != "" && q.Get("order") != "" {
+				http.Error(w, `{"_tag":"InvalidCursorError","message":"Cursor cannot be combined with order"}`, http.StatusBadRequest)
+				return
+			}
+			if q.Get("cursor") == "page-end" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data":   []json.RawMessage{},
+					"cursor": map[string]any{"next": nil},
+				})
+				return
+			}
+			var next any
+			if len(f.messages) > 0 {
+				next = "page-end"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data":   f.messages,
-				"cursor": map[string]any{"next": nil},
+				"cursor": map[string]any{"next": next},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/session/"+f.sessionID+"/prompt":
 			var body map[string]any

@@ -14,4 +14,6 @@ Pinned, non-root OpenCode 2.3.0 runner image (`ghcr.io/smana/maku-opencode`) for
 ```bash
 docker build --target test -f images/maku-opencode/Dockerfile .
 docker build -f images/maku-opencode/Dockerfile .
+python3 images/maku-opencode/tests/contract-matrix.py
+images/maku-opencode/tests/runsc-contract.sh
 ```

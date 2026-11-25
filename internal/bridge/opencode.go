@@ -248,9 +248,13 @@ func (o *OpenCodeHarness) fetchAllEvents(ctx context.Context, sid string) ([]Raw
 	seenCursors := map[string]bool{}
 	cursor := ""
 	for {
-		q := url.Values{"limit": {"100"}, "order": {"asc"}}
+		// OpenCode 2.3.0 rejects combining `cursor` with `order` (InvalidCursorError);
+		// the cursor token already encodes the sort order.
+		q := url.Values{"limit": {"100"}}
 		if cursor != "" {
 			q.Set("cursor", cursor)
+		} else {
+			q.Set("order", "asc")
 		}
 		var page struct {
 			Data   []json.RawMessage `json:"data"`

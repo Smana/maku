@@ -2,8 +2,8 @@
 
 # Integration
 
-This repository ships six images (`maku-broker`, `maku-bridge`, `maku-factory`, `maku-harness`,
-`maku-run-controller`, `maku-slack`), the charts under [`charts/`](../charts/) (`agent-factory`, the umbrella;
+This repository ships seven images (`maku-broker`, `maku-bridge`, `maku-factory`, `maku-harness`,
+`maku-opencode`, `maku-run-controller`, `maku-slack`), the charts under [`charts/`](../charts/) (`agent-factory`, the umbrella;
 `agent-factory-crds`; `maku`; `maku-factory`; `maku-gateway`; `maku-slack`), the `maku` CLI, the
 CRDs the `agent-factory-crds` chart installs (`Room`, `AgentRun`, `Task`, `Factory`, `Repository`,
 `MergePolicy`) and the log's migrations.

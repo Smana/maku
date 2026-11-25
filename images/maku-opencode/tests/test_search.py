@@ -92,6 +92,33 @@ class SearchTest(unittest.TestCase):
         result = search.search("big output", env, driver)
         self.assertEqual(len(result.answer), 8000)
 
+    def test_async_prompt_startup_drains_final_answer(self):
+        """Transient initial 'idle' before prompt loop starts must not return empty answer."""
+        class RacingDriver(FakeSearchDriver):
+            def __init__(self):
+                super().__init__(answer="internal/authn/middleware.go", steps=1)
+                self.polls = 0
+                self.finished = False
+
+            def events(self, conversation_id: str, cursor: str = "") -> EventPage:
+                if not self.finished:
+                    return EventPage(items=[])
+                return super().events(conversation_id, cursor)
+
+            def status(self, conversation_id: str) -> str:
+                self.polls += 1
+                if self.polls == 1:
+                    return "idle"
+                if self.polls == 2:
+                    return "running"
+                self.finished = True
+                return "finished"
+
+        env = self._env()
+        result = search.search("where is auth?", env, RacingDriver(), sleep=lambda _: None)
+        self.assertEqual(result.outcome, "complete")
+        self.assertIn("internal/authn/middleware.go", result.answer)
+
 
 if __name__ == "__main__":
     unittest.main()
