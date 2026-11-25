@@ -917,6 +917,7 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		"RoundsExhausted":      {RoundsExhausted(tk, rooms.Verdict{Verdict: "changes", Commit: "abcdef1", RunID: "r2", Text: "fix"}), ClassNeedsYou},
 		"ProfileChosen":        {ProfileChosen(tk, "standard", "scoper", "", "", 1), ClassChanged},
 		"ProfileRefused":       {ProfileRefused("careful", "Only a maintainer can pin."), ClassChanged},
+		"HarnessRefused":       {HarnessRefused("opencode", "not_maintainer"), ClassChanged},
 		"TriageNote":           {TriageNote(0, "note"), ClassChanged},
 		"ProfileEscalated":     {ProfileEscalated("standard", "careful", "stalled", 13_600_000, 2), ClassChanged},
 		"StepUpOffered":        {StepUpOffered(tk, "standard", "careful", "budget-run", 13_600_000, "pinned"), ClassNeedsYou},

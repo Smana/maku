@@ -1249,7 +1249,7 @@ func HarnessRefused(name, code string) Event {
 	case "profile_unknown":
 		sentence = "The requested harness is not supported; using the default harness."
 	}
-	return Event{Key: "harness-refused", Body: fmt.Sprintf("Agent factory: the pinned harness `%s` was not applied: %s", name, sentence)}
+	return Event{Key: "harness-refused", Class: ClassChanged, Body: fmt.Sprintf("Agent factory: the pinned harness `%s` was not applied: %s", name, sentence)}
 }
 
 // TriageNote is triage's note i on the task (triage.Decision.Notes), said once.
