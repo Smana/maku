@@ -367,11 +367,17 @@ func recordOf(in ArmInputs, cl config.Class) decision.Rows {
 	return rows
 }
 
-// reviewerModel is the record's reviewer (AM8, AM10): the newest reviewer run's served models
-// joined with "+", "none" without a reviewer run, "" (unread) when its provenance names none.
+// isBuiltInReviewer reports whether r is a built-in reviewer run (not a custom read role persona).
+// The merge gate reads the built-in reviewer's verdict only (WR11).
+func isBuiltInReviewer(r v1alpha1.RunRecord) bool {
+	return r.Role == "reviewer" && (r.Persona == "" || r.Persona == "reviewer")
+}
+
+// reviewerModel is the record's reviewer (AM8, AM10): the newest built-in reviewer run's served
+// models joined with "+", "none" without a reviewer run, "" (unread) when its provenance names none.
 func reviewerModel(t *v1alpha1.Task) string {
 	for i := len(t.Status.Runs) - 1; i >= 0; i-- {
-		if r := t.Status.Runs[i]; r.Role == "reviewer" {
+		if r := t.Status.Runs[i]; isBuiltInReviewer(r) {
 			return strings.Join(r.Provenance.ServedModels, "+")
 		}
 	}
@@ -716,17 +722,28 @@ func runEvidence(in ArmInputs, cfg *config.Config) string {
 	if in.ReportedHead == "" || in.ReportedHead != in.PR.HeadSHA {
 		return "head_unreported"
 	}
-	// R03: an approve is of the head its run was given, and of it only. If the verifier's last
-	// approve predates the head the room just reported, the approval was pulled out from under.
+	// R03: an approve is of the head its run was given, and of it only. If the built-in
+	// reviewer's last approve predates the head the room just reported, the approval was pulled
+	// out from under. Custom read-role personas never satisfy the merge gate (WR11).
+	foundBuiltInApprove := false
+	hasCustomApprove := false
 	for i := len(in.Verifiers) - 1; i >= 0; i-- {
 		r := in.Verifiers[i]
 		if r.Verdict != "approve" || r.Role != "reviewer" {
 			continue
 		}
+		if !isBuiltInReviewer(r) {
+			hasCustomApprove = true
+			continue
+		}
+		foundBuiltInApprove = true
 		if r.HeadSHA != in.PR.HeadSHA {
 			return "verdict_stale"
 		}
 		break
+	}
+	if slices.Contains(cfg.Templates[in.Task.Spec.Template].Roles, "reviewer") && hasCustomApprove && !foundBuiltInApprove {
+		return "no_approving_verdict"
 	}
 	trailer := in.PR.Trailer("Agent-Run")
 	if !slices.ContainsFunc(in.Task.Status.Runs, func(r v1alpha1.RunRecord) bool { return r.ID == trailer }) {

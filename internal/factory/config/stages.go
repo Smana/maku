@@ -11,9 +11,12 @@ type Stages struct {
 	Judge                            string       // "" is no judge
 	Split                            *SplitPolicy // nil is no split
 	Gate                             string       // "" | "plan-first" | "always"
+	// ExtraRoles lists active custom read roles after implementer, in compiled stage order.
+	ExtraRoles []string
 }
 
-// Names lists the active stages in run order: ask, plan, tests, search, judge, review, split.
+// Names lists the active stages in run order: ask, plan, tests, search, judge, review, split,
+// followed by any active custom read roles.
 func (s Stages) Names() []string {
 	var out []string
 	if s.Ask {
@@ -37,6 +40,7 @@ func (s Stages) Names() []string {
 	if s.Split != nil {
 		out = append(out, "split")
 	}
+	out = append(out, s.ExtraRoles...)
 	return out
 }
 
@@ -45,7 +49,7 @@ func (s Stages) Names() []string {
 // set, else pair when its row sets review: true, solo when review: false, else "".
 func (c *Config) TemplateForProfile(name string, p HarnessProfile) string {
 	if len(p.Stages) > 0 {
-		if _, hasReviewer := stageByRole(p, "reviewer"); hasReviewer {
+		if _, hasReviewer := activeStageByRole(p, "reviewer", nil); hasReviewer {
 			return "pair"
 		}
 		return "solo"
@@ -83,11 +87,15 @@ func (c *Config) StagesFor(r *Repository, workflow, class string) Stages {
 		return Stages{}
 	}
 	if len(p.Stages) > 0 {
-		st, _, err := c.compile(workflow, p)
+		var addStages []string
+		if r != nil {
+			addStages = r.Workflow.AddStages
+		}
+		st, _, err := c.compileFor(workflow, p, addStages)
 		if err != nil {
 			return Stages{}
 		}
-		if ts, hasTester := stageByRole(p, "tester"); hasTester && ts.When == TestWhenRepositoryTestFirst {
+		if ts, hasTester := activeStageByRole(p, "tester", addStages); hasTester && ts.When == TestWhenRepositoryTestFirst {
 			st.Tests = r != nil && r.Workflow.TestFirst
 		}
 		c.applyClassRequires(r, class, &st)

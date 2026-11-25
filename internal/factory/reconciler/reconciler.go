@@ -1271,7 +1271,19 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, name stri
 		t.Spec.Search = false
 	}
 	t.Spec.ScopeMode = string(mode)
-	if tier := p.EffectiveTier(); slices.Index(tiers, tier) > slices.Index(tiers, t.Spec.Budget.Tier) {
+	rc := r.repo(cfg, t)
+	tier := p.EffectiveTier()
+	if rc != nil && rc.Workflow.Budget != "" {
+		// WR12: a repository may lower its workflow's budget; never raise it.
+		if eff := cfg.EffectiveBudgetTier(rc, name); eff != "" {
+			tier = eff
+		}
+		if slices.Index(tiers, tier) < slices.Index(tiers, t.Spec.Budget.Tier) {
+			t.Spec.Budget = triage.Ceiling(triage.BudgetFor(cfg, tier), t.Spec.MaxMicroUSD)
+			return
+		}
+	}
+	if slices.Index(tiers, tier) > slices.Index(tiers, t.Spec.Budget.Tier) {
 		t.Spec.Budget = triage.Ceiling(triage.BudgetFor(cfg, tier), t.Spec.MaxMicroUSD)
 	}
 }
@@ -1569,8 +1581,12 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 	if t.Spec.CoordinationParent != nil && coordination.AllocationLeft(t) < 0 {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonAllocationExhausted)
 	}
-	if !runFitsFor(t, t.Status.NextRole) {
-		limit := taskLimit(t, t.Status.NextRole)
+	nextRunRole := t.Status.NextRole
+	if rr, ok := cfg.RoleRunRole(nextRunRole); ok {
+		nextRunRole = rr
+	}
+	if !runFitsFor(t, nextRunRole) {
+		limit := taskLimit(t, nextRunRole)
 		if cfg.Budgets.EnforceTask || t.Sponsored() != "" { // F4: an api task's ceiling is never a shadow
 			record(ctx, func(ctx context.Context) { r.Metrics.RunRevoked(ctx, "budget-task", limit) })
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "budget-task") // no new run past the task cap (C5)
@@ -1671,29 +1687,38 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 		s.Persona = "triager"
 		return r.startRun(ctx, cfg, t, s, nextTrigger(t))
 	}
-	if scoperDue(t) {
-		return r.startScoper(ctx, cfg, t)
-	}
-	if r.testerDue(cfg, t) { // after the scoper: its scope belongs in the tester's brief (F3-R1)
-		return r.startTester(ctx, cfg, t)
-	}
-	s, refs, trigger, err := r.nextImplementer(ctx, cfg, t)
-	if err != nil {
-		return err
-	}
-	if err := r.startRun(ctx, cfg, t, s, trigger); err != nil {
-		return err
-	}
-	if t.Status.Phase == v1alpha1.PhaseEscalated { // the cluster refused the loop claim: no run exists
-		return nil
-	}
-	if late && current(t).HeadSHA == "" { // the head a revision starts on: Revised lists what it changed since
-		current(t).HeadSHA = pr.HeadSHA
-	}
-	// Consumed once the run exists, and only what its brief quoted (F-A). A failure only means
-	// the next brief repeats them.
-	if err := r.Rooms.Consume(ctx, t.Status.RoomRef, refs, current(t).ID); err != nil {
-		r.log().Warn("queue consume failed", "task.id", t.Name, "run.id", current(t).ID, "err", err)
+	// Drive the next pre-implementer or implementer stage from the compiled stage list (WR11).
+	for _, st := range r.compiledStagesForTask(cfg, t) {
+		switch st.Role {
+		case "scoper":
+			if scoperDue(t) {
+				return r.startScoper(ctx, cfg, t)
+			}
+		case "tester":
+			if r.testerDue(cfg, t) { // after the scoper: its scope belongs in the tester's brief (F3-R1)
+				return r.startTester(ctx, cfg, t)
+			}
+		case "implementer":
+			s, refs, trigger, err := r.nextImplementer(ctx, cfg, t)
+			if err != nil {
+				return err
+			}
+			if err := r.startRun(ctx, cfg, t, s, trigger); err != nil {
+				return err
+			}
+			if t.Status.Phase == v1alpha1.PhaseEscalated { // the cluster refused the loop claim: no run exists
+				return nil
+			}
+			if late && current(t).HeadSHA == "" { // the head a revision starts on: Revised lists what it changed since
+				current(t).HeadSHA = pr.HeadSHA
+			}
+			// Consumed once the run exists, and only what its brief quoted (F-A). A failure only means
+			// the next brief repeats them.
+			if err := r.Rooms.Consume(ctx, t.Status.RoomRef, refs, current(t).ID); err != nil {
+				r.log().Warn("queue consume failed", "task.id", t.Name, "run.id", current(t).ID, "err", err)
+			}
+			return nil
+		}
 	}
 	return nil
 }

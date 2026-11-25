@@ -61,6 +61,8 @@ type StageDef struct {
 	MaxRounds int32     `json:"maxRounds,omitempty"`
 	Split     *SplitDef `json:"split,omitempty"`
 	Gate      *GateDef  `json:"gate,omitempty"`
+	// Allowed marks this stage optional for repositories to opt into via Repository.spec.workflow.addStages (WR12).
+	Allowed bool `json:"allowed,omitempty"`
 }
 
 // SplitDef configures task splitting on a scoper stage (WR11).

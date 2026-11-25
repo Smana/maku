@@ -24,6 +24,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"golang.org/x/oauth2"
 
+	"github.com/Smana/maku/internal/factory/stages"
 	"github.com/Smana/maku/internal/maku"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/summary"
@@ -50,6 +51,8 @@ type makuBroker struct {
 	brief func() (int, string)
 	// handoff answers POST /api/handoffs and /api/handoffs/{id}/check|start; nil falls through.
 	handoff func(path string, body []byte) (int, string)
+	// dryRun answers POST /api/workflows/dry-run when set.
+	dryRun func(req stages.DryRunRequest) (int, any)
 }
 
 func newMakuBroker(t *testing.T) *makuBroker {
@@ -110,6 +113,17 @@ func newMakuBroker(t *testing.T) *makuBroker {
 			b.query = r.URL.Path + "?" + r.URL.RawQuery
 			b.mu.Unlock()
 			switch {
+			case r.URL.Path == "/api/workflows/dry-run":
+				var in stages.DryRunRequest
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				if b.dryRun != nil {
+					code, resp := b.dryRun(in)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(code)
+					_ = json.NewEncoder(w).Encode(resp)
+					return
+				}
+				http.NotFound(w, r)
 			case r.URL.Path == "/api/rooms":
 				if b.access != "" {
 					w.Header().Set("X-Rooms-Access", b.access)
@@ -1379,5 +1393,88 @@ func TestTerminalStartFilesNothingOnNo(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Nothing filed.") {
 		t.Fatalf("output lacks Nothing filed.:\n%s", out.String())
+	}
+}
+
+func TestMakuWorkflowDryRun(t *testing.T) {
+	b := newMakuBroker(t)
+	var gotReq stages.DryRunRequest
+	est := 0.63
+	b.dryRun = func(req stages.DryRunRequest) (int, any) {
+		gotReq = req
+		return http.StatusOK, stages.DryRunResult{
+			Workflow:     req.Workflow,
+			Tasks:        2,
+			ActualUSD:    1.10,
+			EstimatedUSD: 0.63,
+			EstimatedOf:  1,
+			MedianUsed:   1,
+			UnknownCount: 1,
+			Rows: []stages.DryRunRow{
+				{
+					Task:        "3buqdlot",
+					Class:       "docs",
+					RanWorkflow: "standard",
+					Ran:         []string{"implementer", "reviewer"},
+					WouldRun:    []string{"implementer", "reviewer", "security-reviewer"},
+					CostUSD:     0.54,
+					EstimateUSD: &est,
+					UsedMedian:  true,
+				},
+				{
+					Task:        "7f3cq2xz",
+					Class:       "code",
+					RanWorkflow: "standard",
+					Ran:         []string{"implementer", "reviewer"},
+					WouldRun:    []string{"implementer", "reviewer", "security-reviewer"},
+					CostUSD:     0.56,
+					Unknown:     true,
+				},
+			},
+		}
+	}
+
+	defPath := filepath.Join(t.TempDir(), "thorough.yaml")
+	defYAML := "budget: frontier\nstages:\n  - {role: implementer, stall: true}\n  - {role: reviewer, maxRounds: 2}\n  - {role: security-reviewer}\n"
+	if err := os.WriteFile(defPath, []byte(defYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, out := configured(t, b)
+	if err := r.Run(t.Context(), []string{"workflow", "dry-run", "thorough", "--file", defPath, "--repository", "acme/app", "--last", "20"}); err != nil {
+		t.Fatalf("workflow dry-run: %v", err)
+	}
+	if gotReq.Workflow != "thorough" || gotReq.Definition != defYAML || gotReq.Repository != "acme/app" || gotReq.Last != 20 {
+		t.Fatalf("request = %+v", gotReq)
+	}
+	s := out.String()
+	for _, want := range []string{
+		"TASK",
+		"RAN (standard)",
+		"WOULD RUN (thorough)",
+		"3buqdlot",
+		"implementer → reviewer → security-reviewer",
+		"$0.54",
+		"$0.63",
+		"7f3cq2xz",
+		"?",
+		"2 tasks: $1.10 as run · about $0.63 under thorough",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("output missing %q:\n%s", want, s)
+		}
+	}
+
+	// JSON mode returns the broker's JSON verbatim.
+	out.Reset()
+	if err := r.Run(t.Context(), []string{"workflow", "dry-run", "thorough", "--json"}); err != nil {
+		t.Fatalf("workflow dry-run --json: %v", err)
+	}
+	var parsed stages.DryRunResult
+	if err := json.Unmarshal([]byte(out.String()), &parsed); err != nil {
+		t.Fatalf("invalid json output: %v\n%s", err, out.String())
+	}
+	if parsed.Workflow != "thorough" || len(parsed.Rows) != 2 {
+		t.Fatalf("parsed = %+v", parsed)
 	}
 }

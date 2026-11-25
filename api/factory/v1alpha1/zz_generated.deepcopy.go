@@ -1337,7 +1337,7 @@ func (in *RepositorySpec) DeepCopyInto(out *RepositorySpec) {
 		*out = make([]config.Schedule, len(*in))
 		copy(*out, *in)
 	}
-	out.Workflow = in.Workflow
+	in.Workflow.DeepCopyInto(&out.Workflow)
 	if in.Merge != nil {
 		in, out := &in.Merge, &out.Merge
 		*out = new(config.Merge)

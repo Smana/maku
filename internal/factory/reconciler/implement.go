@@ -1008,7 +1008,7 @@ func (r *Reconciler) resume(ctx context.Context, cfg *config.Config, t *v1alpha1
 	n, why := int(t.Status.Resumes), run.Reason
 	record(ctx, func(ctx context.Context) { r.Metrics.Resumed(ctx, why) })
 	if run.Role == "reviewer" {
-		r.requestVerifier(t, run.Role) // no ReviewRounds++: the loss was the platform's, not the review's
+		r.requestVerifier(t, cmp.Or(run.Persona, run.Role)) // no ReviewRounds++: the loss was the platform's, not the review's
 	} else {
 		t.Status.NextTrigger = "resume"
 		r.to(t, v1alpha1.PhaseQueued, "")

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -176,6 +177,16 @@ type RepositoryWorkflow struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=720
 	PlanGateHours int `json:"planGateHours,omitempty"`
+	// Budget narrows the repository's default workflow budget to a tier at or below the workflow's
+	// own budget (WR12): light, standard or frontier. Raising it is refused at admission.
+	// +kubebuilder:validation:Enum=light;standard;frontier
+	// +kubebuilder:validation:MaxLength=8
+	Budget string `json:"budget,omitempty"`
+	// AddStages enables optional stages marked allowed on the repository's default workflow (WR12).
+	// Removing, reordering, or naming a stage not marked allowed is refused at admission.
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=63
+	AddStages []string `json:"addStages,omitempty"`
 }
 
 // StepUpMode is the repository's step-up policy: auto (default), ask, or off.
@@ -208,14 +219,24 @@ func (r *Repository) PlanGateWait() time.Duration {
 }
 
 // UnmarshalJSON decodes RepositoryWorkflow strictly, reading YAML 1.1's unquoted stepUp: off
-// (boolean false) as "off".
+// (boolean false) as "off", and refusing stage-replacement or removal keys with a clear WR12 error.
 func (w *RepositoryWorkflow) UnmarshalJSON(b []byte) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err == nil {
+		for _, forbidden := range []string{"stages", "removeStages", "skipStages", "dropStages"} {
+			if _, ok := keys[forbidden]; ok {
+				return fmt.Errorf("workflow.%s: a repository may not remove or reorder workflow stages; use addStages for stages the workflow marks allowed (WR12)", forbidden)
+			}
+		}
+	}
 	var raw struct {
 		Default       string          `json:"default,omitempty"`
 		TestFirst     bool            `json:"testFirst,omitempty"`
 		StepUp        json.RawMessage `json:"stepUp,omitempty"`
 		PlanGate      string          `json:"planGate,omitempty"`
 		PlanGateHours int             `json:"planGateHours,omitempty"`
+		Budget        string          `json:"budget,omitempty"`
+		AddStages     []string        `json:"addStages,omitempty"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -227,6 +248,8 @@ func (w *RepositoryWorkflow) UnmarshalJSON(b []byte) error {
 		TestFirst:     raw.TestFirst,
 		PlanGate:      raw.PlanGate,
 		PlanGateHours: raw.PlanGateHours,
+		Budget:        raw.Budget,
+		AddStages:     raw.AddStages,
 	}
 	switch s := string(raw.StepUp); s {
 	case "", "null":
@@ -330,7 +353,7 @@ func (c *Config) TestFirstIn(r *Repository, workflow string) bool {
 		return false
 	}
 	if len(p.Stages) > 0 {
-		ts, has := stageByRole(p, "tester")
+		ts, has := activeStageByRole(p, "tester", r.Workflow.AddStages)
 		if !has {
 			return false
 		}
@@ -372,6 +395,58 @@ func (c *Config) validateWorkflow(r *Repository, bad func(string, ...any)) {
 	}
 	if h := r.Workflow.PlanGateHours; h != 0 && (h < minPlanGateHours || h > maxPlanGateHours) {
 		bad("workflow.planGateHours %d must be %d..%d", h, minPlanGateHours, maxPlanGateHours)
+	}
+	wfName := r.DefaultWorkflow()
+	if wf, ok := c.Workflow(wfName); ok {
+		if b := r.Workflow.Budget; b != "" {
+			wfBudget := wf.EffectiveTier()
+			if wfBudget == "" {
+				wfBudget = "standard"
+			}
+			if !slices.Contains(tiers(), b) {
+				bad("workflow.budget %q is not one of %v", b, tiers())
+			} else if slices.Index(tiers(), b) > slices.Index(tiers(), wfBudget) {
+				bad("workflow.budget %q exceeds workflow %s budget %q: a repository may only lower the budget (WR12)", b, wfName, wfBudget)
+			}
+		}
+		if len(r.Workflow.AddStages) > 0 {
+			var allowedRoles []string
+			stagePos := map[string]int{}
+			allowedSet := map[string]bool{}
+			var orderNames []string
+			for i, s := range wf.Stages {
+				stagePos[s.Role] = i
+				orderNames = append(orderNames, s.Role)
+				if s.Allowed {
+					allowedRoles = append(allowedRoles, s.Role)
+					allowedSet[s.Role] = true
+				}
+			}
+			seen := map[string]bool{}
+			lastPos := -1
+			for _, role := range r.Workflow.AddStages {
+				if seen[role] {
+					bad("workflow.addStages: duplicate stage %q", role)
+					continue
+				}
+				seen[role] = true
+				if !allowedSet[role] {
+					allowedDesc := "none"
+					if len(allowedRoles) > 0 {
+						allowedDesc = strings.Join(allowedRoles, ", ")
+					}
+					bad("workflow.addStages: stage %q is not marked allowed in workflow %s (allowed: %s) (WR12)", role, wfName, allowedDesc)
+					continue
+				}
+				pos := stagePos[role]
+				if pos < lastPos {
+					bad("workflow.addStages: stage %q is out of order for workflow %s (stages: %s) (WR12)", role, wfName, strings.Join(orderNames, " -> "))
+				}
+				if pos > lastPos {
+					lastPos = pos
+				}
+			}
+		}
 	}
 	for _, s := range r.Schedules {
 		if s.Workflow != "" && !c.IsWorkflow(s.Workflow) {

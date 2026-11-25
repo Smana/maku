@@ -921,6 +921,7 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		"ProfileEscalated":     {ProfileEscalated("standard", "careful", "stalled", 13_600_000, 2), ClassChanged},
 		"StepUpOffered":        {StepUpOffered(tk, "standard", "careful", "budget-run", 13_600_000, "pinned"), ClassNeedsYou},
 		"CoordinationIncident": {CoordinationIncident("parent01", "child-a", 19), ClassChanged},
+		"RoleFindings":         {RoleFindings(tk, "security-reviewer", "r2", "comment", "no findings"), ClassChanged},
 	}
 
 	for name := range discovered {

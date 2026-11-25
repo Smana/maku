@@ -381,6 +381,25 @@ spec:
                   Workflow is the workflow a task of the repository runs when no label and no source names one,
                   standard by default, and whether its careful tasks start with the tester (WF3, WF7).
                 properties:
+                  addStages:
+                    description: |-
+                      AddStages enables optional stages marked allowed on the repository's default workflow (WR12).
+                      Removing, reordering, or naming a stage not marked allowed is refused at admission.
+                    items:
+                      maxLength: 63
+                      type: string
+                    maxItems: 8
+                    type: array
+                  budget:
+                    description: |-
+                      Budget narrows the repository's default workflow budget to a tier at or below the workflow's
+                      own budget (WR12): light, standard or frontier. Raising it is refused at admission.
+                    enum:
+                    - light
+                    - standard
+                    - frontier
+                    maxLength: 8
+                    type: string
                   default:
                     description: Default is the workflow a task runs when nothing
                       else names one; unset is standard.

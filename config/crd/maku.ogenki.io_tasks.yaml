@@ -2004,10 +2004,11 @@ spec:
               nextRole:
                 description: |-
                   The verifier the task went back to Queued for (§3): the next reviewer or tester run starts
-                  there, behind the caps and the human-driver rule (C4). Cleared once that run exists.
-                enum:
-                - reviewer
-                - tester
+                  NextRole is the verifier role Queued will start next (reviewer or a declared custom read role).
+                  Set when a run finishes and hands off to the next verifier so it passes through Queued,
+                  behind the caps and the human-driver rule (C4). Cleared once that run exists.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$
                 type: string
               nextTrigger:
                 description: |-
@@ -2607,9 +2608,10 @@ spec:
                       pattern: ^[a-z2-7]{8}$
                       type: string
                     persona:
-                      description: Persona is the run's human-facing role when it
-                        differs from Role (e.g. scoper on a triager run).
-                      maxLength: 32
+                      description: |-
+                        Persona is the run's human-facing role when it differs from Role (e.g. scoper on a triager run,
+                        or a custom read role on a reviewer run).
+                      maxLength: 63
                       type: string
                     phase:
                       maxLength: 64
@@ -2828,16 +2830,8 @@ spec:
                       minimum: 0
                       type: integer
                     stage:
-                      enum:
-                      - ask
-                      - plan
-                      - tests
-                      - implement
-                      - search
-                      - judge
-                      - review
-                      - split
-                      - step_up
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-_a-z0-9]{0,61}[a-z0-9])?$
                       type: string
                   required:
                   - microUSD
