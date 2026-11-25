@@ -5,5 +5,9 @@
   "none.md": {"states": false, "text": null},
   "heading-wins.md": {"states": true, "text": "The heading wins."},
   "heading-empty.md": {"states": true, "text": "an empty heading falls through to this line"},
-  "fence-ends.md": {"states": true, "text": "stops at a fence line"}
+  "fence-ends.md": {"states": true, "text": "stops at a fence line"},
+  "label-list.md": {"states": true, "text": "- Only cheat-sheet.md changes.\n- task docs passes."},
+  "bold-label-list.md": {"states": true, "text": "1. task docs passes.\n2. The page lists every command."},
+  "bold-inline.md": {"states": true, "text": "task docs passes"},
+  "empty-then-label.md": {"states": true, "text": "a later non-empty label states it"}
 }
