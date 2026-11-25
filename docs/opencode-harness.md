@@ -2,7 +2,7 @@
 
 # Opt-in OpenCode harness
 
-Maku supports OpenCode 2.3.0 as an opt-in second harness alongside OpenHands. **OpenHands remains the default everywhere** until an operator opts a run, task, cohort, or factory into OpenCode.
+Maku supports OpenCode 2.4.1 as an opt-in second harness alongside OpenHands. **OpenHands remains the default everywhere** until an operator opts a run, task, cohort, or factory into OpenCode.
 
 ## Enable the OpenCode runner image
 
@@ -61,7 +61,7 @@ To stop new OpenCode runs immediately:
 
 ## Offline parity verification
 
-Run the full offline suite against the real pinned OpenCode 2.3.0 binary:
+Run the full offline suite against the real pinned OpenCode 2.4.1 binary:
 
 ```bash
 # Image unit and real-server suites

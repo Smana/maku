@@ -1,4 +1,4 @@
-"""Generate least-privilege OpenCode 2.3.0 V2 configuration per Maku role (design §7.1, §7.4)."""
+"""Generate least-privilege OpenCode 2.4.1 V2 configuration per Maku role (design §7.1, §7.4)."""
 
 DEFAULT_ALIASES = (
     "agent-default",
@@ -188,6 +188,7 @@ def role_config(
     cfg: dict = {
         "update": "disable",
         "share": "disabled",
+        "automations": False,
         "model": f"maku/{model}#{effort}",
         "default_agent": role if role in agents else "implementer",
         "providers": providers,

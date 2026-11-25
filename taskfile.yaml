@@ -318,7 +318,7 @@ tasks:
       - docker build --target test images/maku-harness
 
   harness:opencode:test:
-    desc: The OpenCode harness image's test stage against real OpenCode 2.3.0 (needs docker; kept out of check)
+    desc: The OpenCode harness image's test stage against real OpenCode 2.4.1 (needs docker; kept out of check)
     cmds:
       - docker build --target test -f images/maku-opencode/Dockerfile .
 

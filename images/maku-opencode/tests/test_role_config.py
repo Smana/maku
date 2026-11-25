@@ -1,4 +1,4 @@
-"""Role configuration and OpenCode 2.3.0 debug config validation tests (OpenCode plan Task 6)."""
+"""Role configuration and OpenCode 2.4.1 debug config validation tests (OpenCode plan Task 6)."""
 import json
 import os
 import subprocess
@@ -88,6 +88,7 @@ class RoleConfigTest(unittest.TestCase):
         docs = json.loads(proc.stdout)
         doc = next(d["info"] for d in docs if d.get("type") == "document")
         self.assertEqual(doc["update"], "disable")
+        self.assertFalse(doc["automations"])
         self.assertEqual(doc["providers"]["maku"]["compatibility"]["cacheFormat"], "anthropic")
         self.assertEqual(doc["mcp"]["servers"]["platform"]["codemode"], False)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Repeatable offline parity matrix for OpenCode 2.3.0 against the real binary (OpenCode plan Task 14).
+"""Repeatable offline parity matrix for OpenCode 2.4.1 against the real binary (OpenCode plan Task 14).
 
-Runs every role x provider x required capability against the real pinned OpenCode 2.3.0 binary
+Runs every role x provider x required capability against the real pinned OpenCode 2.4.1 binary
 inside a read-only, non-root, network-isolated container, plus the Go OpenCode bridge & integration
 verification suites. Fails on any skipped or missing case.
 """
@@ -437,7 +437,7 @@ def _run_inside_container() -> int:
     print(
         f"\nMATRIX PASS: {len(covered_roles)}/{len(ROLES)} roles, "
         f"{len(covered_providers)}/{len(PROVIDERS)} providers, "
-        f"{len(covered_caps)}/{len(REQUIRED)} required capabilities verified against real OpenCode 2.3.0."
+        f"{len(covered_caps)}/{len(REQUIRED)} required capabilities verified against real OpenCode 2.4.1."
     )
     return 0
 

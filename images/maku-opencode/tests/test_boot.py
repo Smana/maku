@@ -49,7 +49,7 @@ class BootTest(unittest.TestCase):
         try:
             d.wait_ready(deadline_s=30)
             info = _request_json(f"http://127.0.0.1:{port}/api/info", d.password)
-            self.assertEqual(info["version"], "2.3.0")
+            self.assertEqual(info["version"], "2.4.1")
             self.assertIn(f"http://127.0.0.1:{port}", info["urls"])
             # Session creation works on the real server and persists session ID atomically.
             created = d._request("POST", "/api/session", {})

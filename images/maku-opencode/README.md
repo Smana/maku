@@ -1,10 +1,10 @@
 # maku-opencode
 
-Pinned, non-root OpenCode 2.3.0 runner image (`ghcr.io/smana/maku-opencode`) for opt-in `AgentRun.spec.harness: opencode`.
+Pinned, non-root OpenCode 2.4.1 runner image (`ghcr.io/smana/maku-opencode`) for opt-in `AgentRun.spec.harness: opencode`.
 
 ## Pinning
 
-- Base image: `ghcr.io/anomalyco/opencode:2.3.0@sha256:998e3e184c650e603d8bacb5cbeaeb090837078262c25521a7136b0375d2b652` (Alpine 3.24)
+- Base image: `ghcr.io/anomalyco/opencode:2.4.1@sha256:10e340e3e86d7b23e95cd9960f5a934beae8a87593d7398b5629b6112ed1fc63` (Alpine 3.24)
 - Shared runner: `agent_run.py`, `harness_driver.py`, `agent_checks.py`, `agent_push.py`, `test_contract.py`, `git_credential_agent.py`, `loop_policy.py`, `pr_footer.py`, `coordination_integration.py` copied from `images/maku-harness/`
 - Python dependencies: hash-locked musllinux amd64+arm64 wheels in `requirements.txt` (PyYAML and OTel SDK/exporter only; no OpenHands packages)
 - Non-root UID 10001, no setuid/setgid bits, `update: "disable"`, `OPENCODE_DISABLE_CLAUDE_CODE=1`

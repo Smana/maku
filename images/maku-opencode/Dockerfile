@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-# Maku OpenCode 2.3.0 runner image (OpenCode harness design §2 H15, §4).
+# Maku OpenCode 2.4.1 runner image (OpenCode harness design §2 H15, §4).
 # Built with repository-root context: docker build -f images/maku-opencode/Dockerfile .
-FROM ghcr.io/anomalyco/opencode:2.3.0@sha256:998e3e184c650e603d8bacb5cbeaeb090837078262c25521a7136b0375d2b652 AS harness
+FROM ghcr.io/anomalyco/opencode:2.4.1@sha256:10e340e3e86d7b23e95cd9960f5a934beae8a87593d7398b5629b6112ed1fc63 AS harness
 
 # cli/cli release: move GH_VERSION and both sums together with images/maku-harness/Dockerfile.
 ARG GH_VERSION=2.101.0
