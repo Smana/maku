@@ -1073,6 +1073,9 @@ func (r *Reconciler) detectPR(ctx context.Context, t *v1alpha1.Task, run runs.Ru
 }
 
 func (r *Reconciler) awaitingHuman(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	if t.Status.Reason == ReasonPlanReview {
+		return r.awaitingPlanReview(ctx, cfg, t)
+	}
 	pr, err := r.readPR(ctx, t)
 	if err != nil {
 		return err

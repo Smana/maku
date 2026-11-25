@@ -386,6 +386,21 @@ spec:
                       else names one; unset is standard.
                     maxLength: 253
                     type: string
+                  planGate:
+                    description: |-
+                      PlanGate controls whether plan-first tasks wait for approval after scoping: ask (default)
+                      or auto (approves at once and says so in the room).
+                    enum:
+                    - ask
+                    - auto
+                    type: string
+                  planGateHours:
+                    description: |-
+                      PlanGateHours is how long an unanswered plan waits before its status comment says it is
+                      parked (default 72, 1 to 720). It never expires into a run or a stop on its own.
+                    maximum: 720
+                    minimum: 1
+                    type: integer
                   stepUp:
                     description: |-
                       StepUp is whether a task of the repository steps up without asking: auto (the default), ask

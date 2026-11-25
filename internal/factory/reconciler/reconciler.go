@@ -1192,6 +1192,9 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	if err := r.applyClassRequires(ctx, cfg, t, profile, d.PredictedClass); err != nil {
 		return err
 	}
+	if t.Spec.Outcome == config.OutcomePlanFirst && !cfg.Investigates(t.Spec.Template) {
+		t.Spec.ScopeMode = string(config.ScopeScoper)
+	}
 	if err := r.scopeAtTriage(ctx, t); err != nil {
 		return err // a note that cannot be read is retried, never read as none (SC4)
 	}

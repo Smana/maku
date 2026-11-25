@@ -53,6 +53,10 @@ const AnnotationStop = "agents.ogenki.io/stop"
 // sponsored route (SI23), formatted "<retries>:<login>".
 const AnnotationRetry = "agents.ogenki.io/retry"
 
+// AnnotationPlanDecision carries a plan-gate decision (approve, revise, split) posted to
+// POST /v1/tasks/{task}/plans (phase F3).
+const AnnotationPlanDecision = "agents.ogenki.io/plan-decision"
+
 // AnnotationRevert records a maintainer's factory/revert on an auto-merged PR, within the window (§6.4).
 const AnnotationRevert = "agents.ogenki.io/revert"
 

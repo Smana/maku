@@ -158,6 +158,7 @@ An approval counts only once the head has stopped moving. GitHub must have recor
 | `held` | The pull request carries `factory/hold`. Removing the label returns it to the gate |
 | `not_owned` | The repository's `.github/agent-factory.yaml` does not name this factory ([the fence](config.md#the-ownership-fence)) |
 | `shadow_would_arm` | Every check holds and the class is in shadow. Next step: merge or close it |
+| `plan_review` | A `plan-first` task's scoper proposed a plan (label `factory/plan-proposed`, no run running). The issue author or a maintainer answers `/factory plan approve`, `/factory plan revise <comment>` (once per task; a second revise escalates as `plan_revision_limit`), or `/factory plan split` (or calls `POST /v1/tasks/{task}/plans`). Past `workflow.planGateHours` (default 72) the status comment marks it parked and never expires it into a run or stop |
 | `ci_cancelled` | A required check was cancelled and re-running it did not settle it |
 | `contract_check_unset` | The task has a contract but `merge.contractCheck` is no longer set: nothing proves it, so a maintainer decides |
 | `contract_modified` | The pull request changes a test the tester wrote as the task's contract (row 2c): a maintainer reads the change, then merges it or sends the task back |

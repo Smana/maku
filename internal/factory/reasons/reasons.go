@@ -125,6 +125,8 @@ var table = map[string]Words{
 	"parent_missing":                {Short: "the parent task is gone", Long: "its parent task no longer exists", Next: ""},
 	"parent_not_split":              {Short: "the parent is no longer waiting", Long: "its parent task is no longer waiting on its parts", Next: ""},
 	"patch_too_large":               {Short: "exceeds the file or line limit", Long: "it changes more files or lines than its class allows", Next: ""},
+	"plan_review":                   {Short: "waiting on plan approval", Long: "the scoper proposed a plan and waits for the author or a maintainer to approve, revise, or split it", Next: "comment `/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`"},
+	"plan_revision_limit":           {Short: "plan revised once; maintainer decides", Long: "the plan was already revised once; a second revision goes to a maintainer", Next: "a maintainer reviews the plan and chooses `/factory retry` or edits the issue"},
 	"pod_lost":                      {Short: "the sandbox was lost", Long: "the sandbox was lost (spot reclaim or eviction)", Next: ""},
 	"policy_absent":                 {Short: "no merge policy evaluation reported", Long: "policy-bot has not evaluated the pull request", Next: ""},
 	"policy_invalid":                {Short: "the merge policy is invalid", Long: "the repository's merge policy is invalid, so auto-merge is paused", Next: ""},

@@ -2186,6 +2186,35 @@ spec:
               phaseSince:
                 format: date-time
                 type: string
+              plan:
+                description: 'The scoper''s outcome (scoper design SC8): set when
+                  the scoper ends, cleared on a plan revision.'
+                properties:
+                  parked:
+                    description: Parked is true once the plan waited past workflow.planGateHours
+                      without an answer.
+                    type: boolean
+                  revisionNote:
+                    description: RevisionNote is the one note passed to the scoper
+                      on a revision run.
+                    maxLength: 1024
+                    type: string
+                  revisions:
+                    description: Revisions counts how many times the plan was revised
+                      via /factory plan revise (at most 1).
+                    format: int32
+                    maximum: 4
+                    minimum: 0
+                    type: integer
+                  state:
+                    enum:
+                    - proposed
+                    - approved
+                    - revised
+                    - split
+                    - escalated
+                    type: string
+                type: object
               profile:
                 description: The harness profile frozen at triage and the evaluation
                   cohort; absent for a class without a harness.
