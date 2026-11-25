@@ -1107,7 +1107,7 @@ func TestARetryThatEscalatesAgainIsNarrated(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-task" {
 		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
 	}
-	if n := strings.Count(strings.Join(eventCommentBodies(g.f, 7), "\n"), "no room left for another full run"); n != 1 {
+	if n := strings.Count(strings.Join(eventCommentBodies(g.f, 7), "\n"), "no room left for another run"); n != 1 {
 		t.Fatalf("the second escalation is narrated once: %q", eventCommentBodies(g.f, 7))
 	}
 }

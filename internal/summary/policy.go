@@ -53,21 +53,25 @@ func PolicyDecision(f *envelope.TaskFacts) string {
 	if f == nil || f.Policy == nil || f.PR == nil {
 		return ""
 	}
+	detail := ""
+	if f.Policy.Decision != "" {
+		detail = " — " + f.Policy.Decision
+	}
 	switch f.Policy.MergedHow {
 	case "class":
-		return "Merged automatically by policy " + cmp.Or(f.Policy.Name, f.Policy.Class)
+		return "Merged automatically by policy " + cmp.Or(f.Policy.Name, f.Policy.Class) + detail
 	case "approved":
 		who := "a maintainer's"
 		if envelope.ValidLogin(f.PR.ApprovedBy) {
 			who = fmt.Sprintf("@%s's", f.PR.ApprovedBy)
 		}
-		return "merged by the merger App on " + who + " approval"
+		return "merged by the merger App on " + who + " approval" + detail
 	}
 	if f.Phase != "AwaitingHuman" {
 		return ""
 	}
 	if r := reasons()[f.Reason]; r != "" {
-		return "Waits for a human: " + r
+		return "Waits for a human: " + r + detail
 	}
 	return ""
 }

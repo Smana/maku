@@ -12,6 +12,7 @@
 set -euo pipefail
 export LC_ALL=C.UTF-8
 cd "$(dirname "$0")/.."
+go run ./hack/gen-reasons.go
 if [ $# -eq 0 ]; then
   files=()
   while IFS= read -r f; do files+=("$f"); done < <(find README.md CONTRIBUTING.md AGENTS.md docs charts images -name '*.md' -not -path 'docs/superpowers/*' 2>/dev/null | sort)

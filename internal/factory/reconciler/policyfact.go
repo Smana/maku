@@ -37,7 +37,7 @@ func policyOf(cfg *config.Config, rc *config.Repository, t *v1alpha1.Task) *enve
 		p.Conditions = conditionsOf(cl, &p.Truncated)
 	}
 	if pr := t.Status.PullRequest; pr != nil {
-		p.MergedHow = pr.MergedHow
+		p.MergedHow, p.Decision = pr.MergedHow, pr.Decision
 		if name := pr.Policy; envelope.ValidClassName(name) { // MR1: the policy the diff matched
 			p.Name = name
 		} else if pr.MergedHow == "class" && envelope.ValidClassName(class) {

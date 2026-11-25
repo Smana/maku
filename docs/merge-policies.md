@@ -977,25 +977,37 @@ The guardrails and workflows in force are the pod's config, bound by its checksu
 
 The gate's policy-related reasons. Every other reason is in [the factory](factory.md#when-the-factory-waits-for-you).
 
-| Reason | Verdict | Means | Fix |
-|---|---|---|---|
-| `held` | human | The pull request carries `factory/hold` (MR10) | Remove `factory/hold` when ready for the next gate pass |
-| `policy_unavailable` | wait | Cut over, and the file has not been read yet or its last read is older than 15 minutes (the fence's window). Bounded by `merge.awaitingCIFor` | Check the fence read: `maku_factory_repository_owned`, GitHub reachability. It resumes on the next read |
-| `policy_invalid` | human | Cut over, and the default branch's file is invalid or binds no policy | Fix `.github/agent-factory.yaml` (the factory log `repository merge policy read` has the error), or merge by hand |
-| `approval_required` | human | A live policy would arm, and a file is in its `requiresApproval` subset; no grant covers it. Also when the grant that armed it no longer holds at the merge call | Approve the head or merge it; **Merge and create rule** to let later ones arm |
-| `shadow_would_require_approval` | shadow | The same, in a shadow policy | Nothing: it is a grant candidate, not promotion evidence |
-| `shadow_would_arm` | shadow | Every row held; the policy is in shadow | Merge it if you agree: that is the evidence |
-| `no_policy_matched` | human | No candidate policy holds on the diff; `considered=` names each one's refusal | Merge by hand, or write or bind a policy that admits it |
-| `reviewer_verdict_missing` | human | In `considered=`: the policy has no `diffShape` and no `oracle`, and no reviewer read the change (MR12) | Run the task with a reviewer (`standard` or `careful`), or give the policy a shape |
-| `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large` | human | A path or size condition, or a protected or guardrail path | Out of the policy: a human merges |
-| `class_mismatch` | human | The diff shape does not hold | As above |
-| `holdout_red`, `holdout_pending` | human, wait | A holdout or a `mandatoryChecks` entry is red, skipped, neutral, not from Actions, or not yet reported | Fix the check; a mandatory check must be a GitHub Actions job |
-| `release_age_red`, `release_age_pending`, `label_missing`, `label_not_adopted` | human, wait | Adopted-policy evidence | See [adopted classes](factory.md#adopted-classes) |
-| `approval_stale` | human | With `merge.approveToMerge`, a maintainer's approval is of another head, or came before the head stopped moving | Approve the current head |
-| `head_unreported` | human | No run of the task reported the head | See [the factory](factory.md#when-the-factory-waits-for-you) |
-| `changes_requested` | human | A maintainer's newest review requests changes, or the review list was truncated | Resolve the review |
-| `policy_pending`, `policy_absent`, `gate_path` | human | `maku/merge-gate` gate-path protection, or policy-bot's status when `merge.policyBot: true` | A gate path is human-only; under `merge.policyBot: true`, add or fix the `.policy.yml` rule |
-| `class_paused`, `auto_merge_cap` | human | The strictest matching live policy's breaker is tripped, or the repository's or policy's day is spent (no looser policy takes over) | Wait for the next UTC day or the pause to lift, or merge by hand |
+<!-- reasons:table:start -->
+| Reason | Means | Next step |
+|---|---|---|
+| `held` | a maintainer put this pull request on hold (factory/hold) | a maintainer reviews the task and chooses the next step |
+| `policy_unavailable` | the repository's merge policy could not be read recently, so auto-merge waits | a maintainer reviews the task and chooses the next step |
+| `policy_invalid` | the repository's merge policy is invalid, so auto-merge is paused | a maintainer reviews the task and chooses the next step |
+| `approval_required` | it changes a file its class asks a maintainer to approve | a maintainer reviews the task and chooses the next step |
+| `shadow_would_require_approval` | a shadow policy would merge, except a path needs a maintainer approval | a maintainer approves the current head; this is not clean promotion evidence |
+| `shadow_would_arm` | it would auto-merge, and the merge gate is in shadow | a maintainer reviews the task and chooses the next step |
+| `no_policy_matched` | no merge policy of the repository holds on this diff: a maintainer reviews and merges it | a maintainer reviews the task and chooses the next step |
+| `reviewer_verdict_missing` | no reviewer read this change, and its policy has no shape to check it | a maintainer reviews the task and chooses the next step |
+| `file_not_allowed` | it changes a file outside its class's allowed files | a maintainer reviews the task and chooses the next step |
+| `file_protected` | it changes a file its class protects | a maintainer reviews the task and chooses the next step |
+| `file_added_or_deleted` | it changes a file in a way other than editing its content (an add, delete, rename, copy or mode change), which its class does not allow | a maintainer reviews the task and chooses the next step |
+| `patch_too_large` | it changes more files or lines than its class allows | a maintainer reviews the task and chooses the next step |
+| `class_mismatch` | the diff is not the class the triage predicted | a maintainer reviews the task and chooses the next step |
+| `holdout_red` | a holdout check its class requires did not succeed (failed, cancelled, neutral, skipped, or not posted by GitHub Actions), or its checks could not all be read | a maintainer reviews the task and chooses the next step |
+| `holdout_pending` | a holdout check has not passed yet | nothing to do: the task goes on when the holdout checks report |
+| `release_age_red` | the release age check failed, or was not posted by the adopted login | a maintainer reviews the task and chooses the next step |
+| `release_age_pending` | the release age check has not passed yet | nothing to do: the task goes on when the release age check passes |
+| `label_missing` | it does not carry the label its class requires | a maintainer reviews the task and chooses the next step |
+| `label_not_adopted` | its required label was not applied by a login the class adopts | a maintainer reviews the task and chooses the next step |
+| `approval_stale` | a maintainer's approval is of an older head: approve the current one | a maintainer reviews the task and chooses the next step |
+| `head_unreported` | the task's implementer never reported its current head in the room: no handoff of its runs names that commit | a maintainer reviews the task and chooses the next step |
+| `changes_requested` | a reviewer requested changes, and the factory does not merge over them | a maintainer reviews the task and chooses the next step |
+| `policy_pending` | the merge policy is not ready | a maintainer reviews the task and chooses the next step |
+| `policy_absent` | the merge policy has not evaluated the pull request | a maintainer reviews the task and chooses the next step |
+| `gate_path` | it touches a gate path, so an agent can never merge it | a maintainer reviews the task and chooses the next step |
+| `class_paused` | auto-merge of this class is paused after a revert, a follow-up fix or a regression in its recent merges | a maintainer reviews the task and chooses the next step |
+| `auto_merge_cap` | today's auto-merge cap is reached | a maintainer reviews the task and chooses the next step |
+<!-- reasons:table:end -->
 
 Other policy vocabularies:
 
