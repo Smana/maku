@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,7 +57,15 @@ func newRuns() *fakeRuns {
 	return &fakeRuns{specs: map[string]runs.Spec{}, runs: map[string]runs.Run{}, patches: map[string]map[string]string{}}
 }
 
+// agentRunBranch is the AgentRun CRD's spec.branch pattern (api/v1alpha1/agentrun_types.go): the
+// fake refuses what the cluster refuses, so a claim on a person's branch fails here as it fails live.
+var agentRunBranch = regexp.MustCompile(`^agent/[a-z0-9][a-z0-9._/-]{0,100}$`)
+
 func (f *fakeRuns) Create(_ context.Context, s runs.Spec) error {
+	if s.Branch != "" && !agentRunBranch.MatchString(s.Branch) {
+		return apierrors.NewInvalid(schema.GroupKind{Group: "maku.ogenki.io", Kind: "AgentRun"}, s.RunID, field.ErrorList{
+			field.Invalid(field.NewPath("spec", "branch"), s.Branch, "spec.branch in body should match '"+agentRunBranch.String()+"'")})
+	}
 	if f.refuse != nil {
 		if err := f.refuse(s); err != nil {
 			return err

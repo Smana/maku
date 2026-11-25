@@ -1114,12 +1114,13 @@ func TestARefusedReviewerBriefFallsBackToThePullRequest(t *testing.T) {
 	}
 }
 
-// When the URL-only claim is refused too, the brief was not the cause: the existing path escalates.
+// When the URL-only claim is refused too, the brief was not the cause: the task escalates, as
+// run_refused since the cluster refused spec.task, not the loop.
 func TestARefusedReviewerClaimStillEscalates(t *testing.T) {
 	g, creates := reviewerRefusingRig(t, true)
 	tk := g.reconcile(t, "3buqdlot", 1)
-	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "loop_unsupported" || *creates != 2 {
-		t.Fatalf("%s %s after %d creates, want Escalated loop_unsupported after 2", tk.Status.Phase, tk.Status.Reason, *creates)
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "run_refused" || *creates != 2 {
+		t.Fatalf("%s %s after %d creates, want Escalated run_refused after 2", tk.Status.Phase, tk.Status.Reason, *creates)
 	}
 	for _, text := range g.log.states {
 		if strings.Contains(text, "the reviewer runs without its brief") {

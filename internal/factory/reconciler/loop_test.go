@@ -180,3 +180,38 @@ func TestARefusedLoopClaimEscalates(t *testing.T) {
 		t.Fatalf("tier scored %q", fit)
 	}
 }
+
+// A checks claim the cluster refuses on another field than spec.loop (live: spec.branch) is no
+// missing loop support: it escalates run_refused, never loop_unsupported, with no retry.
+func TestARefusedClaimNamesItsFieldNotTheLoop(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want string
+	}{
+		"spec.branch": {apierrors.NewInvalid(schema.GroupKind{Group: "maku.ogenki.io", Kind: "AgentRun"}, "x",
+			field.ErrorList{field.Invalid(field.NewPath("spec", "branch"), "docs/x", "should match '^agent/'")}), "run_refused"},
+		"spec.loop.checks": {apierrors.NewInvalid(schema.GroupKind{Group: "maku.ogenki.io", Kind: "AgentRun"}, "x",
+			field.ErrorList{field.Invalid(field.NewPath("spec", "loop", "checks"), "x", "unknown field")}), "loop_unsupported"},
+		"strict unknown field":  {apierrors.NewBadRequest(`strict decoding error: unknown field "spec.loop"`), "loop_unsupported"},
+		"bad request elsewhere": {apierrors.NewBadRequest(`strict decoding error: unknown field "spec.egress.profile"`), "run_refused"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+			steps := int32(40)
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {StallSteps: &steps}}
+			creates := 0
+			g.runs.refuse = func(s runs.Spec) error {
+				if s.Role != "implementer" {
+					return nil
+				}
+				creates++
+				return c.err
+			}
+			tk := g.reconcile(t, "3buqdlot", 4)
+			if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != c.want || creates != 1 {
+				t.Fatalf("%s %s after %d creates, want Escalated %s after 1", tk.Status.Phase, tk.Status.Reason, creates, c.want)
+			}
+		})
+	}
+}

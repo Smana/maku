@@ -170,6 +170,7 @@ var table = map[string]Words{
 	"room_log_unreadable":           {Short: "the room's log, which holds the review …", Long: "the room's log, which holds the review verdict, could not be read", Next: ""},
 	"rooms_crd_outdated":            {Short: "the cluster's Rooms CRD is older than t…", Long: "the cluster's Rooms CRD is older than the factory and refuses a system: member; an operator must refresh the CRD", Next: ""},
 	"run_lost":                      {Short: "the run disappeared", Long: "the run disappeared", Next: ""},
+	"run_refused":                   {Short: "the cluster refused the run", Long: "the cluster refused the run's claim on a field other than the loop policy, so no run started; the factory log names the field", Next: ""},
 	"run_unschedulable":             {Short: "the cluster never admitted the run", Long: "the cluster never admitted the task's run in time", Next: ""},
 	"scope_changed":                 {Short: "the revision changed the task's scope", Long: "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change", Next: ""},
 	"scoper_failed":                 {Short: "the scope was not checked", Long: "the scoper failed before it checked the scope (scope not checked), so the implementer was not started", Next: ""},
