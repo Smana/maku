@@ -101,6 +101,9 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	if p := t.Status.Profile; p != nil {
 		pf := &envelope.ProfileFact{Name: p.Name, Source: p.Source, Cohort: p.Cohort,
 			Recommended: p.Recommended, Reason: p.Reason, Why: p.Why, Requested: p.Requested, Refused: p.Refused}
+		if p.Requires != nil {
+			pf.RequiredBy, pf.RequiredStages = p.Requires.By, slices.Clone(p.Requires.Stages)
+		}
 		if t.Spec.Budget.TaskMicroUSD > 0 {
 			pf.CeilingMicroUSD = dollars(t.Spec.Budget.TaskMicroUSD)
 		}

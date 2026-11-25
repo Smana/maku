@@ -114,6 +114,13 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 			path = append(path, "CI", "merge gate")
 		}
 	}
+	if len(p.RequiredStages) > 0 {
+		path = withRequiredPath(path, p.RequiredStages)
+	}
+	reason := Reason(p.Source, p.By, rec, trigger, nil)
+	if cls := clean(p.RequiredBy); cls != "" && len(p.RequiredStages) > 0 {
+		reason += "; the class " + cls + " requires " + requiredStageWords(p.RequiredStages)
+	}
 	ceiling := p.CeilingMicroUSD
 	if ceiling == 0 && f.Spend != nil {
 		ceiling = f.Spend.LimitMicroUSD
@@ -122,12 +129,70 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 		Title:       title,
 		Repository:  repoOf(urlOf(f.Issue), prURL(f.PR)),
 		Workflow:    p.Name,
-		Reason:      Reason(p.Source, p.By, rec, trigger, nil),
+		Reason:      reason,
 		Path:        path,
 		CeilingUSD:  float64(ceiling) / 1e6,
 		StepUpUSD:   float64(p.StepUpCeilingMicroUSD) / 1e6,
 		SteppedFrom: steppedFrom,
 	}
+}
+
+func requiredStageWords(stages []string) string {
+	var parts []string
+	for _, st := range stages {
+		switch st {
+		case "plan":
+			parts = append(parts, "a plan")
+		case "tests":
+			parts = append(parts, "tests")
+		case "judge":
+			parts = append(parts, "a judge")
+		case "review":
+			parts = append(parts, "a review")
+		}
+	}
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return parts[0]
+	case 2:
+		return parts[0] + " and " + parts[1]
+	default:
+		return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+	}
+}
+
+func withRequiredPath(path, required []string) []string {
+	if len(path) == 0 {
+		return path
+	}
+	if len(path) == 1 && path[0] == "triager" {
+		return path
+	}
+	out := slices.Clone(path)
+	insertBefore := func(item string, before ...string) {
+		if slices.Contains(out, item) {
+			return
+		}
+		for _, target := range before {
+			if idx := slices.Index(out, target); idx >= 0 {
+				out = slices.Insert(out, idx, item)
+				return
+			}
+		}
+		out = append(out, item)
+	}
+	if slices.Contains(required, "plan") {
+		insertBefore("scoper", "tester", "implementer", "reviewer", "CI", "merge gate")
+	}
+	if slices.Contains(required, "tests") {
+		insertBefore("tester", "implementer", "reviewer", "CI", "merge gate")
+	}
+	if slices.Contains(required, "review") {
+		insertBefore("reviewer", "CI", "merge gate")
+	}
+	return out
 }
 
 // CardOfPlan builds a WorkflowCard from a repository's catalogue for a planned workflow.

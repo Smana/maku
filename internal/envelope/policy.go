@@ -72,6 +72,9 @@ type ProfileFact struct {
 	Description           string `json:"description,omitempty"`
 	// StepUp is the one step-up taken or offered on the task (WR4).
 	StepUp *StepUpFact `json:"stepUp,omitempty"`
+	// RequiredBy and RequiredStages name the merge class that added stages to the workflow (WR6).
+	RequiredBy     string   `json:"requiredBy,omitempty"`
+	RequiredStages []string `json:"requiredStages,omitempty"`
 }
 
 // StepUpFact is the task's recorded or offered step-up projected into room facts (WR4).
@@ -115,6 +118,10 @@ func (p ProfileFact) validate() error {
 		return errors.New("refused is a code of the closed profile refusals, beside the profile requested")
 	case p.By != "" && !ValidLogin(p.By):
 		return errors.New("by is a GitHub login")
+	case utf8.RuneCountInString(p.RequiredBy) > 63:
+		return errors.New("requiredBy is at most 63 characters")
+	case len(p.RequiredStages) > 4:
+		return errors.New("requiredStages has at most 4 items")
 	case p.CeilingMicroUSD < 0 || p.CeilingMicroUSD > MaxMicroUSD:
 		return errors.New("ceilingMicroUSD is out of range")
 	case p.StepUpCeilingMicroUSD < 0 || p.StepUpCeilingMicroUSD > MaxMicroUSD:

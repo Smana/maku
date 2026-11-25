@@ -1036,6 +1036,9 @@ func (r *Reconciler) afterWriter(ctx context.Context, cfg *config.Config, t *v1a
 			return err
 		}
 	}
+	if requeued, err := r.applyLateDiffRequires(ctx, cfg, t); err != nil || requeued {
+		return err
+	}
 	if next := r.nextVerifier(cfg, t, "implementer"); next != "" {
 		r.requestVerifier(t, next)
 		return nil

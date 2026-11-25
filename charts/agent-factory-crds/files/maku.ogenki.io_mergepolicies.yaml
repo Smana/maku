@@ -232,6 +232,20 @@ spec:
                   the factory to adopt it (K11): RunLore's ready-to-merge.
                 maxLength: 253
                 type: string
+              requires:
+                description: |-
+                  Requires names workflow stages that every task touching this class's paths must run (WR6):
+                  plan, tests, judge, review. Adds stages to any workflow and never removes one.
+                items:
+                  enum:
+                  - plan
+                  - tests
+                  - judge
+                  - review
+                  maxLength: 16
+                  type: string
+                maxItems: 4
+                type: array
               requiresApproval:
                 description: |-
                   RequiresApproval asks a human about a pull request touching one of its paths, even in a live

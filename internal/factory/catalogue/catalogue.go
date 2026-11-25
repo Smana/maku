@@ -223,7 +223,7 @@ func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.
 	if t, ok := cfg.Templates[tmplName]; ok && tmplName != "" {
 		out.Roles = slices.Clone(t.Roles)
 		out.Offered = true
-		st := cfg.StagesFor(rc, name)
+		st := cfg.StagesFor(rc, name, "")
 		var path []string
 		if st.Plan {
 			path = append(path, "scoper")

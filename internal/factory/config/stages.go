@@ -63,10 +63,11 @@ func (c *Config) TemplateFor(workflow string) string {
 	return c.TemplateForProfile(workflow, p)
 }
 
-// StagesFor resolves every stage switch of workflow on repository r (WR6). A row that omits ask,
-// plan and review resolves as before: plan from scope: scoper, review from the workflow's template,
-// and ask from the scoper's forced question.
-func (c *Config) StagesFor(r *Repository, workflow string) Stages {
+// StagesFor resolves every stage switch of workflow on repository r and merge class (WR6). A row
+// that omits ask, plan and review resolves as before: plan from scope: scoper, review from the
+// workflow's template, and ask from the scoper's forced question. Any stage in class's requires is
+// added and never removed; tests is added only when the repository sets merge.contractCheck.
+func (c *Config) StagesFor(r *Repository, workflow, class string) Stages {
 	p, ok := c.Workflow(workflow)
 	if !ok {
 		return Stages{}
@@ -95,6 +96,26 @@ func (c *Config) StagesFor(r *Repository, workflow string) Stages {
 			review = *row.Review
 		}
 	}
+	if !inv && r != nil && class != "" {
+		if cl, ok := r.Class(class); ok && len(cl.Requires) > 0 {
+			for _, req := range cl.Requires {
+				switch req {
+				case "plan":
+					plan = true
+				case "tests":
+					if r.Merge.ContractCheck != "" {
+						tests = true
+					}
+				case "judge":
+					if judge == "" {
+						judge = DefaultJudge
+					}
+				case "review":
+					review = true
+				}
+			}
+		}
+	}
 	var split *SplitPolicy
 	if plan && row.Split != nil {
 		sp := *row.Split
@@ -115,4 +136,22 @@ func (c *Config) StagesFor(r *Repository, workflow string) Stages {
 		Review: review,
 		Split:  split,
 	}
+}
+
+// RequiredStagesFor returns the stages class requires on repository r, in canonical order.
+func (c *Config) RequiredStagesFor(r *Repository, class string) []string {
+	if r == nil || class == "" {
+		return nil
+	}
+	cl, ok := r.Class(class)
+	if !ok || len(cl.Requires) == 0 {
+		return nil
+	}
+	var out []string
+	for _, st := range RequiredStages() {
+		if slices.Contains(cl.Requires, st) {
+			out = append(out, st)
+		}
+	}
+	return out
 }

@@ -443,6 +443,31 @@ type ProfileStatus struct {
 	// StepUp records the one step this task took or was offered (WR4).
 	// +optional
 	StepUp *StepUpStatus `json:"stepUp,omitempty"`
+	// Requires records workflow stages added or unmet from MergePolicy.spec.requires (WR6).
+	// +optional
+	Requires *ClassRequiresStatus `json:"requires,omitempty"`
+}
+
+// ClassRequiresStatus records workflow stages required by a MergePolicy class (WR6).
+type ClassRequiresStatus struct {
+	// By names the MergePolicy class whose spec.requires added stages to this task.
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	By string `json:"by,omitempty"`
+	// Stages are the stages By added to this task.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=16
+	// +optional
+	Stages []string `json:"stages,omitempty"`
+	// Unmet are stages required by a class that this repository could not run (e.g. tests
+	// without tests.paths or merge.contractCheck); the merge gate hands off as required_stage_missing.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=16
+	// +optional
+	Unmet []string `json:"unmet,omitempty"`
+	// DiffChecked records that class requires were evaluated against the diff once.
+	// +optional
+	DiffChecked bool `json:"diffChecked,omitempty"`
 }
 
 // StepUpStatus records the one workflow step-up a task took or was offered (WR4).

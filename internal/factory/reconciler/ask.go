@@ -56,9 +56,9 @@ const (
 )
 
 // askStageOn reports whether the task's workflow enables the deterministic acceptance guard (WR6).
-func askStageOn(cfg *config.Config, rc *config.Repository, workflow string) bool {
+func askStageOn(cfg *config.Config, rc *config.Repository, workflow, class string) bool {
 	if workflow != "" {
-		return cfg.StagesFor(rc, workflow).Ask
+		return cfg.StagesFor(rc, workflow, class).Ask
 	}
 	if row, ok := cfg.Loops["default"]; ok && row.Ask != nil {
 		return *row.Ask
@@ -71,7 +71,7 @@ func askStageOn(cfg *config.Config, rc *config.Repository, workflow string) bool
 // needs_author with factory/needs-author and no AgentRun started. Schedules (no issue) proceed as
 // assumed; tasks filed from a confirmed intake plan that settled acceptance proceed as answered.
 func (r *Reconciler) askAtIntake(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, workflow string) (bool, error) {
-	if !askStageOn(cfg, r.repo(cfg, t), workflow) || t.Spec.Parent != nil {
+	if !askStageOn(cfg, r.repo(cfg, t), workflow, t.Spec.PredictedClass) || t.Spec.Parent != nil {
 		return false, nil
 	}
 	if t.Spec.Issue == 0 {

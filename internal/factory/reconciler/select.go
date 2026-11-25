@@ -116,6 +116,10 @@ func decideAmong(in ArmInputs, cfg *config.Config, rc *config.Repository, classe
 	if rows.Evidence = runEvidence(in, cfg); rows.Evidence != "" {
 		return human(rows.Evidence)
 	}
+	if in.Task != nil && in.Task.Status.Profile != nil && in.Task.Status.Profile.Requires != nil && len(in.Task.Status.Profile.Requires.Unmet) > 0 {
+		rows.Evidence = reasonRequiredStageMissing
+		return human(reasonRequiredStageMissing)
+	}
 	rows.Evidence = "ok"
 	if in.DiffRead && cfg.SteeringOn() && touchesSteering(in.Stats) {
 		return human("steering_path") // no agent pull request changes a note (scoper SC3)
@@ -127,6 +131,10 @@ func decideAmong(in ArmInputs, cfg *config.Config, rc *config.Repository, classe
 		r := recordOf(in, cl)
 		r.Evidence = "ok"
 		d, holds := judge(in, rc, name, cl, r)
+		if e := missingRequiredStage(in, cfg, cl); holds && e != "" { // WR6/E7: a policy that holds needs its required stages
+			r.Evidence = e
+			d, holds = ArmDecision{Verdict: "human", Reason: e, Matched: name, Rows: r}, false
+		}
 		if e := verdictEvidence(in, cfg, cl); holds && e != "" { // MR12: a policy that holds needs a reviewer's verdict
 			r.Evidence = e
 			d, holds = ArmDecision{Verdict: "human", Reason: e, Matched: name, Rows: r}, false

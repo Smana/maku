@@ -193,6 +193,11 @@ func (r *Reconciler) scopeEndAs(ctx context.Context, cfg *config.Config, t *v1al
 	if err := r.resolveProfile(ctx, cfg, t, sc); err != nil {
 		return err
 	}
+	if sc != nil && len(sc.Touches) > 0 {
+		if err := r.applyLatePlanRequires(ctx, cfg, t, sc.Touches); err != nil {
+			return err
+		}
+	}
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: state, Seq: seq}
 	r.noteStage(t, "plan", planEffect(nil, scopeForEffect(sc), false, sc != nil))
 	if state == "assumed" {
