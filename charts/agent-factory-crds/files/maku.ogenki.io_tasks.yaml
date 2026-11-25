@@ -2078,6 +2078,7 @@ spec:
                 - retry
                 - resume
                 - escalation
+                - plan_revise
                 type: string
               outbox:
                 description: |-
@@ -2805,6 +2806,7 @@ spec:
                       - retry
                       - resume
                       - escalation
+                      - plan_revise
                       type: string
                     unpriced:
                       description: 'Why the meter could not price the run: its task
