@@ -719,7 +719,7 @@ const (
 // config's. A binding file is read only when it is authoritative (stage 4): under central
 // authority its modes decide nothing.
 func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepolicy.File) []class {
-	agents := []string{searchLogin(cfg.AgentsLogin)}
+	agents := []string{SearchLogin(cfg.AgentsLogin)}
 	var out []class
 	policy := func(c *class) {
 		c.resolved = rc.Classes[c.name]
@@ -787,13 +787,13 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 func adopters(logins []string) []string {
 	out := make([]string, 0, len(logins))
 	for _, l := range logins {
-		out = append(out, searchLogin(l))
+		out = append(out, SearchLogin(l))
 	}
 	return out
 }
 
-// searchLogin is a login as GitHub's search names an author: an App's <slug>[bot] is app/<slug>.
-func searchLogin(l string) string {
+// SearchLogin is a login as GitHub's search names an author: an App's <slug>[bot] is app/<slug>.
+func SearchLogin(l string) string {
 	if s, ok := strings.CutSuffix(l, "[bot]"); ok {
 		return "app/" + s
 	}
