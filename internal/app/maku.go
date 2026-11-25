@@ -81,6 +81,9 @@ const makuUsage = `usage: maku <command>
                                   issue was deleted; --discard also closes its pull request, deletes its agent/<task>
                                   branch and closes its issue as not planned (a GitHub App cannot delete an issue).
                                   The task's owner or a maintainer of its repository only
+  start [--repository owner/name] [--workflow <name>] [--plan-first] "<request>"
+                                  plan a task through the broker, print the workflow card and issue, ask File and start?
+                                  [y/N], and file and label it with your gh; --workflow is a maintainer's
   retry <task> [--deeper]         queue a fresh run of an escalated task; --deeper steps it up once (also on a no-op task)
   answer <task> "<one line>"      answer a task's open question, recording the decision on the issue (and restarting for a maintainer)
   split accept|decline <task>     accept a proposed split (charged to you) or decline it to run the task whole
@@ -207,6 +210,12 @@ type Maku struct {
 	// DBBootstrap prepares an external Postgres 16+ server for `maku db bootstrap` (nil: store.Bootstrap).
 	// Tests stand in for the database.
 	DBBootstrap func(ctx context.Context, adminURL string, opts store.BootstrapOptions) (store.BootstrapResult, error)
+
+	// FileIssue, AddLabel and LabelIssue are `maku start`'s gh seams (nil: maku.GH, maku.GHAddLabel, maku.GHLabel).
+	// Tests stand in for gh; none reaches GitHub.
+	FileIssue  maku.IssueFiler
+	AddLabel   maku.Labeler
+	LabelIssue maku.Labeler
 }
 
 // RunMaku runs one maku command (SP2 §8): its files under maku.Dir; a pre-v0.30.0 CLI's directory
@@ -282,7 +291,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "retry", "answer", "split", "plan", "stages", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -378,6 +387,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.post(ctx, c, args)
 	case "cancel":
 		return r.cancel(ctx, c, args)
+	case "start":
+		return r.start(ctx, c, args)
 	case "retry":
 		return r.retry(ctx, c, args)
 	case "answer":
@@ -1011,6 +1022,144 @@ func (r Maku) cancel(ctx context.Context, c maku.Client, args []string) error {
 			"closed as not planned (a GitHub App cannot delete an issue: a repository admin can)\n"
 	}
 	_, err = io.WriteString(r.Out, maku.SafeText(out))
+	return err
+}
+
+// start plans a request through the broker's /api/handoffs routes, prints the workflow card and
+// issue draft, asks "File and start? [y/N] ", and files + labels with the developer's gh on yes.
+func (r Maku) start(ctx context.Context, c maku.Client, args []string) error {
+	fs := flag.NewFlagSet("start", flag.ContinueOnError)
+	repo := fs.String("repository", "", "target repository, owner/name")
+	workflow := fs.String("workflow", "", "workflow name to pin (maintainers only)")
+	planFirst := fs.Bool("plan-first", false, "ask for a plan to approve before implementation starts")
+	pos, err := flags(fs, args)
+	if err != nil || len(pos) == 0 {
+		return fmt.Errorf(`start [--repository owner/name] [--workflow <name>] [--plan-first] "<request>": %w`,
+			errors.Join(err, errors.New("a request sentence is required")))
+	}
+	requestText := strings.TrimSpace(strings.Join(pos, " "))
+	if requestText == "" {
+		return errors.New(`start: a request sentence is required`)
+	}
+	if *repo != "" && !maku.ValidRepository(*repo) {
+		return fmt.Errorf("start: --repository %q is not owner/name", maku.SafeText(*repo))
+	}
+
+	h, err := c.Handoff(ctx, maku.HandoffRequest{Text: requestText, Repository: *repo})
+	if err != nil {
+		return err
+	}
+	if !h.Ready && h.Question != nil {
+		_, _ = fmt.Fprintf(r.Out, "Question: %s\n", maku.SafeText(h.Question.Text))
+		if h.Question.Recommended != "" {
+			_, _ = fmt.Fprintf(r.Out, "Recommended: %s\n", maku.SafeText(h.Question.Recommended))
+		}
+		ans := ""
+		if r.In != nil {
+			hints := r.Err
+			if hints == nil {
+				hints = os.Stderr
+			}
+			_, _ = fmt.Fprint(hints, "Answer (Enter to accept recommended): ")
+			line, _ := bufio.NewReader(io.LimitReader(r.In, 4096)).ReadString('\n')
+			ans = strings.TrimSpace(line)
+		}
+		if ans != "" {
+			h, err = c.Handoff(ctx, maku.HandoffRequest{ID: h.ID, Answer: ans})
+		} else {
+			h, err = c.Handoff(ctx, maku.HandoffRequest{ID: h.ID, AcceptRest: true})
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	var checkReq maku.HandoffCheckRequest
+	if wf := strings.TrimSpace(*workflow); wf != "" {
+		checkReq.Workflow = &wf
+	}
+	if *planFirst {
+		pf := "plan-first"
+		checkReq.Outcome = &pf
+	}
+	checked, err := c.HandoffCheck(ctx, h.ID, checkReq)
+	if err != nil {
+		var href *maku.HandoffRefusal
+		if checkReq.Workflow != nil && errors.As(err, &href) && href.Reason == "not_maintainer" {
+			_, _ = fmt.Fprintln(r.Out, maku.SafeText(href.Error()))
+			checkReq.Workflow = nil
+			checked, err = c.HandoffCheck(ctx, h.ID, checkReq)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	card, outcomeNote := maku.HandoffCard(checked)
+	if err := roomview.WorkflowCardText(r.Out, card, roomview.Options{Format: textFormat(r.Out)}); err != nil {
+		return err
+	}
+	if outcomeNote != "" {
+		_, _ = fmt.Fprintln(r.Out, maku.SafeText(outcomeNote))
+	}
+	if checked.Title != "" {
+		_, _ = fmt.Fprintf(r.Out, "\n%s\n", maku.SafeText(checked.Title))
+	}
+	if checked.Body != "" {
+		_, _ = fmt.Fprintf(r.Out, "\n%s\n", maku.SafeText(checked.Body))
+	}
+
+	ask := r.asker()
+	if ask == nil {
+		return errors.New("start: a terminal is required to confirm filing; nothing was filed")
+	}
+	ok, err := ask("File and start? [y/N] ")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		_, err = fmt.Fprintln(r.Out, "Nothing filed.")
+		return err
+	}
+
+	fileIssue := r.FileIssue
+	if fileIssue == nil {
+		fileIssue = maku.GH
+	}
+	addLabel := r.AddLabel
+	if addLabel == nil {
+		addLabel = maku.GHAddLabel
+	}
+	labelIssue := r.LabelIssue
+	if labelIssue == nil {
+		labelIssue = maku.GHLabel
+	}
+
+	repoName := checked.Repository
+	if repoName == "" {
+		repoName = card.Repository
+	}
+	issueURL, err := fileIssue(ctx, repoName, checked.Title, checked.Body)
+	if err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+	if !checked.CanStart {
+		_, err = fmt.Fprintf(r.Out, "Filed %s (not started: %s)\n", maku.SafeText(issueURL), maku.SafeText(maku.StartWhy(checked.CanStartWhy)))
+		return err
+	}
+	n, err := maku.IssueNumber(issueURL, repoName)
+	if err != nil {
+		return fmt.Errorf("start: filed %s without labels: %w", maku.SafeText(issueURL), err)
+	}
+	for _, label := range maku.HandoffLabels(checked) {
+		if lerr := addLabel(ctx, repoName, n, label); lerr != nil {
+			return fmt.Errorf("start: filed %s without label %s: %w", maku.SafeText(issueURL), label, lerr)
+		}
+	}
+	if lerr := labelIssue(ctx, repoName, n, "factory/ready"); lerr != nil {
+		return fmt.Errorf("start: filed %s without factory/ready: %w", maku.SafeText(issueURL), lerr)
+	}
+	_, err = fmt.Fprintf(r.Out, "Filed and started %s\n", maku.SafeText(issueURL))
 	return err
 }
 

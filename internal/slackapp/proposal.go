@@ -74,9 +74,12 @@ func notPostedLine(err error) string { return "Proposal not posted: " + err.Erro
 
 // notPostedIssueLine is a plan covering more than one issue, as the thread says it: Slack files one, and
 // a plan with more is never trimmed to fit (CD19). The mention's post and the reply's re-plan meet it
-// with this one sentence.
-func notPostedIssueLine(n int) string {
-	return fmt.Sprintf("Proposal not posted: this plan covers %d issues and Slack files one: use your coding agent or the web UI.", n)
+// with this one sentence, naming the web UI's New task page.
+func notPostedIssueLine(n int, roomsURL string) string {
+	if base := strings.TrimSuffix(roomsURL, "/"); base != "" {
+		return fmt.Sprintf("Proposal not posted: this plan covers %d issues and Slack files one: use your coding agent or New task on %s.", n, base)
+	}
+	return fmt.Sprintf("Proposal not posted: this plan covers %d issues and Slack files one: use your coding agent or New task in the web UI.", n)
 }
 
 // proposalHashRE is the shape of a plan hash: a Confirm binds one of these, and anything else binds
@@ -1157,7 +1160,7 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 	// Slack files one issue and a re-plan is never a trimmed plan (CD19): the reply path meets the
 	// same refusal the mention's post does, in the same words.
 	if n := len(next.Plan.Issues); n > 1 {
-		return a.refusedWith(ctx, ev.Channel, thread, notPostedIssueLine(n), "multi_issue")
+		return a.refusedWith(ctx, ev.Channel, thread, notPostedIssueLine(n, a.RoomsURL), "multi_issue")
 	}
 	return a.updateProposal(ctx, ev.Channel, latest.TS, p, next, res.Question)
 }
@@ -1461,7 +1464,7 @@ func (a *App) postProposalIn(ctx context.Context, channel, thread string, st *pl
 		prop.Pinned = p.Pinned
 	}
 	if n := len(prop.Plan.Issues); n > 1 {
-		if !say(notPostedIssueLine(n)) {
+		if !say(notPostedIssueLine(n, a.RoomsURL)) {
 			return "error"
 		}
 		return "multi_issue"

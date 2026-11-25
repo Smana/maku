@@ -193,6 +193,9 @@ type Server struct {
 	Intake *Intake
 	// Handoffs stores in-progress handoff plans for 24 hours; nil refuses handoff calls as unavailable.
 	Handoffs HandoffStore
+	// IssueStarter files a handoff's issue on GitHub and applies its labels for POST /api/handoffs/{id}/start.
+	// Nil refuses web start as unavailable.
+	IssueStarter IssueStarter
 	// Intents is human.slackIntents: intent_classify, the Slack App's read-only classification of a
 	// thread reply (natural-language intents). Nil is the switch off: the tool is on no list.
 	Intents *IntentClassifier
@@ -288,6 +291,9 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("GET /api/needs", s.needsRoute)
 	}
 	mux.HandleFunc("POST /api/rooms", s.createRoom)
+	mux.HandleFunc("POST /api/handoffs", s.handoffCreateRoute)
+	mux.HandleFunc("POST /api/handoffs/{id}/check", s.handoffCheckRoute)
+	mux.HandleFunc("POST /api/handoffs/{id}/start", s.handoffStartRoute)
 	mux.HandleFunc("GET /api/rooms/{id}/summary", s.roomSummary)
 	mux.HandleFunc("GET /api/rooms/{id}/brief", s.roomBriefRoute)
 	if s.CoordinationViews != nil { // coordination off registers no route (MR16)

@@ -381,6 +381,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	}
 	humans.Policy = policyWorkflow(cfg, st)
 	humans.Handoffs = st
+	humans.IssueStarter = issueStarterApp(getenv("ROOMS_GITHUB_APP_DIR"))
 	if humans.Intake != nil {
 		// A sponsored plan resolves the Slack user to the account it is linked to, so the link tables
 		// are the planner's too (internal/humanapi/intake.go's requester).

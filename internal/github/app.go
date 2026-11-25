@@ -143,14 +143,16 @@ type App struct {
 	// mu guards slug, tokens and readTokens only, never a round trip: a mint holds its
 	// repository's key in minting/readMinting, so one repository's callers wait for one mint
 	// while another repository's mint runs alongside (B15).
-	mu         sync.Mutex
-	slug       string
-	tokens     map[string]token // by owner/repo (pull_requests: write)
-	readTokens map[string]token // by owner/repo (contents: read only; zero write permissions)
+	mu          sync.Mutex
+	slug        string
+	tokens      map[string]token // by owner/repo (pull_requests: write)
+	readTokens  map[string]token // by owner/repo (contents: read only; zero write permissions)
+	issueTokens map[string]token // by owner/repo (issues: write only; web handoff filing)
 
-	minting     keyedLock // by owner/repo, while a write-scoped mint is held or awaited
-	readMinting keyedLock // by owner/repo, while a read-only mint is held or awaited
-	posting     keyedLock // by pull request + marker, while held or awaited
+	minting      keyedLock // by owner/repo, while a write-scoped mint is held or awaited
+	readMinting  keyedLock // by owner/repo, while a read-only mint is held or awaited
+	issueMinting keyedLock // by owner/repo, while an issues-write mint is held or awaited
+	posting      keyedLock // by pull request + marker, while held or awaited
 }
 
 // keyedLock serialises callers per key. An entry lives only while its key is
@@ -639,6 +641,109 @@ func (a *App) evictRead(repo string) {
 	a.mu.Lock()
 	delete(a.readTokens, repo)
 	a.mu.Unlock()
+}
+
+// evictIssue drops the cached issues-write installation token of owner/repo.
+func (a *App) evictIssue(repo string) {
+	a.mu.Lock()
+	delete(a.issueTokens, repo)
+	a.mu.Unlock()
+}
+
+// issueInstallation returns a short-lived installation token for one repository scoped strictly
+// to issues: write, used by web handoff filing without widening tokens or readTokens.
+func (a *App) issueInstallation(ctx context.Context, api *url.URL, owner, repo string) (string, error) {
+	key := owner + "/" + repo
+	unlock, err := a.issueMinting.lock(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	a.mu.Lock()
+	t := a.issueTokens[key]
+	a.mu.Unlock()
+	if t.value != "" && a.Now().Before(t.exp.Add(-refreshBefore)) {
+		return t.value, nil
+	}
+	appJWT, err := a.appJWT()
+	if err != nil {
+		return "", err
+	}
+	var inst struct {
+		ID int64 `json:"id"`
+	}
+	if err := a.do(ctx, api, http.MethodGet, "repos/"+owner+"/"+repo+"/installation", "", appJWT, nil, &inst, maxReply); err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+			err = fmt.Errorf("%w: %w", ErrNoInstallation, err)
+		}
+		return "", err
+	}
+	var out struct {
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	scope := map[string]any{"repositories": []string{repo},
+		"permissions": map[string]string{"issues": "write"}}
+	if err := a.do(ctx, api, http.MethodPost, "app/installations/"+strconv.FormatInt(inst.ID, 10)+"/access_tokens", "",
+		appJWT, scope, &out, maxReply); err != nil {
+		return "", err
+	}
+	if out.Token == "" || !out.ExpiresAt.After(a.Now()) {
+		return "", errors.New("github: the token reply has no live token")
+	}
+	a.mu.Lock()
+	if a.issueTokens == nil {
+		a.issueTokens = map[string]token{}
+	}
+	a.issueTokens[key] = token{out.Token, out.ExpiresAt}
+	a.mu.Unlock()
+	return out.Token, nil
+}
+
+// CreatedIssue is the issue CreateIssue opened on GitHub.
+type CreatedIssue struct {
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+}
+
+// CreateIssue opens an issue on owner/repo with labels and returns its number and URL.
+func (a *App) CreateIssue(ctx context.Context, owner, repo, title, body string, labels []string) (CreatedIssue, error) {
+	if !validRepo(owner, repo) {
+		return CreatedIssue{}, ErrNotAPullRequest
+	}
+	if strings.TrimSpace(title) == "" {
+		return CreatedIssue{}, errors.New("github: issue title is required")
+	}
+	api, err := a.api()
+	if err != nil {
+		return CreatedIssue{}, err
+	}
+	call := func() (CreatedIssue, error) {
+		tok, err := a.issueInstallation(ctx, api, owner, repo)
+		if err != nil {
+			return CreatedIssue{}, err
+		}
+		payload := map[string]any{"title": title, "body": body}
+		if len(labels) > 0 {
+			payload["labels"] = labels
+		}
+		var out CreatedIssue
+		if err := a.do(ctx, api, http.MethodPost, "repos/"+owner+"/"+repo+"/issues", "", tok, payload, &out, maxReply); err != nil {
+			return CreatedIssue{}, err
+		}
+		if out.Number <= 0 || out.HTMLURL == "" {
+			return CreatedIssue{}, errors.New("github: the issue reply has no number or url")
+		}
+		return out, nil
+	}
+	out, err := call()
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
+		a.evictIssue(owner + "/" + repo)
+		out, err = call()
+	}
+	return out, err
 }
 
 // comment is one attempt: a token, the search for the marker, then the post.

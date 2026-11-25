@@ -1480,7 +1480,7 @@ func TestProposalRefusals(t *testing.T) {
 				plan.Issues = append(plan.Issues, second)
 				b.setPlan(plan, false, nil)
 			},
-			want:    "Proposal not posted: this plan covers 2 issues and Slack files one: use your coding agent or the web UI.",
+			want:    "Proposal not posted: this plan covers 2 issues and Slack files one: use your coding agent or New task on https://rooms.example.",
 			outcome: "multi_issue",
 		},
 		{

@@ -48,6 +48,8 @@ type makuBroker struct {
 	proto []string         // the MCP-Protocol-Version header of each /mcp request
 	// brief answers GET /api/rooms/{id}/brief: a status and a body; nil answers 404.
 	brief func() (int, string)
+	// handoff answers POST /api/handoffs and /api/handoffs/{id}/check|start; nil falls through.
+	handoff func(path string, body []byte) (int, string)
 }
 
 func newMakuBroker(t *testing.T) *makuBroker {
@@ -87,6 +89,14 @@ func newMakuBroker(t *testing.T) *makuBroker {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if strings.HasPrefix(r.URL.Path, "/api/handoffs") && b.handoff != nil {
+				raw, _ := io.ReadAll(r.Body)
+				status, body := b.handoff(r.URL.Path, raw)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(body))
+				return
+			}
 			if strings.HasSuffix(r.URL.Path, "/brief") {
 				status, body := http.StatusNotFound, ""
 				if b.brief != nil {
@@ -454,7 +464,7 @@ func TestPlanCommandSendsTheAct(t *testing.T) {
 func TestMakuNeverSteersOrDecides(t *testing.T) {
 	b := newMakuBroker(t)
 	r, _ := configured(t, b)
-	for _, cmd := range []string{"steer", "interrupt", "promote", "take", "give", "request", "driver", "decide", "approve", "deny", "start", "invite", "close"} {
+	for _, cmd := range []string{"steer", "interrupt", "promote", "take", "give", "request", "driver", "decide", "approve", "deny", "invite", "close"} {
 		if err := r.Run(t.Context(), []string{cmd, "3kq7x2ma", "now"}); err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Errorf("%s: %v", cmd, err)
 		}
@@ -1234,5 +1244,140 @@ func TestMakuCoordinationCheckout(t *testing.T) {
 				t.Fatalf("got %v, want %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestTerminalStartPrintsTheCardAndAsks(t *testing.T) {
+	b := newMakuBroker(t)
+	var seenPaths []string
+	var seenBodies []map[string]any
+	b.handoff = func(path string, raw []byte) (int, string) {
+		seenPaths = append(seenPaths, path)
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		seenBodies = append(seenBodies, m)
+		switch path {
+		case "/api/handoffs":
+			return http.StatusOK, `{"apiVersion":"handoff/v1","id":"h1234567890","text":"Handoff h1234567890","ready":true,"workflow":"standard","budget":5.10,"repository":"Smana/maku","title":"docs: fix dead install link","body":"## What is wrong\nDead link."}`
+		case "/api/handoffs/h1234567890/check":
+			if wf, _ := m["workflow"].(string); wf == "careful" {
+				return http.StatusForbidden, `{"error":"not_maintainer","message":"only a repository maintainer can pin a workflow"}`
+			}
+			outcome := ""
+			if o, _ := m["outcome"].(string); o != "" {
+				outcome = o
+			}
+			return http.StatusOK, `{"id":"h1234567890","hash":"sha256:` + strings.Repeat("a", 64) + `","canStart":true,"linked":true,"workflow":"standard",` +
+				`"repository":"Smana/maku","title":"docs: fix dead install link","body":"## What is wrong\nDead link.",` +
+				`"activeChoice":{"name":"standard","ceilingUSD":5.10,"path":["implementer","reviewer","CI","merge gate"]},` +
+				`"plan":{"repository":"Smana/maku","budget":{"ceilingUSD":5.10},"issues":[{"index":1,"title":"docs: fix dead install link","body":"## What is wrong\nDead link.","outcome":"` + outcome + `"}]}}`
+		default:
+			return http.StatusNotFound, `{"error":"not_found"}`
+		}
+	}
+
+	r, out := configured(t, b)
+	var prompts []string
+	r.Ask = func(prompt string) (bool, error) {
+		prompts = append(prompts, prompt)
+		return true, nil
+	}
+	var filedRepo, filedTitle, filedBody string
+	var addedLabels []string
+	r.FileIssue = func(_ context.Context, repo, title, body string) (string, error) {
+		filedRepo, filedTitle, filedBody = repo, title, body
+		return "https://github.com/" + repo + "/issues/42", nil
+	}
+	r.AddLabel = func(_ context.Context, _ string, _ int, label string) error {
+		addedLabels = append(addedLabels, label)
+		return nil
+	}
+	r.LabelIssue = func(_ context.Context, _ string, _ int, label string) error {
+		addedLabels = append(addedLabels, label)
+		return nil
+	}
+
+	if err := r.Run(t.Context(), []string{"start", "--repository", "Smana/maku", "--workflow", "careful", "--plan-first", "fix the dead install link"}); err != nil {
+		t.Fatalf("maku start: %v", err)
+	}
+	wantPaths := []string{"/api/handoffs", "/api/handoffs/h1234567890/check", "/api/handoffs/h1234567890/check"}
+	if !slices.Equal(seenPaths, wantPaths) {
+		t.Fatalf("paths = %v, want %v", seenPaths, wantPaths)
+	}
+	if len(prompts) != 1 || prompts[0] != "File and start? [y/N] " {
+		t.Fatalf("prompts = %v, want [File and start? [y/N] ]", prompts)
+	}
+	gotOut := out.String()
+	for _, want := range []string{
+		"only a repository maintainer can pin a workflow",
+		"Outcome",
+		"a plan to approve, then a pull request",
+		"Workflow",
+		"standard · this repository's default",
+		"Will run",
+		"implementer → reviewer → CI → merge gate",
+		"Cost",
+		"up to $5.10",
+		"docs: fix dead install link",
+		"Dead link.",
+		"https://github.com/Smana/maku/issues/42",
+	} {
+		if !strings.Contains(gotOut, want) {
+			t.Errorf("output lacks %q:\n%s", want, gotOut)
+		}
+	}
+	if filedRepo != "Smana/maku" || filedTitle != "docs: fix dead install link" || !strings.Contains(filedBody, "Dead link.") {
+		t.Fatalf("filed = (%q, %q, %q)", filedRepo, filedTitle, filedBody)
+	}
+	if !slices.Equal(addedLabels, []string{"plan-first", "factory/ready"}) {
+		t.Fatalf("labels = %v, want [plan-first factory/ready]", addedLabels)
+	}
+}
+
+func TestTerminalStartFilesNothingOnNo(t *testing.T) {
+	b := newMakuBroker(t)
+	b.handoff = func(path string, _ []byte) (int, string) {
+		switch path {
+		case "/api/handoffs":
+			return http.StatusOK, `{"apiVersion":"handoff/v1","id":"h9876543210","text":"Handoff h9876543210","ready":true,"workflow":"standard","budget":2.00,"repository":"Smana/maku","title":"docs: fix typo","body":"## What is wrong\nTypo."}`
+		case "/api/handoffs/h9876543210/check":
+			return http.StatusOK, `{"id":"h9876543210","hash":"sha256:` + strings.Repeat("b", 64) + `","canStart":true,"linked":true,"workflow":"standard",` +
+				`"repository":"Smana/maku","title":"docs: fix typo","body":"## What is wrong\nTypo.",` +
+				`"activeChoice":{"name":"standard","ceilingUSD":2.00,"path":["implementer","reviewer","CI","merge gate"]},` +
+				`"plan":{"repository":"Smana/maku","budget":{"ceilingUSD":2.00},"issues":[{"index":1,"title":"docs: fix typo","body":"## What is wrong\nTypo."}]}}`
+		default:
+			return http.StatusNotFound, `{"error":"not_found"}`
+		}
+	}
+
+	r, out := configured(t, b)
+	asked := false
+	r.Ask = func(prompt string) (bool, error) {
+		asked = true
+		if prompt != "File and start? [y/N] " {
+			t.Errorf("prompt = %q, want File and start? [y/N] ", prompt)
+		}
+		return false, nil
+	}
+	filed := 0
+	labelled := 0
+	r.FileIssue = func(context.Context, string, string, string) (string, error) {
+		filed++
+		return "https://github.com/Smana/maku/issues/99", nil
+	}
+	r.AddLabel = func(context.Context, string, int, string) error { labelled++; return nil }
+	r.LabelIssue = func(context.Context, string, int, string) error { labelled++; return nil }
+
+	if err := r.Run(t.Context(), []string{"start", "fix typo in README"}); err != nil {
+		t.Fatalf("maku start on No: %v", err)
+	}
+	if !asked {
+		t.Fatal("did not ask File and start? [y/N]")
+	}
+	if filed != 0 || labelled != 0 {
+		t.Fatalf("filed=%d labelled=%d on No, want 0", filed, labelled)
+	}
+	if !strings.Contains(out.String(), "Nothing filed.") {
+		t.Fatalf("output lacks Nothing filed.:\n%s", out.String())
 	}
 }

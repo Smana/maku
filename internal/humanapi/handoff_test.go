@@ -5,6 +5,8 @@ package humanapi
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"slices"
 	"strings"
@@ -477,4 +479,184 @@ func TestHandoffCheckUnlisted(t *testing.T) {
 	if checked.isError {
 		t.Fatalf("handoff_check call failed: %s", checked.text)
 	}
+}
+
+type fakeIssueStarter struct {
+	mu   sync.Mutex
+	reqs []StartIssueRequest
+}
+
+func (f *fakeIssueStarter) StartIssue(_ context.Context, req StartIssueRequest) (StartIssueResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := req
+	cp.Labels = slices.Clone(req.Labels)
+	f.reqs = append(f.reqs, cp)
+	n := 100 + len(f.reqs)
+	return StartIssueResult{
+		Number: n,
+		URL:    "https://github.com/" + req.Repository + "/issues/101",
+	}, nil
+}
+
+func TestTheHandoffRoutesNeedAMember(t *testing.T) {
+	st := newMemHandoffStore()
+	starter := &fakeIssueStarter{}
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.StartDefault = true
+		s.IssueStarter = starter
+	})
+	post := func(path string, h http.Header, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		if h != nil {
+			req.Header = h.Clone()
+		}
+		rec := httptest.NewRecorder()
+		e.srv.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+
+	// First create a handoff as a member so check and start have a real id to test against.
+	created := post("/api/handoffs", header("dev"), `{"text":"the install link in README.md is dead"}`)
+	if created.Code != http.StatusOK {
+		t.Fatalf("member create = %d %s", created.Code, created.Body.String())
+	}
+	var cRes struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &cRes); err != nil || cRes.ID == "" {
+		t.Fatalf("decode create: %v (%s)", err, created.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{"create", "/api/handoffs", `{"text":"the install link in README.md is dead"}`},
+		{"check", "/api/handoffs/" + cRes.ID + "/check", `{}`},
+		{"start", "/api/handoffs/" + cRes.ID + "/start", `{}`},
+	} {
+		t.Run(tc.name+" unauthenticated", func(t *testing.T) {
+			rec := post(tc.path, nil, tc.body)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("%s without auth = %d %s, want 401", tc.name, rec.Code, rec.Body.String())
+			}
+		})
+		t.Run(tc.name+" non-member", func(t *testing.T) {
+			rec := post(tc.path, header("stranger"), tc.body)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s as stranger = %d %s, want 403", tc.name, rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if len(starter.reqs) != 0 {
+		t.Fatalf("unauthenticated/non-member calls filed %d issues", len(starter.reqs))
+	}
+}
+
+func TestStartFromTheWebFilesAsTheViewer(t *testing.T) {
+	st := newMemHandoffStore()
+	starter := &fakeIssueStarter{}
+	w := world(nil, "unlinked")
+	w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev", "own", "u2", "u3"}} })
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(carefulCatalogue{}), withHandoffs(st),
+		w.option(),
+		func(s *Server, _ *fanout.Hub, _ *hubView) {
+			s.StartDefault = true
+			s.IssueStarter = starter
+		})
+	post := func(path string, h http.Header, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		req.Header = h.Clone()
+		rec := httptest.NewRecorder()
+		e.srv.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 1. Plan over POST /api/handoffs as member dev (linked to GitHub "dev").
+	cRec := post("/api/handoffs", header("dev"), `{"text":"the install link in README.md is dead"}`)
+	if cRec.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", cRec.Code, cRec.Body.String())
+	}
+	var created handoffCreateResponse
+	if err := json.Unmarshal(cRec.Body.Bytes(), &created); err != nil || !created.Ready || created.ID == "" {
+		t.Fatalf("created = %+v (err=%v)", created, err)
+	}
+
+	// 2. Check with workflow pin + plan-first outcome over POST /api/handoffs/{id}/check.
+	chkRec := post("/api/handoffs/"+created.ID+"/check", header("dev"), `{"workflow":"careful","outcome":"plan-first"}`)
+	if chkRec.Code != http.StatusOK {
+		t.Fatalf("check = %d %s", chkRec.Code, chkRec.Body.String())
+	}
+	var checked handoffCheckResponse
+	if err := json.Unmarshal(chkRec.Body.Bytes(), &checked); err != nil {
+		t.Fatalf("decode check: %v", err)
+	}
+	if !checked.CanStart || !checked.Linked || checked.Workflow != "careful" {
+		t.Fatalf("checked = %+v", checked)
+	}
+	if len(checked.Plan.Issues) == 0 || checked.Plan.Issues[0].Outcome != intake.OutcomePlanFirst {
+		t.Fatalf("checked outcome = %+v, want plan-first", checked.Plan.Issues)
+	}
+
+	// 3. Start over POST /api/handoffs/{id}/start -> files as viewer "dev" with labels.
+	stRec := post("/api/handoffs/"+created.ID+"/start", header("dev"), `{"hash":"`+checked.Hash+`"}`)
+	if stRec.Code != http.StatusCreated {
+		t.Fatalf("start = %d %s", stRec.Code, stRec.Body.String())
+	}
+	var started handoffStartResponse
+	if err := json.Unmarshal(stRec.Body.Bytes(), &started); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+	if started.Viewer != "dev" || started.Issue != 101 || !strings.Contains(started.URL, "/issues/101") {
+		t.Fatalf("started = %+v", started)
+	}
+	if len(starter.reqs) != 1 {
+		t.Fatalf("filed %d issues, want 1", len(starter.reqs))
+	}
+	got := starter.reqs[0]
+	if got.Viewer != "dev" || got.Principal != "human:dev" || !strings.EqualFold(got.Repository, "smana/ai-native-ref") {
+		t.Fatalf("StartIssue req = %+v", got)
+	}
+	wantLabels := []string{"workflow:careful", "plan-first", "factory/ready"}
+	if !slices.Equal(got.Labels, wantLabels) {
+		t.Fatalf("labels = %v, want %v", got.Labels, wantLabels)
+	}
+
+	// 4. An unlinked viewer is refused cleanly and files nothing.
+	unlinkedRow := store.Handoff{
+		ID:        "unlinkedhandoffid123456789",
+		Principal: "human:unlinked",
+		Args:      []byte(`{"text":"the install link in README.md is dead","repository":"smana/ai-native-ref"}`),
+		Plan:      mustPlanJSON(t, checked.Plan),
+		Hash:      checked.Hash,
+		CreatedAt: e.intake.clock(),
+		ExpiresAt: e.intake.clock().Add(handoffTTL),
+	}
+	if err := st.PutHandoff(t.Context(), unlinkedRow); err != nil {
+		t.Fatal(err)
+	}
+	unRec := post("/api/handoffs/"+unlinkedRow.ID+"/start", header("unlinked"), `{}`)
+	if unRec.Code != http.StatusForbidden {
+		t.Fatalf("unlinked start = %d %s, want 403", unRec.Code, unRec.Body.String())
+	}
+	var refBody struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(unRec.Body.Bytes(), &refBody) != nil || refBody.Error != startNotLinked {
+		t.Fatalf("unlinked error body = %s, want error=%q", unRec.Body.String(), startNotLinked)
+	}
+	if len(starter.reqs) != 1 {
+		t.Fatalf("unlinked start filed an issue: %d", len(starter.reqs))
+	}
+}
+
+func mustPlanJSON(t *testing.T, p intake.Plan) []byte {
+	t.Helper()
+	b, err := p.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

@@ -752,3 +752,245 @@ func (c Client) Stages(ctx context.Context, repository, class string, last int) 
 	}
 	return out, nil
 }
+
+// HandoffRequest is the body of POST /api/handoffs: either {text, repository?} to begin, or
+// {id, answer} / {id, acceptRest: true} to continue.
+type HandoffRequest struct {
+	Text       string `json:"text,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Answer     string `json:"answer,omitempty"`
+	AcceptRest bool   `json:"acceptRest,omitempty"`
+	Repository string `json:"repository,omitempty"`
+}
+
+// HandoffQuestion is the planner's one clarifying question, when it has one.
+type HandoffQuestion struct {
+	Text        string `json:"text"`
+	Recommended string `json:"recommended"`
+}
+
+// HandoffResponse is the broker's answer to POST /api/handoffs.
+type HandoffResponse struct {
+	APIVersion string           `json:"apiVersion"`
+	ID         string           `json:"id"`
+	Text       string           `json:"text"`
+	Question   *HandoffQuestion `json:"question"`
+	Ready      bool             `json:"ready"`
+	Workflow   string           `json:"workflow"`
+	Budget     float64          `json:"budget"`
+	Repository string           `json:"repository,omitempty"`
+	Title      string           `json:"title,omitempty"`
+	Body       string           `json:"body,omitempty"`
+}
+
+// HandoffWorkflowChoice describes one workflow offered by the catalogue for a handoff plan.
+type HandoffWorkflowChoice struct {
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	CeilingUSD       float64  `json:"ceilingUSD,omitempty"`
+	StepUpCeilingUSD float64  `json:"stepUpCeilingUSD,omitempty"`
+	Path             []string `json:"path,omitempty"`
+}
+
+// HandoffCheckRequest is the body of POST /api/handoffs/{id}/check.
+type HandoffCheckRequest struct {
+	Workflow *string `json:"workflow,omitempty"`
+	Outcome  *string `json:"outcome,omitempty"`
+}
+
+// HandoffCheckResponse is the broker's answer to POST /api/handoffs/{id}/check.
+type HandoffCheckResponse struct {
+	ID              string                  `json:"id"`
+	Plan            json.RawMessage         `json:"plan"`
+	Hash            string                  `json:"hash"`
+	CanStart        bool                    `json:"canStart"`
+	CanStartWhy     string                  `json:"canStartWhy,omitempty"`
+	Maintainer      *bool                   `json:"maintainer,omitempty"`
+	Workflow        string                  `json:"workflow"`
+	Text            string                  `json:"text"`
+	Linked          bool                    `json:"linked"`
+	Workflows       []string                `json:"workflows,omitempty"`
+	WorkflowChoices []HandoffWorkflowChoice `json:"workflowChoices,omitempty"`
+	DefaultChoice   *HandoffWorkflowChoice  `json:"defaultChoice,omitempty"`
+	ActiveChoice    *HandoffWorkflowChoice  `json:"activeChoice,omitempty"`
+	Title           string                  `json:"title"`
+	Body            string                  `json:"body"`
+	Repository      string                  `json:"repository"`
+}
+
+// HandoffStartRequest is the body of POST /api/handoffs/{id}/start.
+type HandoffStartRequest struct {
+	Hash     string  `json:"hash,omitempty"`
+	Workflow *string `json:"workflow,omitempty"`
+	Outcome  *string `json:"outcome,omitempty"`
+}
+
+// HandoffStartResponse is the broker's answer to POST /api/handoffs/{id}/start.
+type HandoffStartResponse struct {
+	Repository string   `json:"repository"`
+	Issue      int      `json:"issue"`
+	URL        string   `json:"url"`
+	Labels     []string `json:"labels"`
+	Viewer     string   `json:"viewer"`
+}
+
+// HandoffRefusal is a structured refusal from one of the three /api/handoffs routes.
+type HandoffRefusal struct {
+	Op      string
+	Code    int
+	Reason  string
+	Message string
+}
+
+func (r *HandoffRefusal) Error() string {
+	if r.Message != "" {
+		return r.Message
+	}
+	if r.Reason != "" {
+		return fmt.Sprintf("%s: %s (%d)", r.Op, r.Reason, r.Code)
+	}
+	return fmt.Sprintf("%s: HTTP %d", r.Op, r.Code)
+}
+
+func (c Client) postHandoff(ctx context.Context, op, path string, in, out any) error {
+	h, err := c.header(ctx)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	req.Header = h
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return refusal(op, resp)
+	}
+	raw, err := httpx.ReadBody(resp.Body, maxRoomsBody)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		var r struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(raw, &r) == nil && (r.Error != "" || r.Message != "") {
+			return &HandoffRefusal{Op: op, Code: resp.StatusCode, Reason: r.Error, Message: OneLine(r.Message)}
+		}
+		if text := OneLine(string(raw)); text != "" {
+			return &HandoffRefusal{Op: op, Code: resp.StatusCode, Message: text}
+		}
+		return &HandoffRefusal{Op: op, Code: resp.StatusCode}
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// Handoff is POST /api/handoffs: begin or continue a stored handoff plan.
+func (c Client) Handoff(ctx context.Context, req HandoffRequest) (HandoffResponse, error) {
+	var out HandoffResponse
+	err := c.postHandoff(ctx, "start", "/api/handoffs", req, &out)
+	return out, err
+}
+
+// HandoffCheck is POST /api/handoffs/{id}/check: re-validate a stored handoff plan with optional
+// workflow pin and outcome.
+func (c Client) HandoffCheck(ctx context.Context, id string, req HandoffCheckRequest) (HandoffCheckResponse, error) {
+	var out HandoffCheckResponse
+	err := c.postHandoff(ctx, "start", "/api/handoffs/"+url.PathEscape(id)+"/check", req, &out)
+	return out, err
+}
+
+// HandoffStart is POST /api/handoffs/{id}/start: file the checked handoff's issue on GitHub as the
+// linked viewer and apply its labels.
+func (c Client) HandoffStart(ctx context.Context, id string, req HandoffStartRequest) (HandoffStartResponse, error) {
+	var out HandoffStartResponse
+	err := c.postHandoff(ctx, "start", "/api/handoffs/"+url.PathEscape(id)+"/start", req, &out)
+	return out, err
+}
+
+// HandoffCard builds the workflow card for a checked handoff response.
+func HandoffCard(checked HandoffCheckResponse) (roomview.WorkflowCard, string) {
+	var view planView
+	_ = json.Unmarshal(checked.Plan, &view)
+	wf := checked.Workflow
+	source := "repository"
+	suggested := ""
+	var roles []string
+	var outcome, outcomeNote string
+	var outcomeInferred bool
+	if len(view.Issues) > 0 {
+		is := view.Issues[0]
+		outcome, outcomeInferred, outcomeNote = is.Outcome, is.OutcomeInferred, is.OutcomeNote
+		if is.Profile != "" {
+			wf = is.Profile
+			source = "label"
+		}
+		if is.Suggestion != nil {
+			roles = is.Suggestion.Roles
+			if is.Suggestion.Profile != "" && is.Suggestion.Profile != wf {
+				suggested = is.Suggestion.Profile
+			}
+		}
+	}
+	if wf == "" {
+		wf = "default"
+	}
+	repo := checked.Repository
+	if repo == "" {
+		repo = view.Repository
+	}
+	var path []string
+	var stepUpUSD float64
+	ceiling := view.Budget.CeilingUSD
+	for _, ch := range []*HandoffWorkflowChoice{checked.ActiveChoice, checked.DefaultChoice} {
+		if ch != nil && ch.Name == wf {
+			path = ch.Path
+			stepUpUSD = ch.StepUpCeilingUSD
+			if ceiling == 0 {
+				ceiling = ch.CeilingUSD
+			}
+			break
+		}
+	}
+	if len(path) == 0 && len(roles) > 0 {
+		path = append(append([]string(nil), roles...), "CI", "merge gate")
+	}
+	return roomview.WorkflowCard{
+		Repository:      repo,
+		Outcome:         outcome,
+		OutcomeInferred: outcomeInferred,
+		Workflow:        wf,
+		Reason:          roomview.Reason(source, "", suggested, "", nil),
+		Path:            path,
+		CeilingUSD:      ceiling,
+		StepUpUSD:       stepUpUSD,
+	}, outcomeNote
+}
+
+// HandoffLabels returns the non-ready labels (workflow:<name>, outcome) to apply before factory/ready.
+func HandoffLabels(checked HandoffCheckResponse) []string {
+	var view planView
+	if json.Unmarshal(checked.Plan, &view) != nil || len(view.Issues) == 0 {
+		return nil
+	}
+	g := &governed{planShape: planShape{Maintainer: checked.Maintainer}, view: view}
+	return g.planLabels()
+}
+
+// IssueNumber parses the issue number from a GitHub issue URL belonging to repo.
+func IssueNumber(issueURL, repo string) (int, error) {
+	return issueNumber(issueURL, repo)
+}
