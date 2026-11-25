@@ -1,11 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NeedItem, NeedsPage } from "../src/api";
 import type { Snapshot } from "../src/conn";
 import { RULES } from "../src/approval-help";
-import { approvalCard } from "../src/controls";
-import { mountNeeds, needCard, type NeedHands } from "../src/needs";
+import { approvalCard, rejection } from "../src/controls";
+import { mountNeeds, needCard, notSentText, stallAfter, stalledText, unansweredText, type NeedHands } from "../src/needs";
 import { NEED_FIXTURES } from "../preview/needs-fixtures";
 import { RoomState } from "../src/room-state";
 import type { Summary } from "../src/summary";
@@ -522,7 +522,9 @@ describe("room cards acting on the page (phase G2)", () => {
       { needs: async () => ({ apiVersion: "needs/v1", items }), roomActs });
     await panel.refresh();
     await Promise.resolve();
-    return { root, panel, sent, acts: () => sent.map((f) => f.action) };
+    // refuse answers the last act with a refusal, which gives the card's buttons back.
+    const refuse = (reason = "conflict") => panel.onAck({ type: "ack", clientSeq: sent.at(-1)!.clientSeq, rejected: reason });
+    return { root, panel, sent, refuse, acts: () => sent.map((f) => f.action) };
   };
 
   it("renders a question card with a one-line text box and Answer button, and no GitHub link", async () => {
@@ -547,7 +549,7 @@ describe("room cards acting on the page (phase G2)", () => {
   });
 
   it("renders a split (plan_confirmation) card with Accept the split and Run it whole, naming the charge, and no GitHub link", async () => {
-    const { root, acts } = await mountWithActs([{
+    const { root, acts, refuse } = await mountWithActs([{
       kind: "plan_confirmation", type: "plan", act: "split", id: "2238",
       what: "the scoper proposes splitting issue #2238",
       url: "https://github.com/o/r/issues/2238",
@@ -562,12 +564,13 @@ describe("room cards acting on the page (phase G2)", () => {
     expect(decline.textContent).toBe("Run it whole");
     expect(card.querySelector(".need-where")?.textContent).toMatch(/daily budget/i);
     accept.click();
+    refuse();
     decline.click();
     expect(acts()).toEqual([{ kind: "split", decision: "accept" }, { kind: "split", decision: "decline" }]);
   });
 
   it("renders a plan_review card with Approve, Revise (with one-line note) and Split, and no GitHub link", async () => {
-    const { root, acts } = await mountWithActs([{
+    const { root, acts, refuse } = await mountWithActs([{
       kind: "plan_review", type: "plan", act: "plan", id: "55",
       what: "the author or a maintainer reviews the proposed plan on issue #55",
       url: "https://github.com/o/r/issues/55",
@@ -583,9 +586,11 @@ describe("room cards acting on the page (phase G2)", () => {
     expect([approve.textContent, revise.textContent, split.textContent]).toEqual(["Approve", "Revise", "Split"]);
     expect(note.getAttribute("aria-label")).toBeTruthy();
     approve.click();
+    refuse();
     revise.click(); // empty note sends nothing
     note.value = "keep the API backwards-compatible";
     revise.click();
+    refuse();
     split.click();
     expect(acts()).toEqual([
       { kind: "plan", decision: "approve" },
@@ -595,7 +600,7 @@ describe("room cards acting on the page (phase G2)", () => {
   });
 
   it("renders a recovery card with Retry and Run again deeper when retry is enabled, and no GitHub link", async () => {
-    const { root, acts } = await mountWithActs([{
+    const { root, acts, refuse } = await mountWithActs([{
       kind: "recovery", type: "failed", act: "retry", id: "budget_reached", issue: 12,
       what: "the run's budget was spent",
       url: "https://github.com/o/r/issues/12",
@@ -610,8 +615,106 @@ describe("room cards acting on the page (phase G2)", () => {
     expect(retry.textContent).toBe("Retry");
     expect(deeper.textContent).toBe("Run again deeper (careful, up to $13.60)");
     retry.click(); retry.click();
+    refuse();
     deeper.click(); deeper.click();
     expect(acts()).toEqual([{ kind: "retry" }, { kind: "retry", deeper: true }]);
+  });
+
+  const planItem: NeedItem = {
+    kind: "plan_review", type: "plan", act: "plan", id: "55", what: "review the plan on issue #55",
+    url: "https://github.com/o/r/issues/55", action: { kind: "plan", label: "review the plan", url: "https://github.com/o/r/issues/55" },
+  };
+  const planCard = (root: HTMLElement) => root.querySelector<HTMLElement>('li.need[data-kind="plan_review"]')!;
+  const ack = (root: HTMLElement) => planCard(root).querySelector<HTMLElement>(".need-ack")!;
+
+  it("disables an act's controls in flight, then replaces them with the accepted status in place", async () => {
+    const { root, panel, sent } = await mountWithActs([planItem], ["plan"]);
+    const card = planCard(root);
+    expect(ack(root).getAttribute("role")).toBe("status");
+    expect(ack(root).getAttribute("aria-live")).toBe("polite");
+    const approve = card.querySelector<HTMLButtonElement>('button[data-act="need-plan-approve"]')!;
+    approve.click();
+    approve.click(); // in flight: a second press sends nothing
+    expect(sent).toHaveLength(1);
+    expect(approve.disabled).toBe(true);
+    expect(card.querySelector<HTMLInputElement>('input[name="planNote"]')!.disabled).toBe(true);
+    expect(card.dataset.ack).toBe("sending");
+    panel.onAck({ type: "ack", clientSeq: sent[0].clientSeq });
+    expect(planCard(root)).toBe(card); // in place
+    expect(card.dataset.ack).toBe("accepted");
+    expect(card.querySelector<HTMLElement>(".need-act")!.hidden).toBe(true);
+    expect(ack(root).textContent).toBe("✓ Approved by you — the implementer starts next.");
+  });
+
+  it("says a revision was sent once the broker takes it", async () => {
+    const { root, panel, sent } = await mountWithActs([planItem], ["plan"]);
+    planCard(root).querySelector<HTMLInputElement>('input[name="planNote"]')!.value = "smaller steps";
+    planCard(root).querySelector<HTMLButtonElement>('button[data-act="need-plan-revise"]')!.click();
+    panel.onAck({ type: "ack", clientSeq: sent[0].clientSeq });
+    expect(ack(root).textContent).toBe("↻ Revision sent — the scoper is re-planning.");
+  });
+
+  it("shows a refusal's reason inline and gives the buttons back", async () => {
+    const { root, refuse } = await mountWithActs([planItem], ["plan"]);
+    const approve = planCard(root).querySelector<HTMLButtonElement>('button[data-act="need-plan-approve"]')!;
+    approve.click();
+    refuse("not_permitted");
+    expect(planCard(root).dataset.ack).toBe("refused");
+    expect(approve.disabled).toBe(false);
+    expect(planCard(root).querySelector<HTMLElement>(".need-act")!.hidden).toBe(false);
+    expect(ack(root).textContent).toBe(rejection("not_permitted"));
+  });
+
+  it("says when an act was not sent at all", async () => {
+    const root = document.createElement("section");
+    const panel = mountNeeds(root, { send: () => false }, new RoomState(), () => you, { rowFor: () => undefined }, () => undefined,
+      { needs: async () => ({ apiVersion: "needs/v1", items: [planItem] }), roomActs: ["plan"] });
+    await panel.refresh();
+    planCard(root).querySelector<HTMLButtonElement>('button[data-act="need-plan-approve"]')!.click();
+    expect(ack(root).textContent).toBe(notSentText);
+  });
+
+  describe("with the clock in hand", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("warns when an accepted act has not moved the task after 30 s", async () => {
+      const { root, panel, sent } = await mountWithActs([planItem], ["plan"]);
+      planCard(root).querySelector<HTMLButtonElement>('button[data-act="need-plan-approve"]')!.click();
+      panel.onAck({ type: "ack", clientSeq: sent[0].clientSeq });
+      vi.advanceTimersByTime(stallAfter - 1);
+      expect(planCard(root).querySelector(".need-ack-stalled")).toBeNull();
+      vi.advanceTimersByTime(1);
+      expect(planCard(root).dataset.ack).toBe("stalled");
+      expect(planCard(root).querySelector(".need-ack-stalled")?.textContent).toBe(stalledText);
+      expect(ack(root).textContent).toContain("✓ Approved by you");
+    });
+
+    it("drops the status when the task moves: the card's item changes", async () => {
+      let items = [planItem];
+      const root = document.createElement("section");
+      const sent: Record<string, any>[] = [];
+      const panel = mountNeeds(root, { send: (f) => { sent.push(f); return true; } }, new RoomState(), () => you,
+        { rowFor: () => undefined }, () => undefined, { needs: async () => ({ apiVersion: "needs/v1", items }), roomActs: ["plan"] });
+      await panel.refresh();
+      planCard(root).querySelector<HTMLButtonElement>('button[data-act="need-plan-approve"]')!.click();
+      panel.onAck({ type: "ack", clientSeq: sent[0].clientSeq });
+      items = [];
+      vi.advanceTimersByTime(5000); // the route's cadence
+      await panel.refresh();
+      vi.advanceTimersByTime(stallAfter);
+      expect(root.querySelector(".need-ack-stalled")).toBeNull();
+      expect(root.querySelector('li.need[data-kind="plan_review"]')).toBeNull();
+    });
+
+    it("gives the buttons back when the broker never answers", async () => {
+      const { root } = await mountWithActs([planItem], ["plan"]);
+      const approve = planCard(root).querySelector<HTMLButtonElement>('button[data-act="need-plan-approve"]')!;
+      approve.click();
+      vi.advanceTimersByTime(stallAfter);
+      expect(approve.disabled).toBe(false);
+      expect(ack(root).textContent).toBe(unansweredText);
+    });
   });
 
   it("a card whose act is not enabled keeps its link to GitHub, and merge/review always link to GitHub", async () => {

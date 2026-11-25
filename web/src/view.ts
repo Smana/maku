@@ -302,15 +302,20 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   addTask.className = "primary";
   addTask.dataset.act = "new-task";
   addTask.textContent = "New task";
+  // The normal way to ask for work: the planner drafts an issue, and the factory works on it.
+  addTask.title = "Plans your request into a GitHub issue the factory works on";
+  addTask.setAttribute("aria-description", addTask.title);
   addTask.onclick = () => {
     form.hidden = true;
     taskForm.hidden = !taskForm.hidden;
   };
   const add = document.createElement("button");
   add.type = "button";
-  add.className = "primary";
+  // The advanced path, secondary beside New task: a room tied to no issue, driven by you.
   add.dataset.act = "new-room";
-  add.textContent = "New room";
+  add.textContent = "Open a live session";
+  add.title = "An agent session you drive yourself, not tied to an issue";
+  add.setAttribute("aria-description", add.title);
   add.onclick = () => {
     taskForm.hidden = true;
     form.hidden = !form.hidden;
@@ -320,8 +325,8 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   const notice = document.createElement("span");
   notice.className = "notice";
   notice.setAttribute("role", "status");
-  // The filters on the left, then the refresh control, and New room, the page's one primary
-  // act, at the row's end.
+  // The filters on the left, then the refresh control, Open a live session, and New task, the
+  // page's one primary act, at the row's end.
   tools.append(mine.label, needsMe.label, needTypeFilter, closed.label, repo, notice);
 
   const table = document.createElement("table");
@@ -579,7 +584,8 @@ export function newRoomForm(get: typeof fetch = fetch): HTMLFormElement {
   const hint = document.createElement("small");
   hint.className = "hint";
   hint.id = "data-class-hint";
-  hint.textContent = "The data class cannot change once the room exists. It sets the model route, the tools and the egress " +
+  hint.textContent = "A live session is an agent session you drive yourself, not tied to an issue: to ask the factory for work, use New task. " +
+    "The data class cannot change once the room exists. It sets the model route, the tools and the egress " +
     "its runs get; it does not change who can read the room. The repository does: anyone who can read it on GitHub can.";
   dataClass.setAttribute("aria-describedby", hint.id);
   repository.setAttribute("aria-describedby", hint.id);

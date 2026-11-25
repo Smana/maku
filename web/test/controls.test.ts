@@ -493,6 +493,14 @@ describe("the control groups", () => {
     expect(sent.map((f) => f.action)).toEqual([{ kind: "cancel" }]);
     expect(stopBtn()!.textContent).toBe("Stop");
     expect(host.querySelector('input[name="stopDiscard"]')).toBeNull();
+    // In flight the button waits; a refusal says why, in place, and gives it back.
+    expect(stopBtn()!.disabled).toBe(true);
+    const stopAck = host.querySelector<HTMLElement>(".stop-ack")!;
+    expect(stopAck.getAttribute("role")).toBe("status");
+    expect(stopAck.textContent).toBe("Sending stop…");
+    stop.onAck({ type: "ack", clientSeq: sent[0].clientSeq, rejected: "not_maintainer" });
+    expect(stopAck.textContent).toBe(rejection("not_maintainer"));
+    expect(stopBtn()!.disabled).toBe(false);
 
     // Arming again and checking discard sends discard: true (and uses kind: "stop" when stop roomAct is enabled).
     stopEnabled = true;
@@ -500,6 +508,8 @@ describe("the control groups", () => {
     host.querySelector<HTMLInputElement>('input[name="stopDiscard"]')!.checked = true;
     stopBtn()!.click();
     expect(sent.map((f) => f.action)).toEqual([{ kind: "cancel" }, { kind: "stop", discard: true }]);
+    stop.onAck({ type: "ack", clientSeq: sent[1].clientSeq });
+    expect(stopAck.textContent).toBe("Stop requested — the task is stopping.");
 
     // Collaborator sees Stop when stop roomAct is enabled, not when disabled; watcher never sees it.
     viewer = you("human:c", "collaborator");

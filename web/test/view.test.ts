@@ -263,13 +263,18 @@ describe("the room list's layout", () => {
     expect(tds[2].className).toBe("repo");
     expect(tds[6].className).toBe("room-id");
   });
-  it("puts New room and New task, the primary actions, after the filters", async () => {
+  it("makes New task the one primary action, after Open a live session, and says what each does", async () => {
     const tools = (await mount()).querySelector(".list-tools")!;
     const addRoom = tools.querySelector('button[data-act="new-room"]') as HTMLButtonElement;
     const addTask = tools.lastElementChild as HTMLButtonElement;
-    expect(addRoom.classList.contains("primary")).toBe(true);
+    expect(addRoom.textContent).toBe("Open a live session");
+    expect(addRoom.classList.contains("primary")).toBe(false);
+    expect(addRoom.getAttribute("aria-description")).toMatch(/session you drive yourself, not tied to an issue/);
     expect(addTask.dataset.act).toBe("new-task");
+    expect(addTask.textContent).toBe("New task");
     expect(addTask.classList.contains("primary")).toBe(true);
+    expect(addTask.getAttribute("aria-description")).toMatch(/GitHub issue the factory works on/);
+    expect(tools.querySelectorAll("button.primary")).toHaveLength(1);
     expect(addRoom.nextElementSibling).toBe(addTask);
   });
 });

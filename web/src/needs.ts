@@ -12,8 +12,8 @@
 import type { NeedItem, NeedsPage } from "./api";
 import { decideStatus, deadlineText, expiredAt, expiredText, ruleFor } from "./approval-help";
 import { focusRow } from "./chat";
-import type { Snapshot } from "./conn";
-import { act, approvalAnchor, approvalCard, button, confirmButton, el, keyed, named, type Sender } from "./controls";
+import type { Frame, Snapshot } from "./conn";
+import { act, approvalAnchor, approvalCard, button, confirmButton, el, keyed, named, rejection, type Sender } from "./controls";
 import type { RoomState } from "./room-state";
 import { inlineCode, needsItems, type Summary } from "./summary";
 
@@ -21,6 +21,53 @@ import { inlineCode, needsItems, type Summary } from "./summary";
 // ticker's one a second, and each event a replay delivers — and one read is a scan of every room the
 // caller may read, so a burst of frames costs one read, not one each.
 const routeEvery = 5000;
+
+// stallAfter is how long an accepted act may leave its card unchanged before the card says the task
+// has not moved: the broker took the act, but nothing it should start has shown up yet.
+export const stallAfter = 30_000;
+export const stalledText = "Sent, but the task has not moved yet — see the room log.";
+export const unansweredText = "No answer from the broker yet: check the room log before retrying.";
+export const notSentText = "Not connected: the action was not sent. Retry once the room is live.";
+
+// What a card says, in place of its buttons, once the broker took its act.
+export function ackText(action: Record<string, unknown>): string {
+  switch (action.kind) {
+    case "plan":
+      return action.decision === "approve" ? "✓ Approved by you — the implementer starts next."
+        : action.decision === "revise" ? "↻ Revision sent — the scoper is re-planning."
+        : "✓ Split requested — the scoper splits the plan.";
+    case "answer": return "✓ Answer sent — the scoper picks it up next.";
+    case "split": return action.decision === "accept" ? "✓ Split accepted — the parts open one at a time." : "✓ Running it whole — the implementer starts next.";
+    case "retry": return action.deeper ? "↻ Deeper run requested — it starts next." : "↻ Retry requested — a new run starts next.";
+    default: return "✓ Sent.";
+  }
+}
+
+// ActState is one card's act as the broker has answered it so far.
+export interface ActState { phase: "sending" | "accepted" | "stalled" | "refused"; text: string }
+
+// applyAct shows an act's state on its card in place, so the card (and the focus) stays: while in
+// flight its controls are disabled; once accepted the status replaces them; a refusal says why
+// and gives them back.
+export function applyAct(li: HTMLElement, st: ActState | undefined): void {
+  const bar = li.querySelector<HTMLElement>(".need-act");
+  const status = li.querySelector<HTMLElement>(".need-ack");
+  if (!bar || !status) return;
+  const phase = st?.phase ?? "";
+  if (li.dataset.ack === phase && status.dataset.text === (st?.text ?? "")) return;
+  const held = bar.contains(document.activeElement);
+  li.dataset.ack = phase;
+  if (!phase) delete li.dataset.ack;
+  for (const c of bar.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) c.disabled = phase === "sending";
+  bar.toggleAttribute("aria-busy", phase === "sending");
+  const done = phase === "accepted" || phase === "stalled";
+  bar.hidden = done;
+  status.dataset.text = st?.text ?? "";
+  status.replaceChildren();
+  if (st) status.append(el("span", { className: "need-ack-text", textContent: st.text }));
+  if (phase === "stalled") status.append(el("span", { className: "need-ack-stalled", textContent: stalledText }));
+  if (done && held) { status.tabIndex = -1; status.focus({ preventScroll: true }); }
+}
 
 // The five closed inbox types in urgency order (phase G5), matching internal/summary.NeedType.
 export const NEED_TYPES = ["question", "plan", "review", "blocked", "failed"] as const;
@@ -192,6 +239,11 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
     if (url && isHttps(url)) bar.append(where(githubLine(n)));
   }
   li.append(bar);
+  // The act's answer, in place: role=status announces it without moving the reader.
+  const status = el("p", { className: "need-ack" });
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  li.append(status);
   return li;
 }
 
@@ -210,7 +262,7 @@ function unreadLine(rooms: string[]): string {
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
   chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined,
   opts: { needs?: () => Promise<NeedsPage>; hands?: NeedHands; roomActs?: string[] | (() => Promise<string[]>) } = {}):
-  { refresh(): Promise<void>; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
+  { refresh(): Promise<void>; onAck(f: Frame): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
   const approvals = el("ul", { className: "approvals" });
@@ -253,21 +305,45 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
   if (typeof opts.roomActs === "function") {
     void opts.roomActs().then((acts) => { enabledActs = new Set(acts); render(); }).catch(() => {});
   }
+  // Each card's act, by its act kind (one card per kind in a room), with the item it answered: a
+  // card whose item changes or leaves has moved, and its state goes with it.
+  const acts = new Map<string, ActState & { seq: number; sig: string; ok: string; timer?: ReturnType<typeof setTimeout> }>();
+  const itemFor = (kind: string) => (listedItems ?? summarisedItems).find((n) => cardAct(n) === kind);
+  const track = (kind: string, action: Record<string, unknown>) => {
+    const cur = acts.get(kind);
+    if (cur && cur.phase !== "refused") return; // one act at a time; a sent one is not repeated
+    clearTimeout(cur?.timer);
+    const seq = act(conn, state, action);
+    const sig = JSON.stringify(itemFor(kind) ?? null);
+    const entry = { phase: (seq ? "sending" : "refused") as ActState["phase"], text: seq ? "Sending…" : notSentText, seq, sig, ok: ackText(action),
+      timer: undefined as ReturnType<typeof setTimeout> | undefined };
+    acts.set(kind, entry);
+    if (seq) entry.timer = setTimeout(() => wait(kind, entry), stallAfter);
+    render();
+  };
+  // wait runs stallAfter after a send or an accept: an act still unanswered is given back, and one
+  // accepted whose card has not changed says so.
+  const wait = (kind: string, entry: ActState & { seq: number }) => {
+    if (acts.get(kind) !== entry) return;
+    if (entry.phase === "sending") Object.assign(entry, { phase: "refused", text: unansweredText });
+    else if (entry.phase === "accepted") entry.phase = "stalled";
+    render();
+  };
   // A hold's one press: the driver hands the token back to the factory, as Session › Driver's give does.
   const ctx = () => {
     const viewer = you();
     const canAct = !state.sealed && (viewer?.role === "owner" || viewer?.role === "collaborator");
     const retry = opts.hands?.retry ?? (canAct && enabledActs.has("retry")
-      ? (deeper: boolean) => { act(conn, state, deeper ? { kind: "retry", deeper: true } : { kind: "retry" }); }
+      ? (deeper: boolean) => { track("retry", deeper ? { kind: "retry", deeper: true } : { kind: "retry" }); }
       : undefined);
     const answer = opts.hands?.answer ?? (canAct && enabledActs.has("answer")
-      ? (text: string) => { act(conn, state, { kind: "answer", text }); }
+      ? (text: string) => { track("answer", { kind: "answer", text }); }
       : undefined);
     const split = opts.hands?.split ?? (canAct && enabledActs.has("split")
-      ? (decision: "accept" | "decline") => { act(conn, state, { kind: "split", decision }); }
+      ? (decision: "accept" | "decline") => { track("split", { kind: "split", decision }); }
       : undefined);
     const plan = opts.hands?.plan ?? (canAct && enabledActs.has("plan")
-      ? (decision: "approve" | "revise" | "split", note?: string) => { act(conn, state, note ? { kind: "plan", decision, note } : { kind: "plan", decision }); }
+      ? (decision: "approve" | "revise" | "split", note?: string) => { track("plan", note ? { kind: "plan", decision, note } : { kind: "plan", decision }); }
       : undefined);
     return {
       hands: { ...(opts.hands ?? {}), retry, answer, split, plan },
@@ -369,6 +445,11 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       return li;
     });
     for (const k of [...cards.keys()]) if (!items.includes(cards.get(k)!)) cards.delete(k);
+    // An act's card that changed or left has moved: its state goes. The rest show theirs in place.
+    for (const [kind, st] of acts) {
+      if (JSON.stringify(itemFor(kind) ?? null) !== st.sig) { clearTimeout(st.timer); acts.delete(kind); }
+    }
+    (listedItems ?? summarisedItems).forEach((n, i) => applyAct(items[i], acts.get(cardAct(n))));
     const note = (cls: string, text: string) => {
       const kept = other.querySelector<HTMLLIElement>(`:scope > li.${cls}`);
       return kept?.textContent === text ? kept : el("li", { className: cls, textContent: text });
@@ -420,6 +501,20 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       if (reading) return reading;
       if (Date.now() - readAt < routeEvery) return Promise.resolve();
       return read();
+    },
+    // onAck answers a card's act: accepted, its status replaces the buttons (and the stall clock
+    // restarts); refused, the reason shows and the buttons come back.
+    onAck(f: Frame): void {
+      for (const [kind, st] of acts) {
+        if (!f.clientSeq || st.seq !== f.clientSeq || st.phase !== "sending") continue;
+        clearTimeout(st.timer);
+        if (f.rejected) Object.assign(st, { phase: "refused", text: rejection(f.rejected) });
+        else {
+          Object.assign(st, { phase: "accepted", text: st.ok });
+          st.timer = setTimeout(() => wait(kind, st), stallAfter);
+        }
+      }
+      render();
     },
     setSummary(s: Summary): void {
       summarisedItems = needsItems(s);
