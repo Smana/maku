@@ -275,10 +275,12 @@ runController:
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 250m, memory: 128Mi}
-  # The run pod's two images, same "<version>@sha256:<digest>" rule as the broker's.
+  # The run pod's images, same "<version>@sha256:<digest>" rule as the broker's.
   images:
     harness: {repository: ghcr.io/smana/maku-harness, tag: ""}
     bridge: {repository: ghcr.io/smana/maku-bridge, tag: ""}
+    # Optional opt-in OpenCode runner image (same "<version>@sha256:<digest>" rule when tag is set).
+    opencode: {repository: ghcr.io/smana/maku-opencode, tag: ""}
   # Secrets in runs.namespace the controller reads: model (api_key, model, base_url) and git.
   # modelSecret is model.mode secret's, and not read in model.mode gateway.
   modelSecret: agent-model

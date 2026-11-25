@@ -411,3 +411,43 @@ func TestRunPodPolicyGatewayTokens(t *testing.T) {
 		t.Fatalf("secret mode: %v", err)
 	}
 }
+
+func TestRunPodPolicyOpenCode(t *testing.T) {
+	ctx := t.Context()
+	opencodeImage := "ghcr.io/smana/maku-opencode:" + digest
+	ocPod := func() *corev1.Pod {
+		c := runctl.Config{Namespace: runsNS, NamePrefix: "run-", ModelSecret: "agent-model", GitSecret: "agent-git",
+			RuntimeClassName: "gvisor",
+			Broker: runctl.Broker{URL: "https://room-broker." + release + ".svc.cluster.local:8443", Namespace: release,
+				Labels: map[string]string{"app.kubernetes.io/name": "room-broker"}, CASecret: "room-broker-ca"},
+			Images: runctl.Images{Harness: "ghcr.io/smana/maku-harness:" + digest, Bridge: "ghcr.io/smana/maku-bridge:" + digest, Opencode: opencodeImage}}
+		r := &v1alpha1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: runName, Namespace: runsNS, UID: "uid-1"},
+			Spec: v1alpha1.AgentRunSpec{Role: "implementer", Repository: "o/r", BaseRef: "main", Principal: "human:a",
+				DataClass: "public", RoomRef: "roomroom", Harness: "opencode", Task: v1alpha1.AgentRunTask{Text: "fix it"},
+				Budget: v1alpha1.AgentRunBudget{MaxMinutes: 30}, Size: "small"}}
+		m := runctl.Model{BaseURL: "https://api.anthropic.com/v1", Name: "claude", Host: "api.anthropic.com", Port: 443}
+		return runctl.Pod(r, c, m, "abcdefgh")
+	}
+
+	// Without runController.images.opencode.tag, maku-opencode is not in the allow-list.
+	peDefault := startPodEnv(t)
+	if err := peDefault.ctl.Create(ctx, ocPod(), client.DryRunAll); !deniedByPolicy(err) || !strings.Contains(err.Error(), "images come from") {
+		t.Fatalf("default policy must refuse maku-opencode, got %v", err)
+	}
+
+	// With runController.images.opencode.tag set, maku-opencode by digest is admitted; bare tag and other repos are refused.
+	pe := startPodEnv(t, "runController.images.opencode.tag="+digest)
+	if err := pe.ctl.Create(ctx, ocPod(), client.DryRunAll); err != nil {
+		t.Fatalf("opencode pod by digest is refused: %v", err)
+	}
+	bare := ocPod()
+	bare.Spec.Containers[0].Image = "ghcr.io/smana/maku-opencode:v0.0.0"
+	if err := pe.ctl.Create(ctx, bare, client.DryRunAll); !deniedByPolicy(err) || !strings.Contains(err.Error(), "pinned by digest") {
+		t.Fatalf("opencode bare tag must be refused, got %v", err)
+	}
+	other := ocPod()
+	other.Spec.Containers[0].Image = "ghcr.io/smana/maku-opencode-evil:" + digest
+	if err := pe.ctl.Create(ctx, other, client.DryRunAll); !deniedByPolicy(err) || !strings.Contains(err.Error(), "images come from") {
+		t.Fatalf("look-alike opencode repo must be refused, got %v", err)
+	}
+}

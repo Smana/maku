@@ -3,6 +3,7 @@
 {{- $class := (include "ap.sandbox" . | fromJson).class -}}
 {{- $c := .Values.runController -}}
 {{- $images := list $c.images.harness.repository $c.images.bridge.repository $c.image.repository -}}
+{{- if and $c.images.opencode $c.images.opencode.tag }}{{ $images = append $images $c.images.opencode.repository }}{{ end -}}
 {{- range .Values.runPodPolicy.extraImages }}{{ $images = append $images . }}{{ end -}}
 {{- $quoted := list -}}
 {{- /* Each value below is pasted into a CEL string: one that could close the quote is refused. */ -}}

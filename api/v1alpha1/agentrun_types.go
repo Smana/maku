@@ -84,7 +84,7 @@ type AgentRunSpec struct {
 	// +kubebuilder:default={}
 	// +optional
 	Budget AgentRunBudget `json:"budget,omitzero"`
-	// +kubebuilder:validation:Enum=openhands
+	// +kubebuilder:validation:Enum=openhands;opencode
 	// +kubebuilder:default=openhands
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="harness is immutable"
