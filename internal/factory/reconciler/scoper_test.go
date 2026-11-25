@@ -557,3 +557,11 @@ func TestTheScopersCostCountsTowardTheTask(t *testing.T) {
 		t.Fatalf("scoper spend should count toward task usage: %+v", tk.Status.Usage)
 	}
 }
+
+// A body GitHub stores with CRLF line ends reads as its LF twin: the label's list stops at the blank line.
+func TestAnAcceptanceListReadsThroughCRLF(t *testing.T) {
+	body := "Rewrite the cheat sheet.\r\n\r\nAcceptance:\r\n- Only cheat-sheet.md changes.\r\n- task docs passes.\r\n\r\nNotes: keep the tone.\r\n"
+	if got, want := acceptanceText(body), "- Only cheat-sheet.md changes.\n- task docs passes."; got != want {
+		t.Fatalf("%q, want %q", got, want)
+	}
+}

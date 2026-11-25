@@ -56,8 +56,10 @@ ACCEPTANCE_MAX = 4 << 10
 HEADING = re.compile(r"^#{1,6}[ \t]*acceptance\b[^\n]*$", re.I | re.M)
 SECTION_END = re.compile(r"^(?:#{1,6}[ \t]|TASK-DATA-)", re.M)
 FENCE = re.compile(r"^TASK-DATA-\S+$", re.M)
-# HR3: a paragraph whose first line starts `Acceptance:`, up to the next blank line or fence line.
-INLINE = re.compile(r"^[ \t]*acceptance:[ \t]*(\S.*)$", re.I | re.M)
+# HR3: a paragraph whose first line starts `Acceptance:` (any case, optionally bold: `**Acceptance**:`,
+# `**Acceptance:**`), up to the next blank line or fence line. It may start on the label's line or on the
+# line after it, so a label followed by a list states the list.
+INLINE = re.compile(r"^[ \t]*(?:\*\*|__)?acceptance(?:\*\*|__)?[ \t]*:(?:\*\*|__)?[ \t]*(.*)$", re.I | re.M)
 PARAGRAPH_END = re.compile(r"\n[ \t]*\n|^TASK-DATA-\S+$", re.M)
 # Hardening HR7: the run's canary, planted by the factory as the brief's last line. The judge never
 # reads it: its line goes, and any copy elsewhere in the brief is masked.
@@ -71,12 +73,13 @@ def _without_canary(task: str) -> str:
 
 def _inline_acceptance(task: str) -> str:
     """The inline paragraph's text, or "". The factory's acceptanceText reads the same rule (HR3)."""
-    m = INLINE.search(task)
-    if not m:
-        return ""
-    rest = task[m.start(1):]
-    stop = PARAGRAPH_END.search(rest)
-    return (rest[: stop.start()] if stop else rest).strip()
+    for m in INLINE.finditer(task):
+        rest = task[m.start(1):]
+        stop = PARAGRAPH_END.search(rest)
+        text = (rest[: stop.start()] if stop else rest).strip()
+        if text:
+            return text
+    return ""
 
 
 def acceptance(task: str) -> str:
@@ -84,7 +87,7 @@ def acceptance(task: str) -> str:
     section (the factory-handoff template's `## Acceptance check`), else a paragraph starting
     `Acceptance:` (HR3), else the fenced issue text, else the whole brief. At most ACCEPTANCE_MAX characters.
     The run's canary never reaches the judge (hardening HR7)."""
-    task = _without_canary(task)
+    task = _without_canary(task).replace("\r\n", "\n")
     m = HEADING.search(task)
     if m:
         rest = task[m.end():]

@@ -28,6 +28,10 @@ class AcceptanceFixturesTest(unittest.TestCase):
                     self.assertTrue(want["states"])
                     self.assertEqual(got, want["text"])
 
+    def test_a_crlf_body_reads_as_its_lf_twin(self):
+        body = "Rewrite it.\r\n\r\nAcceptance:\r\n- task docs passes.\r\n- nothing else.\r\n\r\nNotes.\r\n"
+        self.assertEqual(lp.acceptance(body), "- task docs passes.\n- nothing else.")
+
     def test_an_inline_paragraph_is_bounded(self):
         self.assertEqual(len(lp.acceptance("Acceptance: " + "x" * 10000)), lp.ACCEPTANCE_MAX)
 
