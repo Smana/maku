@@ -227,7 +227,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/tasks/{task}/stops", gate(sponsoredOn, s.stopTask))
 	mux.HandleFunc("POST /v1/tasks/{task}/retries", s.retryTask)
 	mux.HandleFunc("POST /v1/tasks/{task}/plans", s.planTask)
-	mux.HandleFunc("POST /v1/tasks/{task}/answers", gate(sponsoredOn, s.answerTask))
+	mux.HandleFunc("POST /v1/tasks/{task}/splits", s.splitTask)
+	mux.HandleFunc("POST /v1/tasks/{task}/answers", s.answerTask)
 	// #644: a human's cancel or discard, mounted whenever the API is. /stops above is the Slack
 	// App's alone, on behalf of a linked Slack user: a 404 until api.sponsored declares one.
 	mux.HandleFunc(CancelRoute, s.cancelTask)

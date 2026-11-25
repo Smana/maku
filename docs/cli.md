@@ -121,7 +121,7 @@ Runs implementer (first run) succeeded · 40 min · $0.18 → reviewer approved 
 Agents' notes, their claims, not checked
 - 19:12 UTC cf4ato2x "found both versions on line 12-13, fixing"
 
-You can cancel it with maku cancel 26zfnuxm · stop it with the label factory/stop
+You can cancel it with maku cancel 26zfnuxm
 cursor: seq:7
 ```
 
@@ -136,7 +136,19 @@ The agents' text is quoted; an approval is a link to its card on the room page, 
 Room links print only under the broker's own address: the card takes it from the summary's URL
 (the broker's `PublicURL`), and falls back to the URL `maku` is configured with when the summary
 carries none. A broker reached by another name (a port-forward) therefore still shows its links.
+
+### Acting on a task from the terminal
+
+Each command sends its room act over the room's connection, prints one line saying what happens
+next, and prints the refusal's sentence on a refusal (such as `act_not_enabled` when the broker's
+`human.roomActs` does not include the act):
+
+- `maku answer <task> "<one line>"` — answers a task's open question. Multi-line answers are refused locally before sending; the factory appends the decision record to `## Decisions` on the issue and restarts the task for a maintainer (or waits for a maintainer for an issue author).
+- `maku split accept|decline <task>` — accepts a proposed split (parts open one at a time, charged to you) or declines it to run the task whole (maintainers with write only).
+- `maku plan approve|split <task>` — approves a proposed plan to start implementation, or splits it into parts (issue author or maintainer with write).
+- `maku plan revise <task> "<one comment>"` — asks the planner to revise a proposed plan once with a single-line comment (issue author or maintainer with write).
 - `maku retry <task> [--deeper]` — queues a fresh run of an escalated task; with `--deeper`, steps an escalated or no-op task up once on its workflow ladder (within its cap) on the same room, branch and pull request (maintainers with write only).
+- `maku cancel <task> [--discard]` — stops the task now; `--discard` also closes the pull request, deletes the `agent/<task>` branch and closes the issue as not planned.
 
 Source: `internal/roomview/card.go`.
 

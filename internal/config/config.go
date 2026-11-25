@@ -145,6 +145,24 @@ type HumanConfig struct {
 	// factory. Off unless set; the factory consults grants only under its own
 	// policyManagement.approvalMemory.
 	ApprovalMemory bool `json:"approvalMemory,omitempty"`
+	// RoomActs lists the room acts enabled over a room's connection (phase G): a subset of
+	// answer, retry, split, plan, file, stop. Nil takes DefaultRoomActs ([answer, retry]); an
+	// explicit empty list disables all gated room acts.
+	RoomActs []string `json:"roomActs,omitempty"`
+}
+
+// KnownRoomActs are the valid entries of human.roomActs (phase G).
+var KnownRoomActs = []string{"answer", "retry", "split", "plan", "file", "stop"}
+
+// DefaultRoomActs is release G's default for human.roomActs.
+var DefaultRoomActs = []string{"answer", "retry"}
+
+// EffectiveRoomActs returns the configured roomActs, or DefaultRoomActs when unset (nil).
+func (h HumanConfig) EffectiveRoomActs() []string {
+	if h.RoomActs == nil {
+		return slices.Clone(DefaultRoomActs)
+	}
+	return h.RoomActs
 }
 
 // IntakeConfig is human.intake. It holds one block today; it exists so the planner's switch has a
@@ -1105,6 +1123,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Human.Mode == "" {
 		c.Human.Mode = HumanModeOIDC
 	}
+	if c.Human.RoomActs == nil {
+		c.Human.RoomActs = slices.Clone(DefaultRoomActs)
+	}
 	if c.TLS.CertFile == "" {
 		c.TLS.CertFile = DefaultCertFile
 	}
@@ -1303,6 +1324,16 @@ func (h HumanConfig) validate(system []string) []error {
 	// human.intake.plan is checked in every mode, local included: the class table and the route are
 	// a config file's, and a typo in one must fail the rollout, not the first plan.
 	errs := h.Intake.validate()
+	seenActs := map[string]bool{}
+	for i, a := range h.RoomActs {
+		switch {
+		case !slices.Contains(KnownRoomActs, a):
+			errs = append(errs, fmt.Errorf("human.roomActs[%d]: %q is not one of %s", i, a, strings.Join(KnownRoomActs, ", ")))
+		case seenActs[a]:
+			errs = append(errs, fmt.Errorf("human.roomActs[%d]: %q is listed twice", i, a))
+		}
+		seenActs[a] = true
+	}
 	if h.EffectiveMode() == HumanModeLocal {
 		if h.Intake.Plan.Enabled {
 			errs = append(errs, errors.New("human.intake.plan.enabled: mode local serves no /mcp, and the planner is a tool on it"))

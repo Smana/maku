@@ -148,6 +148,27 @@ func newMakuBroker(t *testing.T) *makuBroker {
 			if act["kind"] == "retry" && act["deeper"] == true {
 				ack.Result = json.RawMessage(`{"result":"stepped_up","workflow":"careful","ceilingMicroUSD":13600000}`)
 			}
+			if act["kind"] == "answer" {
+				if act["text"] == "author only" {
+					ack.Result = json.RawMessage(`{"result":"answered"}`)
+				} else {
+					ack.Result = json.RawMessage(`{"result":"answered_restarted"}`)
+				}
+			}
+			if act["kind"] == "split" {
+				if act["decision"] == "decline" {
+					ack.Result = json.RawMessage(`{"result":"split_declined"}`)
+				} else {
+					ack.Result = json.RawMessage(`{"result":"split_accepted"}`)
+				}
+			}
+			if act["kind"] == "plan" {
+				ack.Result = json.RawMessage(`{"result":"plan_approved"}`)
+			}
+			if act["text"] == "reject-me" || act["decision"] == "reject" {
+				ack.Rejected = "act_not_enabled"
+				ack.Result = nil
+			}
 			_ = wsjson.Write(r.Context(), c, ack)
 		}
 	}))
@@ -290,6 +311,138 @@ func TestRetryCommandSendsTheAct(t *testing.T) {
 		t.Errorf("output:\n%s", out)
 	}
 	for _, bad := range [][]string{{"retry"}, {"retry", "a", "b"}} {
+		if err := r.Run(t.Context(), bad); err == nil {
+			t.Errorf("%v: accepted", bad)
+		}
+	}
+}
+
+func TestAnswerCommandSendsTheAct(t *testing.T) {
+	b := newMakuBroker(t)
+	r, out := configured(t, b)
+	if err := r.Run(t.Context(), []string{"answer", "3buqdlot", "use task check"}); err != nil {
+		t.Fatalf("maintainer answer: %v", err)
+	}
+	if err := r.Run(t.Context(), []string{"answer", "3buqdlot", "author only"}); err != nil {
+		t.Fatalf("author answer: %v", err)
+	}
+	b.mu.Lock()
+	wantActs := []string{
+		`{"kind":"answer","text":"use task check"}`,
+		`{"kind":"answer","text":"author only"}`,
+	}
+	for i, w := range wantActs {
+		if got, _ := json.Marshal(b.acts[i]); string(got) != w {
+			t.Errorf("act %d: %s, want %s", i, got, w)
+		}
+	}
+	b.mu.Unlock()
+	for _, want := range []string{
+		"3buqdlot: answered; the decision is on the issue and the task is restarting",
+		"3buqdlot: answered; the decision is on the issue and a maintainer restarts the task",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if err := r.Run(t.Context(), []string{"answer", "3buqdlot", "reject-me"}); err == nil || !strings.Contains(err.Error(), "human.roomActs") {
+		t.Fatalf("refusal sentence: got %v", err)
+	}
+	for _, bad := range [][]string{{"answer"}, {"answer", "3buqdlot"}, {"answer", "3buqdlot", "   "}} {
+		if err := r.Run(t.Context(), bad); err == nil {
+			t.Errorf("%v: accepted", bad)
+		}
+	}
+}
+
+func TestAnAnswerIsOneLine(t *testing.T) {
+	b := newMakuBroker(t)
+	r, _ := configured(t, b)
+	for _, multi := range []string{"first line\nsecond line", "first line\r\nsecond line"} {
+		err := r.Run(t.Context(), []string{"answer", "3buqdlot", multi})
+		if err == nil || !strings.Contains(err.Error(), "one line") {
+			t.Fatalf("multiline %q: got %v, want one-line refusal", multi, err)
+		}
+	}
+	b.mu.Lock()
+	sent := len(b.acts)
+	b.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("multiline answer was sent to the broker (%d acts)", sent)
+	}
+}
+
+func TestSplitCommandSendsTheAct(t *testing.T) {
+	b := newMakuBroker(t)
+	r, out := configured(t, b)
+	for _, args := range [][]string{{"split", "accept", "3buqdlot"}, {"split", "decline", "3buqdlot"}} {
+		if err := r.Run(t.Context(), args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	b.mu.Lock()
+	for i, w := range []string{`{"decision":"accept","kind":"split"}`, `{"decision":"decline","kind":"split"}`} {
+		if got, _ := json.Marshal(b.acts[i]); string(got) != w {
+			t.Errorf("act %d: %s, want %s", i, got, w)
+		}
+	}
+	b.mu.Unlock()
+	for _, want := range []string{
+		"3buqdlot: split accepted; its parts open one at a time, charged to you",
+		"3buqdlot: split declined; the task is queued to run whole",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range [][]string{{"split"}, {"split", "accept"}, {"split", "maybe", "3buqdlot"}, {"split", "accept", "3buqdlot", "extra"}} {
+		if err := r.Run(t.Context(), bad); err == nil {
+			t.Errorf("%v: accepted", bad)
+		}
+	}
+}
+
+func TestPlanCommandSendsTheAct(t *testing.T) {
+	b := newMakuBroker(t)
+	r, out := configured(t, b)
+	for _, args := range [][]string{
+		{"plan", "approve", "3buqdlot"},
+		{"plan", "split", "3buqdlot"},
+		{"plan", "revise", "3buqdlot", "keep cache untouched"},
+	} {
+		if err := r.Run(t.Context(), args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	b.mu.Lock()
+	wantActs := []string{
+		`{"decision":"approve","kind":"plan"}`,
+		`{"decision":"split","kind":"plan"}`,
+		`{"decision":"revise","kind":"plan","note":"keep cache untouched"}`,
+	}
+	for i, w := range wantActs {
+		if got, _ := json.Marshal(b.acts[i]); string(got) != w {
+			t.Errorf("act %d: %s, want %s", i, got, w)
+		}
+	}
+	b.mu.Unlock()
+	for _, want := range []string{
+		"3buqdlot: plan approved; implementation is queued",
+		"3buqdlot: plan split; its parts open one at a time",
+		"3buqdlot: revision requested; the planner runs once more with your comment",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range [][]string{
+		{"plan"},
+		{"plan", "approve"},
+		{"plan", "approve", "3buqdlot", "extra"},
+		{"plan", "revise", "3buqdlot"},
+		{"plan", "revise", "3buqdlot", "line1\nline2"},
+		{"plan", "unknown", "3buqdlot"},
+	} {
 		if err := r.Run(t.Context(), bad); err == nil {
 			t.Errorf("%v: accepted", bad)
 		}

@@ -34,9 +34,10 @@ type AnswerForge interface {
 }
 
 // AnswerRequest is the POST /v1/tasks/{task}/answers body. Unknown fields — login included — are
-// refused: the actor is resolved from the link onBehalfOf names, never supplied in the body.
+// refused: the actor is resolved from the link onBehalfOf names (for sponsored callers) or the
+// caller's own GitHub link (for human callers), never supplied in the body.
 type AnswerRequest struct {
-	OnBehalfOf string `json:"onBehalfOf"`
+	OnBehalfOf string `json:"onBehalfOf,omitempty"`
 	Text       string `json:"text"`
 }
 
@@ -86,7 +87,8 @@ func (s *Server) answerTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sp := cfg.SponsoredBy(p.ID)
-	if !p.Sponsored || p.Internal || sp == nil {
+	humanAnswer := !p.Sponsored && !p.Internal && p.Kind == envelope.ActorHuman
+	if !humanAnswer && (!p.Sponsored || p.Internal || sp == nil) {
 		refuse(w, http.StatusForbidden, reasonSponsoredOnly)
 		return
 	}
@@ -98,7 +100,16 @@ func (s *Server) answerTask(w http.ResponseWriter, r *http.Request) {
 	var in AnswerRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxActBody))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&in); err != nil || dec.More() || in.OnBehalfOf == "" || len(in.Text) > maxAnswerText {
+	if err := dec.Decode(&in); err != nil || dec.More() || len(in.Text) > maxAnswerText {
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if humanAnswer {
+		if in.OnBehalfOf != "" {
+			refuse(w, http.StatusForbidden, reasonSponsoredOnly)
+			return
+		}
+	} else if in.OnBehalfOf == "" {
 		refuse(w, http.StatusBadRequest, "bad_json")
 		return
 	}
@@ -134,23 +145,41 @@ func (s *Server) answerTask(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, ActResult{Result: AnswerUnknownTask})
 		return
 	}
-	repo := canonicalRepository(sp.Repositories, t.Spec.Repository)
-	rc := cfg.RepositoryFor(repo)
-	if !slices.Contains(sp.Repositories, repo) || rc == nil {
-		refuse(w, http.StatusForbidden, "repository_not_allowed")
-		return
+	var repo string
+	var rc *config.Repository
+	if humanAnswer {
+		repo = t.Spec.Repository
+		rc = cfg.RepositoryFor(repo)
+		if rc == nil {
+			refuse(w, http.StatusForbidden, "repository_not_allowed")
+			return
+		}
+	} else {
+		repo = canonicalRepository(sp.Repositories, t.Spec.Repository)
+		rc = cfg.RepositoryFor(repo)
+		if !slices.Contains(sp.Repositories, repo) || rc == nil {
+			refuse(w, http.StatusForbidden, "repository_not_allowed")
+			return
+		}
 	}
 	if t.Status.Phase != factoryv1.PhaseEscalated || t.Status.Reason != "needs_author" || t.Spec.Issue <= 0 {
 		reply(w, http.StatusOK, ActResult{Result: AnswerNoQuestion})
 		return
 	}
-	id, ok := strings.CutPrefix(in.OnBehalfOf, "slack:")
-	team, user, slash := strings.Cut(id, "/")
-	if !ok || !slash || team == "" || user == "" {
-		reply(w, http.StatusOK, ActResult{Result: AnswerNotLinked})
-		return
+	var login string
+	var code int
+	var reason string
+	if humanAnswer {
+		login, code, reason = s.linkedLogin(ctx, p, repo)
+	} else {
+		id, ok := strings.CutPrefix(in.OnBehalfOf, "slack:")
+		team, user, slash := strings.Cut(id, "/")
+		if !ok || !slash || team == "" || user == "" {
+			reply(w, http.StatusOK, ActResult{Result: AnswerNotLinked})
+			return
+		}
+		login, code, reason = s.onBehalfLogin(ctx, sp, in.OnBehalfOf, repo)
 	}
-	login, code, reason := s.onBehalfLogin(ctx, sp, in.OnBehalfOf, repo)
 	switch reason {
 	case "":
 	case "not_linked":

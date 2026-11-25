@@ -390,13 +390,18 @@ func (c *card) mergeLine(n summary.Need) (string, bool) {
 
 // answerLine is the answer need as a sentence built here: the author is named only when it is a
 // GitHub login, in a code span.
-func (c *card) answerLine(n summary.Need) (string, bool) {
+func (c *card) answerLine(n summary.Need, room string) (string, bool) {
 	if !digits(n.ID) {
 		return "", false
 	}
 	who := "the issue's author"
 	if n.Author != "" && envelope.ValidLogin(n.Author) {
 		who = c.span("@" + n.Author)
+	}
+	if envelope.ValidID(room) {
+		return who + " answers the scoper's question on issue #" + n.ID + " with " +
+			c.command("maku answer "+room+" \"<one line>\"") + "; or a maintainer runs " +
+			c.command("maku retry "+room) + " to proceed on its assumption", true
 	}
 	return who + " answers the scoper's question by editing issue #" + n.ID + ", then a maintainer re-applies " +
 		c.span("factory/ready") + "; or a maintainer comments " + c.span("/factory retry") + " to proceed on its assumption", true
@@ -566,7 +571,7 @@ func (c *card) needs(s summary.Summary) {
 				label = "approve the head on the pull request"
 			}
 		case summary.NeedQuestion:
-			item, label = c.needLine(n, c.answerLine), "answer on the issue"
+			item, label = c.needLine(n, func(n summary.Need) (string, bool) { return c.answerLine(n, s.Room) }), "answer on the issue"
 		case "hold":
 			item, label = c.broker(n.What), "open the room"
 		default:
@@ -713,12 +718,42 @@ func (c *card) ranOn(s summary.Summary) {
 
 func (c *card) actions(s summary.Summary) {
 	var can []string
+	validRoom := envelope.ValidID(s.Room)
 	for _, a := range s.Actions {
 		switch a.Kind {
 		case "stop":
-			can = append(can, "stop it with the label "+c.lit("factory/stop"))
+			if validRoom {
+				can = append(can, "cancel it with "+c.command("maku cancel "+s.Room))
+			} else {
+				can = append(can, "stop it with the label "+c.lit("factory/stop"))
+			}
 		default:
 			can = append(can, c.text(a.What, false))
+		}
+	}
+	if validRoom {
+		seenRetry := false
+		for _, n := range s.NeedsYou {
+			switch n.Kind {
+			case summary.NeedQuestion:
+				can = append(can, "answer with "+c.command("maku answer "+s.Room+" \"<one line>\""))
+				if !seenRetry {
+					can = append(can, "retry with "+c.command("maku retry "+s.Room))
+					seenRetry = true
+				}
+			case summary.NeedPlanConfirmation:
+				can = append(can, "accept the split with "+c.command("maku split accept "+s.Room),
+					"decline with "+c.command("maku split decline "+s.Room))
+			case "plan_review":
+				can = append(can, "approve with "+c.command("maku plan approve "+s.Room),
+					"revise with "+c.command("maku plan revise "+s.Room+" \"<comment>\""),
+					"split with "+c.command("maku plan split "+s.Room))
+			case summary.NeedRecovery:
+				if !seenRetry {
+					can = append(can, "retry with "+c.command("maku retry "+s.Room))
+					seenRetry = true
+				}
+			}
 		}
 	}
 	if len(can) == 0 {

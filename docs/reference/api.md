@@ -746,6 +746,11 @@ close frame. So is a peer that does not take a frame within 10 s (`write_timeout
 | `invite` | `principal`, `memberRole`, `approver` | Owner. At most 20 members; never demotes the driver-token holder below collaborator (`bad_action`): the holder hands the token over first |
 | `close` | `reason?` | Owner |
 | `cancel` | `discard?` | Owner; the factory then needs the task's owner or a maintainer of its repository, with write on it. Forwarded with the caller's own token to [`POST /v1/tasks/{task}/cancellations`](#post-v1taskstaskcancellations) for the room's task (its id). The ack is accepted, or rejected with the factory's `not_maintainer`, `not_linked`, `not_running`, `unknown_task` or `human_only`; `factory_unavailable` without a `factoryURL` |
+| `stop` | `discard?` | Room member (collaborator or owner; never a watcher) when `stop` is in `human.roomActs` (else `act_not_enabled`). Forwarded with the caller's own token to [`POST /v1/tasks/{task}/cancellations`](#post-v1taskstaskcancellations); the factory decides whether the caller is the task's owner or a maintainer with write |
+| `answer` | `text` (one line) | Room member when `answer` is in `human.roomActs` (default on; else `act_not_enabled`). Forwarded with the caller's own token to [`POST /v1/tasks/{task}/answers`](#post-v1taskstaskstops-post-v1taskstaskretries-and-post-v1taskstaskanswers); the factory checks issue author or maintainer standing and returns `{result}` (`answered_restarted` or `answered`) |
+| `retry` | `deeper?` | Room member when `retry` is in `human.roomActs` (default on; else `act_not_enabled`). Forwarded with the caller's own token to [`POST /v1/tasks/{task}/retries`](#post-v1taskstaskstops-post-v1taskstaskretries-and-post-v1taskstaskanswers); the factory checks maintainer write standing and returns `{result, workflow?, ceilingMicroUSD?}` |
+| `split` | `decision: accept \| decline` | Room member when `split` is in `human.roomActs` (else `act_not_enabled`). Forwarded with the caller's own token to [`POST /v1/tasks/{task}/splits`](#post-v1taskstasksplits-and-post-v1taskstaskplans); the factory checks maintainer write standing, charges the approver on accept, and returns `{result}` (`split_accepted` or `split_declined`) |
+| `plan` | `decision: approve \| revise \| split`, `note?` (one line, required on `revise`) | Room member when `plan` is in `human.roomActs` (else `act_not_enabled`). Forwarded with the caller's own token to [`POST /v1/tasks/{task}/plans`](#post-v1taskstasksplits-and-post-v1taskstaskplans); the factory checks issue author or maintainer standing and returns `{result}` (`plan_approved`, `plan_revised` or `plan_split`) |
 | `decide` | `approvalId`, `decision: approved \| denied`, `reason?` (at most 1 KiB, redacted; the agent reads it) | Approver, owner, from the web UI. The first valid decision wins (`already_decided` for every later one, a supersede included). The deadline is checked on the database clock in the transaction that would record the decision: one past it closes the approval as `expired` and is refused `approval_expired`, whether or not the sweep has run, as is any decision on an expired approval. With `approvals.fourEyes`, nobody who prompted the run decides (`four_eyes`). A replayed `clientSeq` acks the stored decision |
 | `fork` | `seq`, `note?` (at most 1 KiB, redacted), `role?`, `prUrl?`, `egressProfiles?` (as `start_run`'s), `approvals?: attended \| unattended` | Watcher and up; also from `maku`. A sealed room forks only for its owner or an `agents-admin` (`sealed`). A new room owned and driven by the forker, with the source's data class, repository and retention and none of its members. Its approvals ask by default: for the source's owners (owner, owner members, `agents-admin`) `attended`, with the source's `ttl`, `fourEyes` and every override but `allow`, so an unattended factory room does not make a human's own fork run unasked; `approvals: unattended` keeps the source's approvals as they are (an attended source stays attended; `bad_action` for any other value). Anyone else, whatever they ask, gets, class by class, the stricter of the source's and a new room's (`attended`), so an `unattended` or `allow` override never carries over to a watcher: events `1..seq` copied with their `seq`, then `state_changed{forked_from}`. The source's queue as it stood at `seq` comes along: each message queued by then and not yet promoted, removed or consumed by then is queued again in the fork (one consumed through `POST /v1/rooms/{id}/queue/consume` leaves no event to date it, so it comes along only while still queued). With a `role`, the new room's first run, on `agent/<new room>` from the latest agent commit at or before `seq`, on the forker's token and budget. The ack's `seq` is the new room's `forked_from`; its `result` is `{roomId, run?, runError?}`: `run` is the `start_run` claim or `null`, `runError` its rejection. A failed run leaves the fork made. A prefix over 5,000 events or 32 MiB is `too_large`; a principal forks 3 times at once, then once a minute, per replica |
 
@@ -773,6 +778,9 @@ close frame. So is a peer that does not take a frame within 10 s (`write_timeout
 A digest-bound approval, which holds a protected-path push for a maintainer, is decided on the
 room page only by an approver who writes to the room's repository on GitHub, the standing the
 Slack route's step 10 checks. Without it the decision is `not_permitted`.
+
+The room acts `answer`, `retry`, `split`, `plan` and `stop` are gated by `human.roomActs` (default
+`[answer, retry]`); an act outside the configured list is refused with `act_not_enabled`.
 
 ### Machine-sent text
 
@@ -1319,30 +1327,51 @@ everything a sponsored one's does beyond its own keys.
 
 ### `POST /v1/tasks/{task}/stops`, `POST /v1/tasks/{task}/retries` and `POST /v1/tasks/{task}/answers`
 
-`/stops` and `/answers` are served while `api.sponsored` is non-empty, for a sponsored principal's bearer token
-alone (`403 sponsored_only` for a human, internal or run caller). `/retries` is served whenever the API is,
-for either a sponsored caller (`{onBehalfOf, deeper?}`) or a human caller with their own token (`{deeper?}`,
-forwarded by the broker's `retry` room act and `maku retry`). `{task}` is the task's name or
-8-character room id. Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on
-`/answers`, unknown fields refused): `{onBehalfOf: "slack:<team>/<user>", deeper?: bool}` (plus `answer` on
-`/answers`, 1..4 000 bytes with no control characters). The factory re-resolves the GitHub login
-from `onBehalfOf` (or the human caller's link) and checks maintainer write permission on
-GitHub (`not_maintainer`). `/stops` applies the exact transition of the `factory/stop` label (`Queued` or
-`Running` → `Stopped`, else `not_running`). Plain `/retries` applies `/factory retry` (`Escalated` → `Queued`,
-proceeding on the scoper's first assumption when the escalation was a question; a `Queued` task held
-by a model hold answers `not_escalated`). With `deeper: true`, `/retries` applies `/factory retry deeper`
-on `Escalated` or `NoOp`, stepping the task up once within its cap (`stepped_up` with `{workflow, ceilingMicroUSD}`,
-else `no_deeper_workflow` or `deeper_over_cap`). `/answers` requires an open scoper question on the task
-(`Escalated` or `AwaitingHuman` with `scope.question` or `needs_author`, else `no_question`); when
-the resolved login is a maintainer of the repository (`admin`, `maintain`, `write`) or the issue's
-author (`not_permitted` for anyone else), the factory appends a decision record to `## Decisions` in
-the issue body on GitHub and, for a maintainer, clears the question and restarts the task (`Queued`
-at `scope` with `ScopeAttempts` decremented), while for a non-maintainer issue author it leaves the
-task waiting for a maintainer to restart. Answers `200 {"result"}` in `{stopped, retried, stepped_up,
-no_deeper_workflow, deeper_over_cap, answered,
-answered_awaiting_maintainer, not_linked, not_maintainer, not_permitted, not_running, not_escalated,
-no_question, unknown_task}`, `400 bad_json` / `bad_on_behalf_of` / `bad_answer`, `401` / `403` for
-caller auth, or `503` (`link_unverified`, `tasks_unavailable`).
+`/stops` is served while `api.sponsored` is non-empty, for a sponsored principal's bearer token
+alone (`403 sponsored_only` for a human, internal or run caller). `/retries` and `/answers` are
+served whenever the API is, for either a sponsored caller (with `onBehalfOf`) or an authenticated
+human caller with their own token (forwarded by the broker's room acts and `maku` CLI commands).
+`{task}` is the task's name or 8-character room id. Body (`application/json`, at most 4 KiB, unknown
+fields refused):
+
+- `/stops`: `{onBehalfOf: "slack:<team>/<user>"}`.
+- `/retries`: `{onBehalfOf?, deeper?: bool}`.
+- `/answers`: `{onBehalfOf?, text}`. Requires an open scoper question (`Escalated` with
+  `needs_author`, else `no_question`); when the resolved login is a maintainer with write or the
+  issue's author (`not_allowed` for anyone else), the factory appends a decision record to
+  `## Decisions` in the issue body on GitHub and, for a maintainer, supersedes and restarts the task
+  (`answered_restarted`), while for a non-maintainer issue author it leaves the task waiting
+  (`answered`).
+
+The factory re-resolves the GitHub login from `onBehalfOf` (for sponsored callers) or the human
+caller's GitHub link (`not_linked`). `/stops` applies the transition of `factory/stop` (`not_running`
+when already ended). Plain `/retries` applies `/factory retry` (`Escalated` → `Queued`, proceeding on
+the scoper's first assumption when the escalation was a question; a `Queued` task held by a model
+hold answers `not_escalated`). With `deeper: true`, `/retries` applies `/factory retry deeper` on
+`Escalated` or `NoOp`, stepping the task up once within its cap (`stepped_up` with `{workflow,
+ceilingMicroUSD}`, else `no_deeper_workflow` or `deeper_over_cap`). Answers `200 {"result"}` in
+`{stopped, retried, stepped_up, no_deeper_workflow, deeper_over_cap, answered_restarted, answered,
+not_linked, not_maintainer, not_allowed, not_running, not_escalated, no_question, unknown_task}`,
+`400 bad_json` / `invalid_draft`, `401` / `403` for caller auth, `409 invalid_decisions`, or `503`
+(`kill_switch`, `link_unverified`, `access_unverified`, `tasks_unavailable`, `forge_unavailable`).
+
+### `POST /v1/tasks/{task}/splits` and `POST /v1/tasks/{task}/plans`
+
+Served whenever the API is, for either an authenticated human caller with their own token (forwarded
+by the broker's `split` / `plan` room acts and `maku split` / `maku plan`) or a sponsored caller
+with `onBehalfOf`. Body (`application/json`, at most 4 KiB, unknown fields refused):
+
+- `/splits`: `{onBehalfOf?, decision: "accept" | "decline"}`. Requires a maintainer with write on
+  GitHub (`not_maintainer`) and a task in `Escalated` (`split_proposed`, else `no_split`). Writes
+  `agents.ogenki.io/split-decision` with the approver's login so the reconciler charges the
+  approver's daily budget on `accept` (moving to `Split`) or queues the task whole on `decline`.
+  Answers `200 {"result"}` in `{split_accepted, split_declined, no_split, not_linked,
+  not_maintainer, unknown_task}`.
+- `/plans`: `{onBehalfOf?, decision: "approve" | "revise" | "split", note?}` (`note` required and
+  non-empty on `revise`, refused on `approve`/`split`). Requires the issue's author or a maintainer
+  with write (`not_allowed`) and a task in `AwaitingHuman` (`plan_review`, else `no_plan`). Writes
+  `agents.ogenki.io/plan-decision`. Answers `200 {"result"}` in `{plan_approved, plan_revised,
+  plan_split, no_plan, not_linked, not_allowed, unknown_task}`.
 
 ### `POST /v1/tasks/{task}/cancellations`
 

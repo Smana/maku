@@ -115,7 +115,7 @@ func TestCardMatchesTheSpec(t *testing.T) {
 		"\n**Needs you**\n1. approve `git push to agent/26zfnuxm` by 19:45 UTC → [decide in the room](https://rooms.example/r/26zfnuxm#01M4A)\n",
 		"\n**Runs** implementer (first run) succeeded · 40 min · $0.18 → reviewer approved · 10 min · $0.03 → implementer (human review) **running** · 18 min · $0.10\n",
 		"\n**Agents' notes**, their claims, not checked\n- 19:12 UTC cf4ato2x `found both versions on line 12-13, fixing`\n",
-		"\n**You can** queue a note for the next run · steer the running agent · stop it with the label `factory/stop`\n",
+		"\n**You can** queue a note for the next run · steer the running agent · cancel it with `maku cancel 26zfnuxm`\n",
 	}
 	at := 0
 	for _, w := range want {
@@ -835,5 +835,33 @@ func TestCardRunsShowSteersAndChat(t *testing.T) {
 				t.Errorf("text card lacks the marks:\n%s", txt)
 			}
 		})
+	}
+}
+
+func TestCardYouCanNamesCLICommands(t *testing.T) {
+	s := summary.Summary{
+		Room: "3buqdlot",
+		URL:  rooms + "/r/3buqdlot",
+		NeedsYou: []summary.Need{
+			{Kind: summary.NeedQuestion, ID: "42", Author: "alice", URL: "https://github.com/o/r/issues/42"},
+			{Kind: summary.NeedPlanConfirmation, ID: "42", URL: "https://github.com/o/r/issues/42"},
+			{Kind: "plan_review", ID: "42", URL: "https://github.com/o/r/issues/42"},
+		},
+		Actions: []summary.Action{{Kind: "stop", What: "stop this task"}},
+	}
+	txt := card1(t, s, textOpts(now))
+	for _, want := range []string{
+		`maku answer 3buqdlot "<one line>"`,
+		"maku split accept 3buqdlot",
+		"maku split decline 3buqdlot",
+		"maku plan approve 3buqdlot",
+		`maku plan revise 3buqdlot "<comment>"`,
+		"maku plan split 3buqdlot",
+		"maku retry 3buqdlot",
+		"maku cancel 3buqdlot",
+	} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("card lacks %q:\n%s", want, txt)
+		}
 	}
 }

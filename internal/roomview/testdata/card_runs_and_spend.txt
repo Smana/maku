@@ -15,4 +15,4 @@ Runs implementer (first run) succeeded · 40 min · $0.18 → reviewer approved 
 Agents' notes, their claims, not checked
 - 19:12 UTC cf4ato2x "found both versions on line 12-13, fixing"
 
-You can queue a note for the next run · steer the running agent · stop it with the label factory/stop
+You can queue a note for the next run · steer the running agent · cancel it with maku cancel 26zfnuxm

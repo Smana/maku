@@ -110,3 +110,37 @@ func TestCancelTask(t *testing.T) {
 		t.Fatalf("no token: %v", err)
 	}
 }
+
+func TestHumanTaskActs(t *testing.T) {
+	var path, auth, raw string
+	var answer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		raw = string(b)
+		_, _ = w.Write([]byte(answer))
+	}))
+	defer srv.Close()
+	f := Factory{URL: srv.URL}
+
+	answer = `{"result":"answered_restarted"}`
+	res, err := f.AnswerTaskHuman(t.Context(), "abcd2345", "use task check", "tok-viewer")
+	if err != nil || res != "answered_restarted" || path != "/v1/tasks/abcd2345/answers" ||
+		auth != "Bearer tok-viewer" || raw != `{"text":"use task check"}` {
+		t.Fatalf("answer: %q %v %q %q %q", res, err, path, auth, raw)
+	}
+
+	answer = `{"result":"split_accepted"}`
+	res, err = f.SplitTaskHuman(t.Context(), "abcd2345", "accept", "tok-maint")
+	if err != nil || res != "split_accepted" || path != "/v1/tasks/abcd2345/splits" ||
+		auth != "Bearer tok-maint" || raw != `{"decision":"accept"}` {
+		t.Fatalf("split: %q %v %q %q %q", res, err, path, auth, raw)
+	}
+
+	answer = `{"result":"plan_revised"}`
+	res, err = f.PlanTaskHuman(t.Context(), "abcd2345", "revise", "keep cache untouched", "tok-author")
+	if err != nil || res != "plan_revised" || path != "/v1/tasks/abcd2345/plans" ||
+		auth != "Bearer tok-author" || raw != `{"decision":"revise","note":"keep cache untouched"}` {
+		t.Fatalf("plan: %q %v %q %q %q", res, err, path, auth, raw)
+	}
+}

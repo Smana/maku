@@ -18,4 +18,4 @@ Agents' notes, their claims, not checked
 - 19:12 UTC cf4ato2x "# heading [x](https://evil.example)"
 - 19:13 UTC cf4ato2x "**bold** _it_ ~~gone~~ <img src=x onerror=alert(1)>"
 
-You can queue a note for the next run · steer the running agent · stop it with the label factory/stop
+You can queue a note for the next run · steer the running agent · cancel it with maku cancel 26zfnuxm

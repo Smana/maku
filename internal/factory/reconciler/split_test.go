@@ -489,3 +489,61 @@ func TestASplitOnlyInTheSummaryIsNamedInTheRoom(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitDecisionAnnotationAcceptAndDecline(t *testing.T) {
+	// Over-budget approver via annotation is refused without transitioning to Split.
+	gOver := proposed(t, spentLedger(map[string]int64{"github:smana": 5_000_000}))
+	gOver.r.Cfg.Current().Budgets = personBudgets(true, true)
+	gOver.r.Now = func() time.Time { return now.Add(time.Hour) }
+	var tkOver v1alpha1.Task
+	if err := gOver.c.Get(t.Context(), taskKey("3buqdlot"), &tkOver); err != nil {
+		t.Fatal(err)
+	}
+	tkOver.Annotations = map[string]string{
+		v1alpha1.AnnotationSplitDecision: fmt.Sprintf(`{"decision":"accept","by":"smana","seq":%d}`, tkOver.Status.Split.Seq),
+	}
+	if err := gOver.c.Update(t.Context(), &tkOver); err != nil {
+		t.Fatal(err)
+	}
+	gotOver := gOver.reconcile(t, "3buqdlot", 1)
+	if gotOver.Status.Phase != v1alpha1.PhaseEscalated || gotOver.Status.Split.State != SplitProposed ||
+		!slices.Contains(gOver.metrics.recorded, "admission_refused person_budget_exhausted") {
+		t.Fatalf("over-budget approver: phase=%s split=%+v metrics=%v", gotOver.Status.Phase, gotOver.Status.Split, gOver.metrics.recorded)
+	}
+
+	// Accept annotation with available budget transitions to Split and records ApprovedBy.
+	gAcc := proposed(t)
+	gAcc.r.Now = func() time.Time { return now.Add(time.Hour) }
+	var tkAcc v1alpha1.Task
+	if err := gAcc.c.Get(t.Context(), taskKey("3buqdlot"), &tkAcc); err != nil {
+		t.Fatal(err)
+	}
+	tkAcc.Annotations = map[string]string{
+		v1alpha1.AnnotationSplitDecision: fmt.Sprintf(`{"decision":"accept","by":"smana","seq":%d}`, tkAcc.Status.Split.Seq),
+	}
+	if err := gAcc.c.Update(t.Context(), &tkAcc); err != nil {
+		t.Fatal(err)
+	}
+	gotAcc := gAcc.reconcile(t, "3buqdlot", 1)
+	if gotAcc.Status.Phase != v1alpha1.PhaseSplit || gotAcc.Status.Split.State != SplitApproved || gotAcc.Status.Split.ApprovedBy != "github:smana" {
+		t.Fatalf("accepted split: phase=%s split=%+v", gotAcc.Status.Phase, gotAcc.Status.Split)
+	}
+
+	// Decline annotation moves the task to Queued with SplitDeclined so it runs whole.
+	gDec := proposed(t)
+	gDec.r.Now = func() time.Time { return now.Add(time.Hour) }
+	var tkDec v1alpha1.Task
+	if err := gDec.c.Get(t.Context(), taskKey("3buqdlot"), &tkDec); err != nil {
+		t.Fatal(err)
+	}
+	tkDec.Annotations = map[string]string{
+		v1alpha1.AnnotationSplitDecision: fmt.Sprintf(`{"decision":"decline","by":"smana","seq":%d}`, tkDec.Status.Split.Seq),
+	}
+	if err := gDec.c.Update(t.Context(), &tkDec); err != nil {
+		t.Fatal(err)
+	}
+	gotDec := gDec.reconcile(t, "3buqdlot", 1)
+	if gotDec.Status.Phase != v1alpha1.PhaseQueued || gotDec.Status.Split.State != SplitDeclined || gotDec.Status.RetriedBy != "github:smana" {
+		t.Fatalf("declined split: phase=%s split=%+v retriedBy=%q", gotDec.Status.Phase, gotDec.Status.Split, gotDec.Status.RetriedBy)
+	}
+}
