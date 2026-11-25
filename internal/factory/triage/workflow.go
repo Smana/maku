@@ -47,6 +47,36 @@ func WorkflowFor(cfg *config.Config, t *v1alpha1.Task, pin Pin) (name, source st
 	return rc.DefaultWorkflow(), SourceRepository
 }
 
+// Harness sources recorded on ProfileStatus.HarnessSource.
+const (
+	HarnessSourceLabeled   = "labeled"
+	HarnessSourceTreatment = "treatment"
+	HarnessSourceDefault   = "default"
+	HarnessSourceRescue    = "rescue"
+)
+
+// HarnessFor resolves a task's harness and why:
+// 1. Integration-only (no-model) tasks are forced to OpenHands.
+// 2. An honoured maintainer pin (harness:<name> label or intake.harness) -> labeled.
+// 3. Treatment cohort with evaluation.treatmentHarness set -> treatment.
+// 4. Configured defaults.harness -> default.
+// 5. Fallback -> openhands / default.
+func HarnessFor(cfg *config.Config, t *v1alpha1.Task, pin Pin, cohort string) (harness, source string) {
+	if t != nil && t.Spec.Kind == "integration" {
+		return config.HarnessOpenHands, HarnessSourceDefault
+	}
+	if pin.Honoured() {
+		return pin.Name, HarnessSourceLabeled
+	}
+	if cohort == CohortTreatment && cfg != nil && cfg.Evaluation.TreatmentHarness != "" {
+		return cfg.Evaluation.TreatmentHarness, HarnessSourceTreatment
+	}
+	if cfg != nil && cfg.Defaults.Harness != "" {
+		return cfg.Defaults.Harness, HarnessSourceDefault
+	}
+	return config.HarnessOpenHands, HarnessSourceDefault
+}
+
 // oracleClass reports whether class is an oracle class of rc; none when rc is not served.
 func oracleClass(rc *config.Repository, class string) bool {
 	cl, _ := rc.Class(class)

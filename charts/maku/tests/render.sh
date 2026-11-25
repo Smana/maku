@@ -908,5 +908,12 @@ jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "db_single_replica,db_backups_off"' 'singleReplica and backupsOff appear in broker config install.unsafe'
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/pilot-db.yaml"
 go run ./tests/loadconfig broker "$tmp/pilot-db.yaml" || fail=1
+# OpenCode runner image is opt-in: absent by default, rendered by digest and admitted when tag is set.
+out="$q"
+ynone 'select(.kind=="ConfigMap" and .metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .images | select(has("opencode"))' 'default: images.opencode is absent'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.images.opencode.tag=$digest)"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .images.opencode == "ghcr.io/smana/maku-opencode:'"$digest"'"' 'opencode image reaches run-controller config'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression) == "['"'"'ghcr.io/smana/maku-harness'"'"', '"'"'ghcr.io/smana/maku-bridge'"'"', '"'"'ghcr.io/smana/maku-run-controller'"'"', '"'"'ghcr.io/smana/maku-opencode'"'"']"' 'opencode repository joins run-pod policy allow-list when configured'
+bad 'image.tag is <version>@sha256:<digest>, never a bare tag' --set runController.images.opencode.tag=v1
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"

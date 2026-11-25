@@ -97,6 +97,45 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("agent-server %s %s: status %d", e.Method, e.Path, e.Code)
 }
 
+// Harness names accepted by NewHarnessForKind and AGENT_HARNESS.
+const (
+	HarnessOpenHands = "openhands"
+	HarnessOpenCode  = "opencode"
+)
+
+// HarnessAPI is the loopback client interface the bridge, confirmer and
+// steering loop speak to a harness backend.
+type HarnessAPI interface {
+	Ready(ctx context.Context) error
+	Conversation(ctx context.Context) (Conversation, error)
+	Next(ctx context.Context, c Cursor) ([]RawEvent, Cursor, error)
+	Skip(ctx context.Context, n int64) (Cursor, error)
+	Send(ctx context.Context, text string) error
+	Message(ctx context.Context, text string, run bool) error
+	Respond(ctx context.Context, accept bool, reason string) error
+	Run(ctx context.Context) error
+	Interrupt(ctx context.Context) error
+	AlwaysConfirm(ctx context.Context) error
+
+	next(ctx context.Context, c Cursor) ([]RawEvent, Cursor, bool, error)
+	skip(ctx context.Context, n int64, take func(RawEvent)) (Cursor, error)
+}
+
+var _ HarnessAPI = (*Harness)(nil)
+
+// NewHarnessForKind constructs the loopback adapter for kind ("" or
+// "openhands", or "opencode"). Unknown harness names fail closed.
+func NewHarnessForKind(kind, base, conversationID string) (HarnessAPI, error) {
+	switch kind {
+	case "", HarnessOpenHands:
+		return NewHarness(base, conversationID), nil
+	case HarnessOpenCode:
+		return NewOpenCodeHarness(base, DefaultOpenCodeSessionFile), nil
+	default:
+		return nil, fmt.Errorf("unsupported harness %q", kind)
+	}
+}
+
 // Harness speaks agent-server 1.56.0 on loopback (ruling P4). It is not safe for
 // concurrent Next and Skip calls on one cursor; the bridge owns its cursor.
 type Harness struct {

@@ -61,7 +61,8 @@ func revocationLimits() []string {
 func budgetFallbacks() []string { return []string{"unpriced", "untyped"} }
 func budgetScopes() []string    { return []string{"run", "task"} }
 func tiers() []string           { return []string{"light", "standard", "frontier"} }
-func cohorts() []string         { return []string{"labeled", "control", "treatment", "none"} }
+func cohorts() []string         { return []string{"labeled", "control", "treatment", "rescue", "none"} }
+func harnesses() []string       { return []string{"openhands", "opencode"} }
 func intakeSources() []string   { return []string{"issue", "runlore", "schedule", "api", "adopt"} }
 func resumeReasons() []string   { return []string{"Disrupted", "PodLost"} }
 func overlapSources() []string  { return []string{"tasks", "runs", "rooms", "github"} }
@@ -991,20 +992,24 @@ func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommend
 // TaskOutcome counts an ended task once it ends, with or without a profile, and adds the USD its
 // attempts cost. profile and recommended come from config (the caller maps a name no longer
 // offered to other), so the labels stay bounded; a task without a profile reads none, and no
-// recommendation is none.
-func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
-	cohort = oneOf(cohort, []string{"labeled", "control", "treatment", "none"})
+// recommendation is none. harness is bounded to openhands or opencode (default openhands when empty).
+func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, harness, outcome string, usd float64) {
+	cohort = oneOf(cohort, cohorts())
 	outcome = oneOf(outcome, taskOutcomes())
 	source = oneOf(source, []string{"label", "schedule", "revert", "oracle", "repository", "floor", "control", "treatment", "scoper", "escalation"})
+	if harness == "" {
+		harness = "openhands"
+	}
+	harness = oneOf(harness, harnesses())
 	if recommended == "" {
 		recommended = "none"
 	}
 	s.taskOutcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
 		attribute.String("profile", profile), attribute.String("source", source),
-		attribute.String("recommended", recommended), attribute.String("outcome", outcome), s.repoOf(ctx)))
+		attribute.String("recommended", recommended), attribute.String("harness", harness), attribute.String("outcome", outcome), s.repoOf(ctx)))
 	s.taskUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
 		attribute.String("profile", profile), attribute.String("source", source), attribute.String("recommended", recommended),
-		attribute.String("outcome", outcome)))
+		attribute.String("harness", harness), attribute.String("outcome", outcome)))
 }
 
 // StageCost records one stage's USD spend when its task ends (WR5).
@@ -1312,16 +1317,19 @@ func (s *Set) RunRevoked(ctx context.Context, reason, limit string) {
 // and by the model that served it: the run meter's OnCost. The role is the AgentRun's, or scoper
 // for a triager run that scoped a task (harness roles HR6); cohort and profile are the task's when
 // the run started (R34), none without a profile.
-func (s *Set) RunCost(ctx context.Context, tier, role, cohort, profile string, usd float64, byModel map[string]float64) {
+func (s *Set) RunCost(ctx context.Context, tier, role, cohort, profile, harness string, usd float64, byModel map[string]float64) {
 	if cohort == "" {
 		cohort = "none"
 	}
 	if profile == "" {
 		profile = "none"
 	}
+	if harness == "" {
+		harness = "openhands"
+	}
 	s.runCost.Record(ctx, usd, metric.WithAttributes(attribute.String("tier", oneOf(tier, tiers())),
 		attribute.String("role", oneOf(role, costRoles())), attribute.String("cohort", oneOf(cohort, cohorts())),
-		attribute.String("profile", profile)))
+		attribute.String("profile", profile), attribute.String("harness", oneOf(harness, harnesses()))))
 	s.LateCost(ctx, byModel)
 }
 
@@ -1571,7 +1579,7 @@ func (s *Set) ProfileRecommendation(ctx context.Context, class, cohort, recommen
 		recommended = "none"
 	}
 	s.profileRecs.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
-		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment"})),
+		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment", "rescue"})),
 		attribute.String("recommended", recommended), attribute.Bool("applied", applied)))
 }
 

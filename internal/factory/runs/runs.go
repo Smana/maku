@@ -132,6 +132,9 @@ type Spec struct {
 	MeteredBy string
 	// Effort is spec.effort (CP9), low, medium or high; empty keeps the harness's default.
 	Effort string
+	// Harness is spec.harness (openhands or opencode); written only when non-empty so existing
+	// claim fixtures keep their exact shape.
+	Harness string
 	// Loop is spec.loop (loops design L2, L3), written only when set: it is immutable.
 	Loop *Loop
 	// Checks is spec.loop.checks (v3 feature 3), written only when true, so every other claim is
@@ -213,6 +216,9 @@ func (s Spec) Validate() error {
 	if s.Persona != "" && !envelope.ValidPersona(s.Persona) {
 		errs = append(errs, fmt.Errorf("persona %q is not a valid persona name", s.Persona))
 	}
+	if s.Harness != "" && !config.ValidHarness(s.Harness) {
+		errs = append(errs, fmt.Errorf("harness %q is openhands, opencode or empty", s.Harness))
+	}
 	// v3 F15, F4: Moonshot processes in China and Mistral in the EU. Every claim, the factory's and
 	// the API's, passes here, so no internal run names a provider alias, as its model or its judge's.
 	judge := ""
@@ -267,6 +273,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Effort != "" {
 		spec["effort"] = s.Effort
+	}
+	if s.Harness != "" {
+		spec["harness"] = s.Harness
 	}
 	if l := s.Loop; l != nil || s.Checks || s.Search {
 		loop := map[string]any{}
@@ -369,7 +378,7 @@ func Terminal(phase string) bool { return runwatch.Terminal(phase) }
 // Run is the part of a claim the factory reads back.
 type Run struct {
 	ID, TaskID, Role, Persona, Principal, Phase, Reason, PullRequest, Revoked, Branch, RoomRef, Repository string
-	Head, TaskText, RequestHash, Tier, Model, ChargedTo, Cohort, Profile, Canary                           string
+	Head, TaskText, RequestHash, Tier, Model, Harness, ChargedTo, Cohort, Profile, Canary                  string
 	// What the run ran on (R10): the factory build that created the claim, the
 	// CompositionRevision Crossplane bound it to, and the harness image the composition read
 	// from its pod. Empty until known.
@@ -394,6 +403,7 @@ func FromUnstructured(k runwatch.Kind, u *unstructured.Unstructured) (Run, bool)
 		RoomRef: str("spec", "roomRef"), Repository: str("spec", "repository"), Phase: str("status", "phase"), Reason: str("status", "reason"),
 		PullRequest: str("status", "pullRequest"), Revoked: u.GetAnnotations()[AnnRevoked], Head: u.GetAnnotations()[AnnHead],
 		RequestHash: u.GetAnnotations()[AnnRequestHash], Tier: u.GetLabels()[LabelTier], Model: str("spec", "model"),
+		Harness:  str("spec", "harness"),
 		TaskText: str("spec", "task", "text"), ChargedTo: u.GetAnnotations()[AnnChargedTo],
 		Cohort: u.GetAnnotations()[AnnCohort], Profile: u.GetAnnotations()[AnnProfile], Canary: u.GetAnnotations()[AnnCanary],
 		FactoryVersion: u.GetAnnotations()[AnnFactoryVersion], CompositionRevision: str("spec", "crossplane", "compositionRevisionRef", "name"),
@@ -480,7 +490,7 @@ func (c Client) Create(ctx context.Context, s Spec) error {
 	// A claim carrying a newer spec field is created under Strict field validation: an old schema
 	// would prune it and run with defaults while the Task records the requested policy; refuse instead.
 	var opts []client.CreateOption
-	if s.Loop != nil || s.Checks || s.Search || s.Effort != "" {
+	if s.Loop != nil || s.Checks || s.Search || s.Effort != "" || s.Harness != "" {
 		opts = append(opts, client.FieldValidation("Strict"))
 	}
 	claim := Build(c.Kind, s)

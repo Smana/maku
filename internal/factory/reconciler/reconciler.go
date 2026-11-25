@@ -121,7 +121,7 @@ type metrics interface {
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
 	Intervention(ctx context.Context, kind, cohort, profile, recommended string)
-	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64)
+	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, harness, outcome string, usd float64)
 	StageCost(ctx context.Context, repository, class, stage string, usd float64)
 	StageEffect(ctx context.Context, repository, class, stage, effect, outcome string)
 	WorkflowChoice(ctx context.Context, repository, class, choice string)
@@ -1326,7 +1326,9 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 	if cohort == "" {
 		cohort = triage.CohortTreatment
 	}
+	harness, harnessSource := triage.HarnessFor(cfg, t, d.HarnessPin, cohort)
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
+		Harness: harness, HarnessSource: harnessSource,
 		Checks: p.EffectiveChecks(), TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused}
 }
 
@@ -1344,13 +1346,16 @@ func (r *Reconciler) pinTestsPaths(ctx context.Context, cfg *config.Config, t *v
 	}
 	d.Pin = d.Pin.NoTestsPaths()
 	d.Pinned = false
-	d.Cohort = triage.CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)
+	d.Cohort = triage.CohortOf(t.Name, d.HarnessPin.Honoured(), cfg.Evaluation.ControlPercent)
 	return d, nil
 }
 
 // notePin counts the pin triage saw and narrates a refused one in the spec's one sentence. The count
 // is deferred like every effect of the pass, so a replayed triage counts once.
 func (r *Reconciler) notePin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d triage.Decision) {
+	if d.HarnessPin.Name != "" && d.HarnessPin.Refused != "" {
+		narrateLater(t, narrate.HarnessRefused(d.HarnessPin.Name, d.HarnessPin.Refused))
+	}
 	if d.Pin.Name == "" {
 		return
 	}

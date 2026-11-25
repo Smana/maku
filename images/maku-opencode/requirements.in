@@ -1,0 +1,4 @@
+# Locked Python dependencies for images/maku-opencode (no OpenHands packages).
+pyyaml
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http

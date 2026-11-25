@@ -1385,7 +1385,7 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 		if m.live == nil {
 			m.live = map[string]CostKey{}
 		}
-		m.live[r.ID] = CostKey{Tier: r.Tier, Role: costRole(r), Cohort: r.Cohort, Profile: profileLabel(profiles, r.Profile)}
+		m.live[r.ID] = CostKey{Tier: r.Tier, Role: costRole(r), Cohort: r.Cohort, Profile: profileLabel(profiles, r.Profile), Harness: r.Harness}
 		return
 	}
 	if _, ok := m.live[r.ID]; !ok {
@@ -1404,9 +1404,9 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 	}
 }
 
-// CostKey is what a run's cost is reported by: its tier and costRole, and the task's cohort and
-// profile when the run started (R34), "" without.
-type CostKey struct{ Tier, Role, Cohort, Profile string }
+// CostKey is what a run's cost is reported by: its tier, costRole, harness, and the task's cohort
+// and profile when the run started (R34), "" without.
+type CostKey struct{ Tier, Role, Cohort, Profile, Harness string }
 
 // profileLabel bounds a claim's profile annotation to the configured harnessProfiles (R40): a
 // value anyone could write, or a profile since removed, is "other"; none stays "".

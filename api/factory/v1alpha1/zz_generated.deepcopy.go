@@ -1848,6 +1848,11 @@ func (in *TaskStatus) DeepCopyInto(out *TaskStatus) {
 		*out = new(ProfileStatus)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.OutcomeCountedCohorts != nil {
+		in, out := &in.OutcomeCountedCohorts, &out.OutcomeCountedCohorts
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.InputTrust != nil {
 		in, out := &in.InputTrust, &out.InputTrust
 		*out = new(InputTrust)

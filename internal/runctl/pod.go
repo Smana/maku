@@ -82,6 +82,19 @@ func localGet(path string) []string {
 	return []string{"python3", "-c", fmt.Sprintf("import urllib.request; urllib.request.urlopen('http://127.0.0.1:%d%s', timeout=2)", HarnessPort, path)}
 }
 
+func opencodeProbe() []string {
+	return []string{
+		"python3", "-c",
+		fmt.Sprintf(
+			"import base64, urllib.request; pw = open('/workspace/.agent-opencode-password').read().strip(); "+
+				"tok = base64.b64encode(('opencode:' + pw).encode()).decode(); "+
+				"req = urllib.request.Request('http://127.0.0.1:%d/api/info', headers={'Authorization': 'Basic ' + tok}); "+
+				"urllib.request.urlopen(req, timeout=2)",
+			HarnessPort,
+		),
+	}
+}
+
 func emptyDir(name, size string, mem bool) corev1.Volume {
 	q := resource.MustParse(size)
 	e := &corev1.EmptyDirVolumeSource{SizeLimit: &q}
@@ -115,6 +128,11 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	if s.RoomRef != "" {
 		grace = roomGraceSeconds
 	}
+	isOpenCode := s.Harness == "opencode"
+	homeDir := "/home/openhands"
+	if isOpenCode {
+		homeDir = "/workspace/.opencode/home"
+	}
 	no, yes, uid := false, true, int64(runUID)
 	mode := int32(0o440) // fsGroup-readable: a nonroot container reads a 0400 Secret only as its owner
 	env := []corev1.EnvVar{
@@ -124,7 +142,10 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		{Name: "LLM_BASE_URL", Value: m.BaseURL}, {Name: "LLM_API_KEY_FILE", Value: modelDir + "/" + modelKey(c)},
 		{Name: "GIT_TOKEN_FILE", Value: "/run/agent/github/token"},
 		{Name: "TASK_FILE", Value: "/run/agent/task/task.md"}, {Name: "RULES_FILE", Value: "/run/agent/task/rules.md"},
-		{Name: "HOME", Value: "/home/openhands"},
+		{Name: "HOME", Value: homeDir},
+	}
+	if isOpenCode {
+		env = append(env, corev1.EnvVar{Name: "AGENT_HARNESS", Value: "opencode"})
 	}
 	if s.Effort != "" {
 		env = append(env, corev1.EnvVar{Name: "LLM_REASONING_EFFORT", Value: s.Effort})
@@ -203,11 +224,17 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		}
 	}
 	env = append(env, tracingEnv(r, c)...)
+	harnessImage := c.Images.Harness
+	readyCmd, healthCmd := localGet("/ready"), localGet("/health")
+	if isOpenCode {
+		harnessImage = c.Images.Opencode
+		readyCmd, healthCmd = opencodeProbe(), opencodeProbe()
+	}
 	harness := corev1.Container{
-		Name: "harness", Image: c.Images.Harness, Env: env,
-		StartupProbe:    &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: localGet("/ready")}}, PeriodSeconds: 5, FailureThreshold: 60, TimeoutSeconds: 5},
-		ReadinessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: localGet("/ready")}}, PeriodSeconds: 10, TimeoutSeconds: 5},
-		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: localGet("/health")}}, PeriodSeconds: 20, FailureThreshold: 3, TimeoutSeconds: 5},
+		Name: "harness", Image: harnessImage, Env: env,
+		StartupProbe:    &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: readyCmd}}, PeriodSeconds: 5, FailureThreshold: 60, TimeoutSeconds: 5},
+		ReadinessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: readyCmd}}, PeriodSeconds: 10, TimeoutSeconds: 5},
+		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: healthCmd}}, PeriodSeconds: 20, FailureThreshold: 3, TimeoutSeconds: 5},
 		Resources:       harnessResources(size.cpu, size.memory, size.scratch),
 		SecurityContext: containerSecurity(),
 		VolumeMounts: []corev1.VolumeMount{
@@ -238,6 +265,9 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			{Name: "ROOM_TOKEN_FILE", Value: "/var/run/secrets/agents/room/token"},
 			{Name: "EGRESS_PROFILES", Value: egressProfiles(r)}, {Name: "FLUSH_GRACE", Value: bridgeFlushGrace},
 		}
+		if isOpenCode {
+			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "AGENT_HARNESS", Value: "opencode"})
+		}
 		if searchOn {
 			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "AGENT_SEARCH", Value: "1"})
 		}
@@ -255,6 +285,13 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "MCP_BARE_SERVER", Value: "room-broker"},
 				corev1.EnvVar{Name: "MCP_READ_ONLY_TOOLS", Value: readOnly})
 		}
+		bridgeMounts := []corev1.VolumeMount{
+			{Name: "room-token", MountPath: "/var/run/secrets/agents/room", ReadOnly: true},
+			{Name: "room-broker-ca", MountPath: "/etc/room-broker-ca", ReadOnly: true},
+		}
+		if isOpenCode {
+			bridgeMounts = append(bridgeMounts, corev1.VolumeMount{Name: "workspace", MountPath: "/workspace", ReadOnly: true})
+		}
 		health := corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(BridgeHealthPort)}}
 		inits = []corev1.Container{{
 			Name: "room-bridge", Image: c.Images.Bridge, RestartPolicy: &always, Env: bridgeEnv,
@@ -264,10 +301,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			LivenessProbe:   &corev1.Probe{ProbeHandler: health, PeriodSeconds: 20, FailureThreshold: 3},
 			Resources:       res("20m", "32Mi", "100m", "64Mi"),
 			SecurityContext: containerSecurity(),
-			VolumeMounts: []corev1.VolumeMount{
-				{Name: "room-token", MountPath: "/var/run/secrets/agents/room", ReadOnly: true},
-				{Name: "room-broker-ca", MountPath: "/etc/room-broker-ca", ReadOnly: true},
-			},
+			VolumeMounts:    bridgeMounts,
 		}, {
 			Name: "room-gate", Image: c.Images.Bridge, Args: []string{"gate"},
 			Resources: res("10m", "16Mi", "50m", "32Mi"), SecurityContext: containerSecurity(),

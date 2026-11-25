@@ -263,7 +263,7 @@ type rig struct {
 	tokDir string
 }
 
-func newRig(t *testing.T, h *Harness, fb *fakeBroker) *rig {
+func newRig(t *testing.T, h HarnessAPI, fb *fakeBroker) *rig {
 	t.Helper()
 	srv, ca := fb.start(t)
 	dir := t.TempDir()

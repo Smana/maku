@@ -143,7 +143,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 	s.RunOvershoot(ctx, 42_000)
 	s.RunRevoked(ctx, "budget-run", "run-usd")
 	s.RunRevoked(ctx, "budget-task", "task-usd")
-	s.RunCost(ctx, "standard", "implementer", "", "", 0.65, map[string]float64{"glm-5.3": 0.65})
+	s.RunCost(ctx, "standard", "implementer", "", "", "", 0.65, map[string]float64{"glm-5.3": 0.65})
 	s.LateCost(ctx, map[string]float64{"glm-5.3": 0.1})
 	s.RunSpend(map[string]map[string]float64{"nh5tztlh": {"claude-opus-5-5": 2.13212}})
 	s.RunSettled(map[string]float64{"nh5tztlh": 2.8})
@@ -177,7 +177,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 		`maku_factory_run_overshoot_tokens_total 42000`,
 		`maku_factory_run_revocations_total{limit="run-usd",principal="other",reason="budget-run"} 1`,
 		`maku_factory_run_revocations_total{limit="task-usd",principal="other",reason="budget-task"} 1`,
-		`maku_factory_run_cost_usd_bucket{cohort="none",profile="none",role="implementer",tier="standard",le="0.75"} 1`,
+		`maku_factory_run_cost_usd_bucket{cohort="none",harness="openhands",profile="none",role="implementer",tier="standard",le="0.75"} 1`,
 		`maku_factory_model_cost_usd_total{model="glm-5.3"} 0.75`,
 		`maku_factory_run_spend_usd{model="claude-opus-5-5",run="nh5tztlh"} 2.13212`,
 		`maku_factory_run_settled_usd{run="nh5tztlh"} 2.8`,
@@ -232,7 +232,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 	s.Resumed(ctx, "an agent's text")
 	s.RoomClosedAtCap(ctx, "an agent's text")
 	s.RunRevoked(ctx, "budget-run", "a limit")
-	s.RunCost(ctx, "huge", "an agent's text", "an agent's text", "", 1, map[string]float64{"A Model": 1})
+	s.RunCost(ctx, "huge", "an agent's text", "an agent's text", "", "an agent's text", 1, map[string]float64{"A Model": 1})
 	s.RunSpend(map[string]map[string]float64{"not a run": {"glm-5.3": 1}, "aaaaaaaa": {"A Model": 2}})
 	s.RunSettled(map[string]float64{"not a run": 1, "aaaaaaaa": 2})
 	s.RunBudgetFallback(ctx, "a scope", "a reason")
@@ -247,7 +247,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 		`maku_factory_resumes_total{reason="other"} 1`,
 		`maku_factory_rooms_closed_at_cap_total{reason="other"} 1`,
 		`maku_factory_run_revocations_total{limit="other",principal="other",reason="budget-run"} 1`,
-		`maku_factory_run_cost_usd_count{cohort="other",profile="none",role="other",tier="other"} 1`,
+		`maku_factory_run_cost_usd_count{cohort="other",harness="other",profile="none",role="other",tier="other"} 1`,
 		`maku_factory_model_cost_usd_total{model="other"} 1`,
 		`maku_factory_run_spend_usd{model="other",run="aaaaaaaa"} 2`,
 		`maku_factory_run_settled_usd{run="aaaaaaaa"} 2`,
@@ -432,20 +432,20 @@ func TestRunCostCarriesTheRole(t *testing.T) {
 	ctx := t.Context()
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
 	for _, role := range []string{"implementer", "reviewer", "tester", "triager", "scoper"} {
-		s.RunCost(ctx, "standard", role, "", "", 0.42, nil)
+		s.RunCost(ctx, "standard", role, "", "", "", 0.42, nil)
 	}
-	s.RunCost(ctx, "standard", "implementer", "treatment", "review-search", 0.42, nil)
-	s.RunCost(ctx, "standard", "implementer", "control", "review-floor", 0.42, nil)
+	s.RunCost(ctx, "standard", "implementer", "treatment", "review-search", "opencode", 0.42, nil)
+	s.RunCost(ctx, "standard", "implementer", "control", "review-floor", "openhands", 0.42, nil)
 	body := scrape()
 	for _, role := range []string{"implementer", "reviewer", "tester", "triager", "scoper"} {
-		if want := `maku_factory_run_cost_usd_count{cohort="none",profile="none",role="` + role + `",tier="standard"} 1`; !strings.Contains(body, want+"\n") {
+		if want := `maku_factory_run_cost_usd_count{cohort="none",harness="openhands",profile="none",role="` + role + `",tier="standard"} 1`; !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %s\n%s", want, body)
 		}
 	}
-	// R34: the task's cohort and profile label the run's cost, none without a profile.
+	// R34: the task's cohort, harness and profile label the run's cost, none without a profile.
 	for _, want := range []string{
-		`maku_factory_run_cost_usd_count{cohort="treatment",profile="review-search",role="implementer",tier="standard"} 1`,
-		`maku_factory_run_cost_usd_count{cohort="control",profile="review-floor",role="implementer",tier="standard"} 1`,
+		`maku_factory_run_cost_usd_count{cohort="treatment",harness="opencode",profile="review-search",role="implementer",tier="standard"} 1`,
+		`maku_factory_run_cost_usd_count{cohort="control",harness="openhands",profile="review-floor",role="implementer",tier="standard"} 1`,
 	} {
 		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %s\n%s", want, body)
@@ -589,12 +589,13 @@ func TestPinMetric(t *testing.T) {
 func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 	ctx := t.Context()
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
-	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "review-search", "accepted", 1.25)
-	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "review-search", "accepted", 0.5)
-	s.TaskOutcome(ctx, "review", "control", "review-floor", "control", "review-search", "failed", 2)
-	s.TaskOutcome(ctx, "review", "treatment", "review-frontier", "escalation", "review-search", "failed", 4)
-	s.TaskOutcome(ctx, "review", "treatment", "review-floor", "floor", "", "accepted", 1)
-	s.TaskOutcome(ctx, "review", "treatment", "careful", "treatment", "", "accepted", 3)
+	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "review-search", "opencode", "accepted", 1.25)
+	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "review-search", "opencode", "accepted", 0.5)
+	s.TaskOutcome(ctx, "review", "control", "review-floor", "control", "review-search", "openhands", "failed", 2)
+	s.TaskOutcome(ctx, "review", "treatment", "review-frontier", "escalation", "review-search", "openhands", "failed", 4)
+	s.TaskOutcome(ctx, "review", "treatment", "review-floor", "floor", "", "openhands", "accepted", 1)
+	s.TaskOutcome(ctx, "review", "treatment", "careful", "treatment", "", "openhands", "accepted", 3)
+	s.TaskOutcome(ctx, "review", "rescue", "review-floor", "repository", "", "openhands", "accepted", 2.25)
 	s.Intervention(ctx, "retry", "control", "review-floor", "review-search")
 	s.Intervention(ctx, "retry", "control", "review-floor", "review-tested")
 	s.Intervention(ctx, "retry", "control", "review-floor", "")
@@ -603,15 +604,17 @@ func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 	}
 	body := scrape()
 	for _, want := range []string{
-		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",recommended="review-search",repository="other",source="scoper"} 2`,
-		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",recommended="review-search",source="scoper"} 1.75`,
-		`maku_factory_task_outcomes_total{class="review",cohort="control",outcome="failed",profile="review-floor",recommended="review-search",repository="other",source="control"} 1`,
-		`maku_factory_task_usd_total{class="review",cohort="control",outcome="failed",profile="review-floor",recommended="review-search",source="control"} 2`,
-		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search",repository="other",source="escalation"} 1`,
-		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search",source="escalation"} 4`,
-		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-floor",recommended="none",repository="other",source="floor"} 1`,
-		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="careful",recommended="none",repository="other",source="treatment"} 1`,
-		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="careful",recommended="none",source="treatment"} 3`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",harness="opencode",outcome="accepted",profile="review-search",recommended="review-search",repository="other",source="scoper"} 2`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",harness="opencode",outcome="accepted",profile="review-search",recommended="review-search",source="scoper"} 1.75`,
+		`maku_factory_task_outcomes_total{class="review",cohort="control",harness="openhands",outcome="failed",profile="review-floor",recommended="review-search",repository="other",source="control"} 1`,
+		`maku_factory_task_usd_total{class="review",cohort="control",harness="openhands",outcome="failed",profile="review-floor",recommended="review-search",source="control"} 2`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",harness="openhands",outcome="failed",profile="review-frontier",recommended="review-search",repository="other",source="escalation"} 1`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",harness="openhands",outcome="failed",profile="review-frontier",recommended="review-search",source="escalation"} 4`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",harness="openhands",outcome="accepted",profile="review-floor",recommended="none",repository="other",source="floor"} 1`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",harness="openhands",outcome="accepted",profile="careful",recommended="none",repository="other",source="treatment"} 1`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",harness="openhands",outcome="accepted",profile="careful",recommended="none",source="treatment"} 3`,
+		`maku_factory_task_outcomes_total{class="review",cohort="rescue",harness="openhands",outcome="accepted",profile="review-floor",recommended="none",repository="other",source="repository"} 1`,
+		`maku_factory_task_usd_total{class="review",cohort="rescue",harness="openhands",outcome="accepted",profile="review-floor",recommended="none",source="repository"} 2.25`,
 		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="review-search",repository="other"} 1`,
 		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="review-tested",repository="other"} 1`,
 		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="none",repository="other"} 1`,
@@ -650,11 +653,11 @@ func TestRunWaitIsLabelledByTheNextRunsRole(t *testing.T) {
 // CP3: the counters count a task without a profile, on the none labels; a recommended of "" is none.
 func TestTaskOutcomeCountsTheNoneProfile(t *testing.T) {
 	s, read := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return true })
-	s.TaskOutcome(t.Context(), "docs", "none", "none", "floor", "", "accepted", 1.65)
+	s.TaskOutcome(t.Context(), "docs", "none", "none", "floor", "", "", "accepted", 1.65)
 	got := read()
 	for _, want := range []string{
-		`maku_factory_task_outcomes_total{class="docs",cohort="none",outcome="accepted",profile="none",recommended="none",repository="other",source="floor"} 1`,
-		`maku_factory_task_usd_total{class="docs",cohort="none",outcome="accepted",profile="none",recommended="none",source="floor"} 1.65`,
+		`maku_factory_task_outcomes_total{class="docs",cohort="none",harness="openhands",outcome="accepted",profile="none",recommended="none",repository="other",source="floor"} 1`,
+		`maku_factory_task_usd_total{class="docs",cohort="none",harness="openhands",outcome="accepted",profile="none",recommended="none",source="floor"} 1.65`,
 	} {
 		if !strings.Contains(got, want+"\n") {
 			t.Fatalf("missing %s\n%s", want, got)

@@ -76,3 +76,37 @@ func PinRefusal(class string, pin Pin) intake.ProfileRefusal {
 
 // Shown maps a pin refusal's API code (profile_*) to the workflow_* spelling shown to a person.
 func Shown(code string) string { return intake.Shown(code) }
+
+// ResolveHarnessPin checks a maintainer's harness:<name> label or intake.harness pin using the
+// same actor attribution and conflict rules as workflow pins.
+func ResolveHarnessPin(cfg *config.Config, repo string, labels []LabelPin, field, login string) Pin {
+	names := make([]string, 0, len(labels)+1)
+	for _, l := range labels {
+		if !slices.Contains(names, l.Name) {
+			names = append(names, l.Name)
+		}
+	}
+	if field != "" && !slices.Contains(names, field) {
+		names = append(names, field)
+	}
+	switch len(names) {
+	case 0:
+		return Pin{}
+	case 1:
+	default:
+		return Pin{Name: names[0], Refused: intake.ProfileConflict}
+	}
+	pin := Pin{Name: names[0]}
+	rc := cfg.RepositoryFor(repo)
+	maintainer := field != "" && rc.IsMaintainer(login)
+	for _, l := range labels {
+		maintainer = maintainer || rc.IsMaintainer(l.Actor)
+	}
+	switch {
+	case !maintainer:
+		pin.Refused = intake.NotMaintainer
+	case !config.ValidHarness(pin.Name):
+		pin.Refused = intake.ProfileUnknown
+	}
+	return pin
+}

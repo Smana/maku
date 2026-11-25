@@ -1237,6 +1237,21 @@ func ProfileRefused(name, sentence string) Event {
 	return Event{Key: "profile-refused", Class: ClassChanged, Body: fmt.Sprintf("Agent factory: the pinned workflow `%s` was not applied: %s", name, sentence)}
 }
 
+// HarnessRefused says a pinned harness:<name> label or intake.harness was not applied; the task
+// falls back to the configured default. One per task.
+func HarnessRefused(name, code string) Event {
+	sentence := "the harness selection is not valid; using the default harness."
+	switch code {
+	case "not_maintainer":
+		sentence = "Only a maintainer of this repository can choose the harness."
+	case "profile_conflict":
+		sentence = "More than one harness was requested; using the default harness."
+	case "profile_unknown":
+		sentence = "The requested harness is not supported; using the default harness."
+	}
+	return Event{Key: "harness-refused", Class: ClassChanged, Body: fmt.Sprintf("Agent factory: the pinned harness `%s` was not applied: %s", name, sentence)}
+}
+
 // TriageNote is triage's note i on the task (triage.Decision.Notes), said once.
 func TriageNote(i int, note string) Event {
 	return Event{Key: fmt.Sprintf("triage-note-%d", i), Class: ClassChanged, Body: "Agent factory: " + note}

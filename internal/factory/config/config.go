@@ -632,6 +632,17 @@ type Poll struct {
 	Meter  Duration `json:"meter"`
 }
 
+// Harness names accepted by AgentRun, factory config, intake, and API requests.
+const (
+	HarnessOpenHands = "openhands"
+	HarnessOpenCode  = "opencode"
+)
+
+// ValidHarness reports whether h is a supported harness name.
+func ValidHarness(h string) bool {
+	return h == HarnessOpenHands || h == HarnessOpenCode
+}
+
 // Defaults apply when triage leaves a value open. A workflow names the template and the tier: the
 // two keys that did were removed (WF9, WF13).
 // +kubebuilder:object:generate=true
@@ -640,6 +651,19 @@ type Defaults struct {
 	DataClass string `json:"dataClass"`
 	// +kubebuilder:validation:MaxLength=253
 	PredictedClass string `json:"predictedClass"`
+	// Harness is the default harness for new tasks when no maintainer label or treatment arm overrides it.
+	// Empty defaults to openhands.
+	// +kubebuilder:validation:Enum=openhands;opencode
+	// +optional
+	Harness string `json:"harness,omitempty"`
+}
+
+// DefaultHarness returns the configured default harness, or openhands when unset.
+func (c *Config) DefaultHarness() string {
+	if c != nil && c.Defaults.Harness != "" {
+		return c.Defaults.Harness
+	}
+	return HarnessOpenHands
 }
 
 // Triage is phase 4's classification config (§2, §5.2). The task classifier's classifierURL was
@@ -2152,6 +2176,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Defaults.PredictedClass == "" {
 		bad("defaults.predictedClass is required")
+	}
+	if c.Defaults.Harness != "" && !ValidHarness(c.Defaults.Harness) {
+		bad("defaults.harness %q is not openhands or opencode", c.Defaults.Harness)
 	}
 	if c.Triage.ControlPercent < 0 || c.Triage.ControlPercent > 100 {
 		bad("triage.controlPercent must be 0..100")

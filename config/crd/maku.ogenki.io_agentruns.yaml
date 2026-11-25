@@ -134,6 +134,7 @@ spec:
                 default: openhands
                 enum:
                 - openhands
+                - opencode
                 type: string
                 x-kubernetes-validations:
                 - message: harness is immutable

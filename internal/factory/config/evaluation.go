@@ -23,6 +23,11 @@ type Evaluation struct {
 	Mode string `json:"mode,omitempty"`
 	// +kubebuilder:validation:MaxLength=253
 	Treatment string `json:"treatment,omitempty"`
+	// TreatmentHarness selects the harness for the treatment cohort without changing workflow,
+	// template, loop, checks, model, effort, or tier. Empty uses defaults.harness (openhands).
+	// +kubebuilder:validation:Enum=openhands;opencode
+	// +optional
+	TreatmentHarness string `json:"treatmentHarness,omitempty"`
 }
 
 // The evaluation modes; unset is observe.
@@ -203,5 +208,8 @@ func (c *Config) validateEvaluation(bad func(string, ...any)) {
 		if !c.IsWorkflow(n) {
 			bad("evaluation.treatment %q is not a workflow", n)
 		}
+	}
+	if h := c.Evaluation.TreatmentHarness; h != "" && !ValidHarness(h) {
+		bad("evaluation.treatmentHarness %q is not openhands or opencode", h)
 	}
 }

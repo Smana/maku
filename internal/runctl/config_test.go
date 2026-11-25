@@ -124,6 +124,14 @@ func TestInvalid(t *testing.T) {
 	if got := c.Invalid(run("run-abcdefgh")); got != "" {
 		t.Errorf("allowUnsandboxed: %q", got)
 	}
+	ocRun := run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Spec.Harness = "opencode" })
+	if got := c.Invalid(ocRun); !strings.Contains(got, "images.opencode") {
+		t.Errorf("opencode without images.opencode: %q", got)
+	}
+	c.Images.Opencode = "ghcr.io/smana/maku-opencode:v0.16.0"
+	if got := c.Invalid(ocRun); got != "" {
+		t.Errorf("opencode with images.opencode: %q", got)
+	}
 }
 
 // gatewayConfig is goodConfig in model.mode gateway (v4 step 4, GW3): no model Secret.

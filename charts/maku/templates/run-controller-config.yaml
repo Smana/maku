@@ -74,6 +74,9 @@ data:
     images:
       harness: {{ include "ap.image" (dict "root" . "image" $c.images.harness) | quote }}
       bridge: {{ include "ap.image" (dict "root" . "image" $c.images.bridge) | quote }}
+      {{- if and $c.images.opencode $c.images.opencode.tag }}
+      opencode: {{ include "ap.image" (dict "root" . "image" $c.images.opencode) | quote }}
+      {{- end }}
       {{- if eq $mode "kubernetes" }}
       # The preflight's netprobe pod: this controller's own image.
       probe: {{ include "ap.image" (dict "root" . "image" $c.image) | quote }}

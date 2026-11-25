@@ -31,6 +31,7 @@ want internal/maku/skill/factory-handoff/SKILL.md -- deployable=true harness=fal
 want charts/maku/README.md -- deployable=true
 want internal/x.go -- deployable=true harness=false
 want images/maku-harness/x.py -- deployable=true harness=true
+want images/maku-opencode/x.py -- deployable=true harness=true
 # The install jobs (demo-e2e.yaml, v4 step 7 PR F): the charts, the wizard, the preflight, their harness.
 want charts/maku/values.yaml -- install=true
 want internal/install/x.go -- install=true

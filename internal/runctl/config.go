@@ -337,10 +337,12 @@ type DNS struct {
 	Labels    map[string]string `json:"labels"`
 }
 
-// Images are the run pod's two images, pinned by the chart.
+// Images are the run pod's images, pinned by the chart.
 type Images struct {
 	Harness string `json:"harness"`
 	Bridge  string `json:"bridge"`
+	// Opencode is the opt-in OpenCode runner image, required when a run sets spec.harness: opencode.
+	Opencode string `json:"opencode,omitempty"`
 	// Probe runs the preflight's netprobe pod: the run-controller's own image, required in
 	// kubernetes mode.
 	Probe string `json:"probe,omitempty"`
@@ -527,6 +529,8 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return "spec.dataClass internal needs the model gateway's internal listener, which this runtime does not serve: set model.gateway.aliases.internal"
 	case c.RuntimeClassName == "" && !c.AllowUnsandboxed:
 		return "runtimeClassName is empty and allowUnsandboxed is false: refusing to run unsandboxed"
+	case r.Spec.Harness == "opencode" && c.Images.Opencode == "":
+		return "spec.harness opencode needs images.opencode configured"
 	}
 	if c.Gateway() {
 		if why := c.gatewayInvalid(r); why != "" {

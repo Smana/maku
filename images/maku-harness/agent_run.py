@@ -28,7 +28,10 @@ import urllib.request
 import uuid
 
 import coordination_integration
+from harness_driver import HarnessDriver
+from harness_types import ConversationRequest, EventPage
 import loop_policy
+import openhands_driver
 
 AGENT_SERVER = "http://127.0.0.1:8000"
 # Loopback only (plan P13): the API is unauthenticated, and agent-server
@@ -332,135 +335,58 @@ def search_summary(path: str = SEARCH_LEDGER) -> str:
         " ".join("%s=%d" % kv for kv in sorted(outcomes.items())) or "none")
 
 
+_ACTIVE_DRIVER: HarnessDriver | None = None
+
+
+def driver_for(env: dict, *, trace_env: dict | None = None) -> HarnessDriver:
+    """Select the HarnessDriver for AGENT_HARNESS (empty or 'openhands' -> OpenHandsDriver)."""
+    kind = (env.get("AGENT_HARNESS") or "").strip()
+    if kind in ("", "openhands"):
+        return openhands_driver.OpenHandsDriver(env, trace_env=trace_env, runner=sys.modules[__name__])
+    if kind == "opencode":
+        try:
+            import opencode_driver
+        except ImportError as exc:
+            raise ValueError('AGENT_HARNESS "opencode" is not available in this image') from exc
+        return opencode_driver.OpenCodeDriver(env, trace_env=trace_env, runner=sys.modules[__name__])
+    raise ValueError('unsupported AGENT_HARNESS "%s"' % kind)
+
+
 def light_llm(env: dict, usage_id: str, effort: str):
-    """The LLM for the light alias, or None when the run has none (CP12): the condenser's summary
-    and the search child spend the light tier's tokens, never the run's."""
-    if not env.get("LIGHT_BASE_URL"):
-        return None
-    from openhands.sdk import LLM
-    return LLM(model="openai/" + env["LIGHT_MODEL"], base_url=env["LIGHT_BASE_URL"],
-               api_key=_api_key(env, "LIGHT_API_KEY_FILE"), usage_id=usage_id,
-               # A budget 429 is terminal for the run's own calls; a summary the gateway refuses
-               # must not retry either. The run's prices are not applied: the meter prices by the
-               # model the gateway served.
-               num_retries=0, litellm_extra_body={"reasoning_effort": effort})
+    """The LLM for the light alias, or None when the run has none (CP12)."""
+    return openhands_driver.light_llm(env, usage_id, effort)
 
 
 # CP6: an internal run condenses later (240 kept where 80, the first 8 where 4), and its summary
 # runs at low effort on the light alias when the run holds one.
-CONDENSER_MAX_SIZE = 240
-CONDENSER_KEEP_FIRST = 8
-CONDENSER_EFFORT = "low"
+CONDENSER_MAX_SIZE = openhands_driver.CONDENSER_MAX_SIZE
+CONDENSER_KEEP_FIRST = openhands_driver.CONDENSER_KEEP_FIRST
+CONDENSER_EFFORT = openhands_driver.CONDENSER_EFFORT
 
 
 def internal_condenser(condenser, env: dict):
-    """The default agent's condenser tuned for an internal run (CP6): a larger window, and the
-    summary on the light alias at low effort, or on the run's own model when it has no light alias."""
-    if not condenser:
-        return condenser
-    llm = light_llm(env, "condenser", CONDENSER_EFFORT) or condenser.llm
-    return condenser.model_copy(update={"max_size": CONDENSER_MAX_SIZE, "keep_first": CONDENSER_KEEP_FIRST,
-                                        "llm": llm})
+    """The default agent's condenser tuned for an internal run (CP6)."""
+    return openhands_driver.internal_condenser(condenser, env)
 
 
 def build_request(env: dict, task: str, rules: str, span=None, search: bool = False) -> dict:
-    """The StartConversationRequest body, as plain JSON.
-
-    The platform MCP entry carries the run span's traceparent (cloud-native-ref#2283), so the
-    gateway's /mcp spans join the run's trace instead of each starting its own. It is the fallback:
-    agent-server replaces it on each request with the span that sent it (site/sitecustomize.py).
-    """
-    from openhands.sdk import LLM
-    from openhands.sdk.conversation.request import StartConversationRequest
-    from openhands.tools.preset.default import get_default_agent
-
-    effort = env.get("LLM_REASONING_EFFORT", "high")
-    llm = LLM(
-        model="openai/" + env["MODEL"],
-        base_url=env["LLM_BASE_URL"],
-        api_key=_api_key(env),
-        usage_id="agent",
-        # A budget 429 is terminal (design section 5), and the SDK's retry cannot leave it out.
-        # agent-server retries a transient error itself (#99, site/sitecustomize.py).
-        num_retries=0,
-        input_cost_per_token=float(env.get("LLM_INPUT_USD_PER_MTOK", DEFAULT_INPUT_USD_PER_MTOK)) / 1e6,
-        output_cost_per_token=float(env.get("LLM_OUTPUT_USD_PER_MTOK", DEFAULT_OUTPUT_USD_PER_MTOK)) / 1e6,
-        # Sent in the body because litellm drops reasoning_effort for a model it does not
-        # know (`agent-default`), even with capability_overrides. Unsent, GLM-5.3 falls back
-        # to maximum thinking: measured 150 s and 1,238 reasoning tokens for a reply that
-        # takes 10.8 s at "high", so every step took minutes and some hit the 300 s timeout.
-        litellm_extra_body={"reasoning_effort": effort},
-        # Internal runs reach Anthropic, where an uncached turn re-sends the whole context at the
-        # full input price. The SDK only knows `agent-default` is a Claude model when told; its
-        # markers are rewritten for the gateway in site/sitecustomize.py. Public runs reach Z.ai
-        # through a passthrough, which would forward the marker to an API that never asked for it.
-        capability_overrides={"supports_prompt_cache": True} if env.get("DATA_CLASS") == "internal" else {},
+    """The StartConversationRequest body, as plain JSON."""
+    return openhands_driver.build_request(
+        env, task, rules, span, search,
+        repo_dir=REPO_DIR,
+        placeholder_key=PLACEHOLDER_KEY,
+        default_input_usd=DEFAULT_INPUT_USD_PER_MTOK,
+        default_output_usd=DEFAULT_OUTPUT_USD_PER_MTOK,
     )
-    # The SDK redacts secrets on dump and drops the redacted value on load, so
-    # without this the key never reaches agent-server and litellm refuses to
-    # call. agent-server is on loopback; the key is the placeholder, or the provider key the run was given.
-    plain = {"expose_secrets": True}
-    agent = get_default_agent(llm=llm, cli_mode=True)
-    if search:
-        from openhands.sdk.tool import Tool
-        agent = agent.model_copy(update={"tools": [*agent.tools, Tool(name=SEARCH_TOOL)]})
-    if env.get("DATA_CLASS") == "internal":
-        agent = agent.model_copy(update={"condenser": internal_condenser(agent.condenser, env)})
-    agent = agent.model_dump(mode="json", context=plain)
-    print(tool_names(agent), flush=True)
-    mcp_url = env.get("MCP_URL")
-    if mcp_url:
-        platform = {"url": mcp_url, "transport": "http"}
-        headers = {}
-        tp = span_traceparent(span)
-        if tp:
-            headers["traceparent"] = tp
-        # Read at conversation start; agent-server's client re-reads the file per POST (sitecustomize).
-        bearer = mcp_bearer(env)
-        if bearer:
-            headers["Authorization"] = bearer
-        if headers:
-            platform["headers"] = headers
-        agent["mcp_config"] = {"platform": platform}
-    extra = {"tool_module_qualnames": {SEARCH_TOOL: SEARCH_MODULE}} if search else {}
-    request = StartConversationRequest.model_validate({
-        **extra,
-        "conversation_id": env.get("CONVERSATION_ID") or str(uuid.uuid4()),
-        "workspace": {"working_dir": REPO_DIR},
-        "agent": agent,
-        "initial_message": {"role": "user", "content": [{"type": "text", "text": task}], "run": True},
-        "agent_launch_additions": {"system_message_suffix_append": rules},
-        "max_iterations": 500,
-        # Each auto-title is an extra model call that spends the run's budget.
-        "autotitle": False,
-        # The effort this run sends the gateway, for its room: the bridge reads the tag back into
-        # harness_status{effort}. Not the model: the room takes it from the claim's spec.model,
-        # since the agent can rewrite these tags over loopback.
-        "tags": {"effort": effort},
-    })
-    return json.loads(request.model_dump_json(exclude_none=True, context=plain))
 
 
 def http(method: str, path: str, body: dict | None = None, timeout: int = 30) -> dict:
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(AGENT_SERVER + path, data=data, method=method, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read() or b"{}")
+    return openhands_driver.http(method, path, body, timeout=timeout, base=AGENT_SERVER)
 
 
 def wait_ready(deadline_s: int = 120, server=None) -> None:
-    """Waits for agent-server's /ready. With its process, fails at once when it has exited (the
-    start-up hook refuses to start it when a security patch cannot apply), not after the deadline."""
-    end = time.monotonic() + deadline_s
-    while time.monotonic() < end:
-        if server is not None and server.poll() is not None:
-            raise RuntimeError("agent-server exited at start-up with code %s (see its log above)" % server.returncode)
-        try:
-            urllib.request.urlopen(AGENT_SERVER + "/ready", timeout=2)
-            return
-        except (urllib.error.URLError, OSError):
-            time.sleep(1)
-    raise TimeoutError("agent-server never became ready")
+    """Waits for agent-server's /ready. With its process, fails at once when it has exited."""
+    openhands_driver.wait_ready(deadline_s=deadline_s, server=server, base=AGENT_SERVER)
 
 
 def boot(start_span=None, wait=wait_ready) -> None:
@@ -484,17 +410,21 @@ def outcome(status: str) -> int | None:
     return None
 
 
-def poll(cid: str, on_tick=None) -> int:
+def poll(cid: str, on_tick=None, driver: HarnessDriver | None = None) -> int:
     """Poll the conversation until it reaches a terminal status, tolerating
     up to MAX_POLL_ERRORS consecutive network errors so one slow or dropped
-    connection to the loopback agent-server doesn't fail the run. on_tick runs
+    connection to the loopback harness server doesn't fail the run. on_tick runs
     after every successful poll."""
+    d = driver or _ACTIVE_DRIVER
     status = ""
     errors = 0
     while True:
         try:
-            status = http("GET", "/api/conversations/" + cid).get("execution_status", "")
-        except (urllib.error.URLError, TimeoutError) as exc:
+            if d is not None:
+                status = d.status(cid)
+            else:
+                status = http("GET", "/api/conversations/" + cid).get("execution_status", "")
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             errors += 1
             if errors > MAX_POLL_ERRORS:
                 print("agent-run: giving up after %d consecutive poll errors: %s" % (errors, exc), file=sys.stderr)
@@ -1341,8 +1271,10 @@ class StepLog:
 
     def __init__(self, cid: str, trace_id: str = "", notes: "ProgressNotes | None" = None, ledger: str | None = None,
                  nudge_after: int = 0, scoper: tuple[int, int] | None = None, resumed: bool = False,
-                 summary_model: str = ""):
+                 summary_model: str = "", driver: HarnessDriver | None = None, on_event=None):
         self.notes = notes
+        self.driver = driver
+        self.on_event = on_event
         # The scoper's bounds (HR2): one nudge at nudgeAt own tool calls, CallLimit at maxToolCalls. A handoff
         # ends the count once its observation comes back with no error; while one is in flight, no stop.
         # A resumed pod re-reads the first pod's events: past nudgeAt, its nudge was sent.
@@ -1372,18 +1304,24 @@ class StepLog:
 
     def __call__(self) -> None:
         try:
-            page = self.page
+            page = self.page or ""
             while True:
-                path = "/api/conversations/%s/events/search?limit=100" % self.cid
-                body = http("GET", path + ("&page_id=" + page if page else ""))
-                for event in body.get("items") or []:
+                if self.driver is not None:
+                    ep = self.driver.events(self.cid, page)
+                    items, nxt = ep.items, ep.next_cursor
+                else:
+                    path = "/api/conversations/%s/events/search?limit=100" % self.cid
+                    body = http("GET", path + ("&page_id=" + page if page else ""))
+                    items, nxt = body.get("items") or [], body.get("next_page_id")
+                for event in items:
                     if event.get("id") in self.seen:
                         continue
                     self.seen.add(event.get("id"))
+                    if self.on_event is not None:
+                        self.on_event(event)
                     line = self.describe(event)
                     if line:
                         print(line, flush=True)
-                nxt = body.get("next_page_id")
                 if not nxt:
                     break
                 # Resume from the last page next tick: at most one page is re-read.
@@ -1396,8 +1334,11 @@ class StepLog:
                 and not (self.ledger and search_rows(self.ledger)):
             self.nudged = True
             try:  # no run flag: the conversation is running, and reads the note at its next step
-                http("POST", "/api/conversations/%s/events" % self.cid,
-                     {"role": "user", "content": [{"type": "text", "text": SEARCH_NUDGE}], "run": False})
+                if self.driver is not None:
+                    self.driver.send(self.cid, SEARCH_NUDGE, run=False)
+                else:
+                    http("POST", "/api/conversations/%s/events" % self.cid,
+                         {"role": "user", "content": [{"type": "text", "text": SEARCH_NUDGE}], "run": False})
                 print("agent-run: search nudge sent after %d lookup steps" % self.lookups, flush=True)
             except Exception as exc:  # noqa: BLE001 -- a nudge never fails the run
                 print("agent-run: search nudge failed: %s" % _short(exc, 200), file=sys.stderr, flush=True)
@@ -1412,8 +1353,11 @@ class StepLog:
         if self.own >= nudge_at and not self.scoper_nudged:
             self.scoper_nudged = True
             try:  # as the search nudge: no run flag, the running conversation reads it at its next step
-                http("POST", "/api/conversations/%s/events" % self.cid,
-                     {"role": "user", "content": [{"type": "text", "text": SCOPER_NUDGE % self.own}], "run": False})
+                if self.driver is not None:
+                    self.driver.send(self.cid, SCOPER_NUDGE % self.own, run=False)
+                else:
+                    http("POST", "/api/conversations/%s/events" % self.cid,
+                         {"role": "user", "content": [{"type": "text", "text": SCOPER_NUDGE % self.own}], "run": False})
                 print("agent-run: scoper nudge sent after %d tool calls" % self.own, flush=True)
             except Exception as exc:  # noqa: BLE001 -- a nudge never fails the run
                 print("agent-run: scoper nudge failed: %s" % _short(exc, 200), file=sys.stderr, flush=True)
@@ -1914,8 +1858,12 @@ def ask_judge(env: dict, model: str, message: str) -> tuple[str, str] | None:
     return str(content or ""), str(reply.get("model") or "")
 
 
-def continue_conversation(cid: str, text: str) -> None:
+def continue_conversation(cid: str, text: str, driver: HarnessDriver | None = None) -> None:
     """One message into the same conversation, which runs again: its cache reads carry over (L2)."""
+    d = driver or _ACTIVE_DRIVER
+    if d is not None:
+        d.send(cid, text, run=True)
+        return
     http("POST", "/api/conversations/%s/events" % cid, {"role": "user", "content": [{"type": "text", "text": text}], "run": True})
 
 
@@ -2014,20 +1962,26 @@ def make_hold(env: dict, base: str, contract: dict, decl, prefetched):
     return run
 
 
-def interrupt(cid: str) -> None:
+def interrupt(cid: str, driver: HarnessDriver | None = None) -> None:
     """Stops the agent; the run ends with the loop's reason whether or not the agent heard."""
+    d = driver or _ACTIVE_DRIVER
     try:
-        http("POST", "/api/conversations/%s/interrupt" % cid, timeout=INTERRUPT_TIMEOUT_S)
+        if d is not None:
+            d.interrupt(cid, timeout=INTERRUPT_TIMEOUT_S)
+        else:
+            http("POST", "/api/conversations/%s/interrupt" % cid, timeout=INTERRUPT_TIMEOUT_S)
     except (OSError, ValueError, HTTPException) as exc:
         print("agent-run: interrupt failed: %s" % _short(exc, 200), file=sys.stderr, flush=True)
 
 
-def settle(cid: str, clock=time.monotonic, sleep=time.sleep) -> None:
+def settle(cid: str, clock=time.monotonic, sleep=time.sleep, driver: HarnessDriver | None = None) -> None:
     """Reads the interrupted conversation until it settles, at most SETTLE_S. Best effort."""
+    d = driver or _ACTIVE_DRIVER
     end = clock() + SETTLE_S
     while True:
         try:
-            if http("GET", "/api/conversations/" + cid).get("execution_status", "") in SETTLED:
+            st = d.status(cid) if d is not None else http("GET", "/api/conversations/" + cid).get("execution_status", "")
+            if st in SETTLED:
                 return
         except (OSError, ValueError, HTTPException):
             pass
@@ -2221,9 +2175,13 @@ def timed(name: str, box: float, step) -> bool:
     return status.startswith("done")
 
 
-def pause(cid: str) -> None:
+def pause(cid: str, driver: HarnessDriver | None = None) -> None:
     """Stops new tool calls, so the work tree stops changing. /interrupt, not /pause: /pause waits
     out the in-flight LLM call, /interrupt cancels it (agent-server 1.56.0)."""
+    d = driver or _ACTIVE_DRIVER
+    if d is not None:
+        d.interrupt(cid, timeout=PAUSE_S)
+        return
     http("POST", "/api/conversations/%s/interrupt" % cid, timeout=PAUSE_S)
 
 
@@ -2373,18 +2331,7 @@ def final_read(env: dict, steps=None, end: str | None = None) -> str:
 def stop(server, timeout: float) -> str:
     """Stops agent-server within timeout, killed for its last second. Always before the revoke: a
     live agent-server could mint a fresh token between the revoke and its own exit."""
-    server.terminate()
-    try:
-        server.wait(timeout - 1)
-        return "stopped"
-    except subprocess.TimeoutExpired:
-        server.kill()
-    try:
-        server.wait(1)
-        return "killed"
-    except subprocess.TimeoutExpired:
-        # SIGKILL runs nothing more in the process, reaped or not.
-        return "killed, not yet reaped"
+    return openhands_driver.stop_process(server, timeout)
 
 
 def revoke() -> None:
@@ -2400,7 +2347,7 @@ def revoke() -> None:
 def disrupted(env: dict, cid: str, steps) -> None:
     """The first half of a cut-short run's shutdown (disruption design §2): pause the agent, then
     checkpoint its work (implementer only), then let the room read the log to its end. main's
-    finally then stops agent-server and revokes the token."""
+    finally then stops the harness server and revokes the token."""
     if steps:
         steps.notes = None  # no notes on the way out: the 15 s budget is for the checkpoint
         steps.scoper = None  # nor a scoper's count: its flush runs in a thread
@@ -2420,64 +2367,25 @@ def _on_sigterm(signum, frame):
 
 def suspendable(env: dict) -> bool:
     """The composition sets AGENT_SUSPENDABLE only on a run whose /workspace is a PVC."""
-    return env.get("AGENT_SUSPENDABLE") == "true"
+    return openhands_driver.suspendable(env)
 
 
 def run_key(path: str = KEY_FILE) -> str:
-    """A suspendable run's OH_SECRET_KEY, made once and kept on its PVC: agent-server redacts the
-    stored secrets it cannot decrypt, so the resumed pod needs the key the first one used."""
-    try:
-        with open(path) as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        key = secrets.token_urlsafe(32)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(key)
-        return key
+    """A suspendable run's OH_SECRET_KEY, made once and kept on its PVC."""
+    return openhands_driver.run_key(path)
 
 
 def persisted(env: dict, root: str = CONVERSATIONS_DIR) -> bool:
     """True when a suspendable run's conversation is already on its PVC: the run was resumed."""
-    if not suspendable(env):
-        return False
-    try:
-        cid = uuid.UUID(env.get("CONVERSATION_ID", ""))
-    except ValueError:
-        return False
-    return os.path.isfile(os.path.join(root, cid.hex, "base_state.json"))
+    return openhands_driver.persisted(env, root)
 
 
-# What turns agent-server's own tracing on (OpenHands' observability, lmnr) and parents it on the
-# run's span. Its spans carry prompts, model answers and tool input and output, so whatever the agent
-# read, a token included: agent-server gets none of these unless AGENT_TRACE_CONTENT is "1", for a
-# collector that filters span attributes. Off, the run exports its own root span only.
-AGENT_SERVER_TRACE_KEYS = ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_ENDPOINT",
-                           "LMNR_PROJECT_API_KEY", "LMNR_SPAN_CONTEXT", "OPENHANDS_OBSERVABILITY_PARENT_SPAN_CONTEXT",
-                           "OTEL_BSP_SCHEDULE_DELAY")
+AGENT_SERVER_TRACE_KEYS = openhands_driver.AGENT_SERVER_TRACE_KEYS
 
 
 def server_env(env: dict) -> dict:
-    """agent-server's environment, with an OH_SECRET_KEY made for this pod when unset.
-
-    The key encrypts the secrets and MCP OAuth state agent-server stores. A run
-    is single-use, so a per-pod key loses nothing and nothing is seeded by hand.
-    A suspendable run's key outlives its pod, on its PVC (run_key). Its tracing
-    is off unless AGENT_TRACE_CONTENT=1 (AGENT_SERVER_TRACE_KEYS).
-    """
-    out = dict(env)
-    if env.get("AGENT_TRACE_CONTENT") != "1":
-        for k in AGENT_SERVER_TRACE_KEYS:
-            out.pop(k, None)
-    if "OH_SECRET_KEY" not in out:
-        out["OH_SECRET_KEY"] = run_key() if suspendable(env) else secrets.token_urlsafe(32)
-    out["PYTHONPATH"] = os.pathsep.join(p for p in (SITE_DIR, env.get("PYTHONPATH")) if p)
-    out["AGENT_RUN_RETRY_LOG"] = RETRY_LOG
-    # The run's deadline as wall-clock time, for the model-timeout retry (sitecustomize): it retries only
-    # with a whole second window and the final checks' reserve left.
-    if env.get("AGENT_RUN_SECONDS", "").isdigit():
-        out["AGENT_RUN_DEADLINE"] = str(time.time() + int(env["AGENT_RUN_SECONDS"]))
-    return out
+    """agent-server's environment, with an OH_SECRET_KEY made for this pod when unset."""
+    return openhands_driver.server_env(env, site_dir=SITE_DIR, retry_log=RETRY_LOG, key_fn=lambda: run_key(KEY_FILE))
 
 
 def integration(env: dict) -> int:
@@ -2498,20 +2406,19 @@ def integration(env: dict) -> int:
 
 
 def main() -> int:
+    global _ACTIVE_DRIVER
     signal.signal(signal.SIGTERM, _on_sigterm)
     started = time.monotonic()
     env = dict(os.environ)
-    # agent-server's conversations_path and bash_events_dir are relative to
-    # its cwd; pin it to "/" so its state lands in the intended paths
-    # whatever workingDir the pod sets, rather than wherever agent-run itself
-    # happens to be launched from.
     span, provider, trace_env = start_run_span(env)
     trace_id = format(span.get_span_context().trace_id, "032x") if span else ""
-    server = subprocess.Popen(SERVER_CMD, cwd="/", env=server_env({**env, **trace_env}))
+    driver = driver_for(env, trace_env=trace_env)
+    driver.start()
+    _ACTIVE_DRIVER = driver
     cid, steps, code, end, signalled, read = None, None, None, None, False, False
     try:
-        # agent-server still runs: the pod's probes are its. Exit 0 latches Succeeded at once.
-        boot(child_spans(provider, span), wait=lambda: wait_ready(server=server))
+        # harness server still runs: the pod's probes are its. Exit 0 latches Succeeded at once.
+        boot(child_spans(provider, span), wait=driver.wait_ready)
         if coordination_integration.requested(env):
             code = integration(env)
             return code
@@ -2519,7 +2426,7 @@ def main() -> int:
         # request reattaches the stored conversation and starts nothing. agent-run sends it nothing
         # either: it waits on a call's approval, a new message would reject that call, and a bare
         # run would execute it unconfirmed. The bridge answers it from the room's decision.
-        resumed = persisted(env) or clone(env, start_span=child_spans(provider, span))
+        resumed = driver.persisted() or clone(env, start_span=child_spans(provider, span))
         disable_push(env)
         decl = declared(env)
         base = ""
@@ -2536,7 +2443,7 @@ def main() -> int:
                 print("agent-run: checks prefetch not started: %s" % exc, file=sys.stderr, flush=True)
         contract = load_contract(env, resumed, base)
         with open(env["TASK_FILE"]) as t, open(env["RULES_FILE"]) as r:
-            search = search_on(env)
+            search = driver.search_available()
             task = t.read()
             tests = None
             if test_first(env) and base:
@@ -2544,21 +2451,28 @@ def main() -> int:
                     tests = contract_module().declaration(REPO_DIR, base)
                 except Exception:  # noqa: BLE001 -- Undeclared or unreadable: no tests section, the end fails closed
                     tests = None
-            request = build_request(env, search_task(task, search), r.read() + checks_rules(env, decl) + contract_rules(env, contract, tests)
-                                    + search_rules(search), span, search)
+            conv_req = ConversationRequest(
+                env=env,
+                task=search_task(task, search),
+                rules=r.read() + checks_rules(env, decl) + contract_rules(env, contract, tests) + search_rules(search),
+                span=span,
+                search=search,
+                resumed=resumed,
+            )
         policy = loop_for(env)
         # The start is read before the conversation runs: a resumed pod keeps its first pod's. With no
         # file to keep, StepLog's steps span the first pod too, so the stall rule is spent, not guessed.
         state = loop_policy.State.load(LOOP_STATE, head(), resumed=resumed) if policy else None
         if state:
             save_state(state, LOOP_STATE)
-        cid = http("POST", "/api/conversations", request)["id"]
+        cid = driver.create_conversation(conv_req)
         notes = ProgressNotes(env["MCP_URL"], env.get("ROLE") or "agent", resumed,
                               start_span=child_spans(provider, span), token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
         # A scoper's StepLog raises CallLimit, which only scoper_poll catches: a triager has no policy and no hold.
         steps = StepLog(cid, trace_id, notes, SEARCH_LEDGER if search else None,
                         nudge_steps(env) if search else 0, scoper_bounds(env, task), resumed,
-                        summary_model=env.get("LIGHT_MODEL") or env.get("MODEL") or "")
+                        summary_model=env.get("LIGHT_MODEL") or env.get("MODEL") or "",
+                        driver=driver, on_event=getattr(driver, "on_event", None))
         hold = make_hold(env, base, contract, decl, prefetched) if contract else None
         if policy:
             limit = env.get("AGENT_RUN_SECONDS", "")
@@ -2599,7 +2513,7 @@ def main() -> int:
             read = timed("final-read", FINAL_READ_S, lambda: final_read(env, end=end))
         # Never on SIGTERM: the close can outlast the grace period and the revoke must not wait.
         if span:
-            close_conversation(cid)
+            driver.close(cid)
         return code
     except SystemExit:
         signalled = True
@@ -2620,13 +2534,14 @@ def main() -> int:
             timed("final-read", FINAL_READ_S, lambda: final_read(env, end=end))
         if signalled:
             stop_started = time.monotonic()
-            report("stop", "done: " + stop(server, STOP_S), stop_started, STOP_S)
+            report("stop", "done: " + driver.stop(STOP_S), stop_started, STOP_S)
             timed("revoke", REVOKE_S, revoke)
         else:
-            stop(server, 10)
+            driver.stop(10)
             # Boxed too, never to bound it (its urlopen gives up at 10 s) but so that a revoke
             # that raises in-process is logged instead of changing the run's exit code.
             timed("revoke", 15, revoke)
+        _ACTIVE_DRIVER = None
         if span:
             # Boxed on the signal path: a collector that never answers holds an export for up to two
             # 5 s connects, and the pod's grace has no room left for it after the revoke.

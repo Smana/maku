@@ -288,12 +288,18 @@ func (l *fakeLog) end(runID, phase, reason string) {
 		Payload: envelope.StatePayload("run_phase", map[string]any{"phase": phase, "reason": reason})})
 }
 
+type fakeOutcome struct {
+	class, cohort, profile, source, recommended, harness, outcome string
+	usd                                                           float64
+}
+
 // fakeMetrics records what the reconciler measured.
 type fakeMetrics struct {
 	mu       sync.Mutex
 	recorded []string
 	bound    []string // the series that name a payer: "<series> <the payer ctx binds>" (spend per identity SI4)
 	stages   []string // stage_cost and stage_effect series (WR5)
+	outcomes []fakeOutcome
 }
 
 func (m *fakeMetrics) add(s string) {
@@ -337,8 +343,14 @@ func (m *fakeMetrics) TaskTokens(_ context.Context, tokens int64, tier, template
 func (m *fakeMetrics) Intervention(_ context.Context, kind, cohort, profile, recommended string) {
 	m.add("intervention " + kind + " " + cohort + " " + profile + " " + recommended)
 }
-func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
-	m.add(fmt.Sprintf("task_outcome %s %s %s %s %s %s %v", class, cohort, profile, source, recommended, outcome, usd))
+func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, recommended, harness, outcome string, usd float64) {
+	m.mu.Lock()
+	m.outcomes = append(m.outcomes, fakeOutcome{
+		class: class, cohort: cohort, profile: profile, source: source,
+		recommended: recommended, harness: harness, outcome: outcome, usd: usd,
+	})
+	m.recorded = append(m.recorded, fmt.Sprintf("task_outcome %s %s %s %s %s %s %v", class, cohort, profile, source, recommended, outcome, usd))
+	m.mu.Unlock()
 }
 func (m *fakeMetrics) StageCost(_ context.Context, repository, class, stage string, usd float64) {
 	m.addStage(fmt.Sprintf("stage_cost %s %s %s %v", repository, class, stage, usd))

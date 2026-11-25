@@ -50,6 +50,55 @@ func TestPodGolden(t *testing.T) {
 	golden(t, "pod.golden.yaml", Pod(r, testConfig(t), testModel, "abcdefgh"))
 }
 
+func TestOpenCodePodGolden(t *testing.T) {
+	c := testConfig(t)
+	c.Images.Opencode = "ghcr.io/smana/maku-opencode:v0.16.0"
+	r := goRun(func(r *v1alpha1.AgentRun) { r.Spec.Harness = "opencode" })
+	golden(t, "pod-opencode.golden.yaml", Pod(r, c, testModel, "abcdefgh"))
+}
+
+func TestOpenCodeRunUsesItsOwnImageAndDriver(t *testing.T) {
+	c := testConfig(t)
+	c.Images.Opencode = "ghcr.io/smana/maku-opencode:v0.16.0"
+	r := run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Spec.Harness = "opencode" })
+	p := Pod(r, c, testModel, "abcdefgh")
+	if p.Spec.Containers[0].Image != c.Images.Opencode {
+		t.Fatalf("harness image = %q, want %q", p.Spec.Containers[0].Image, c.Images.Opencode)
+	}
+	if got := harnessEnv(p)["AGENT_HARNESS"]; got != "opencode" {
+		t.Fatalf("harness AGENT_HARNESS = %q, want opencode", got)
+	}
+	if got := harnessEnv(p)["HOME"]; got != "/workspace/.opencode/home" {
+		t.Fatalf("harness HOME = %q, want /workspace/.opencode/home", got)
+	}
+	bridgeEnv := map[string]string{}
+	for _, e := range p.Spec.InitContainers[0].Env {
+		bridgeEnv[e.Name] = e.Value
+	}
+	if got := bridgeEnv["AGENT_HARNESS"]; got != "opencode" {
+		t.Fatalf("bridge AGENT_HARNESS = %q, want opencode", got)
+	}
+	var mountedWorkspace bool
+	for _, m := range p.Spec.InitContainers[0].VolumeMounts {
+		if m.Name == "workspace" && m.MountPath == "/workspace" && m.ReadOnly {
+			mountedWorkspace = true
+		}
+	}
+	if !mountedWorkspace {
+		t.Fatal("opencode room-bridge must mount workspace read-only at /workspace")
+	}
+	// Default (empty) and explicit openhands runs keep the OpenHands image and omit AGENT_HARNESS.
+	for _, h := range []string{"", "openhands"} {
+		def := Pod(run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Spec.Harness = h }), c, testModel, "abcdefgh")
+		if def.Spec.Containers[0].Image != c.Images.Harness {
+			t.Fatalf("harness %q image = %q, want %q", h, def.Spec.Containers[0].Image, c.Images.Harness)
+		}
+		if _, ok := harnessEnv(def)["AGENT_HARNESS"]; ok {
+			t.Fatalf("harness %q should not set AGENT_HARNESS", h)
+		}
+	}
+}
+
 func TestCNPGolden(t *testing.T) {
 	r := goRun()
 	golden(t, "cnp.golden.yaml", NetworkPolicy(r, testConfig(t), testModel, "abcdefgh").Object)

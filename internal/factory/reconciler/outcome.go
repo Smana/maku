@@ -160,17 +160,43 @@ func (r *Reconciler) outcome(ctx context.Context, cfg *config.Config, t *v1alpha
 		"phase", t.Status.Phase, "reason", t.Status.Reason, "tokens", t.Status.Usage.Tokens)
 }
 
-// counting: t's outcome and USD are not yet counted. A part of an approved split never counts:
-// its parent counts the family once (R32). A task without a profile counts on the status's own
-// mark, so the counters count every ended task (CP3).
+// counting: t's outcome and USD are not yet counted for its current cohort. A part of an approved
+// split never counts: its parent counts the family once (R32). A task without a profile counts on
+// the status's own mark, so the counters count every ended task (CP3).
 func counting(t *v1alpha1.Task) bool {
 	if t.Spec.Parent != nil {
 		return false
 	}
 	if p := t.Status.Profile; p != nil {
-		return !p.Counted
+		return !p.Counted && !slices.Contains(t.Status.OutcomeCountedCohorts, p.Cohort)
 	}
 	return !t.Status.OutcomeCounted
+}
+
+// harnessOf is t's harness as a metric label, openhands for tasks without a recorded harness.
+func harnessOf(t *v1alpha1.Task) string {
+	if p := t.Status.Profile; p != nil && p.Harness != "" {
+		return p.Harness
+	}
+	return config.HarnessOpenHands
+}
+
+// countRescueOriginalFailure records the failed original OpenCode attempt under its original
+// cohort and harness before a maintainer's `/factory retry harness=openhands` moves the task to
+// the rescue cohort. Checking OutcomeCountedCohorts makes crash-replays idempotent.
+func (r *Reconciler) countRescueOriginalFailure(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) {
+	p := t.Status.Profile
+	if p == nil || slices.Contains(t.Status.OutcomeCountedCohorts, p.Cohort) {
+		return
+	}
+	origMicro := r.costOf(t)
+	cohort, profile, source, rec, harness := p.Cohort, p.Name, p.Source, r.recommendedLabel(cfg, t), harnessOf(t)
+	t.Status.OutcomeCountedCohorts = append(t.Status.OutcomeCountedCohorts, cohort)
+	t.Status.RescueBaselineMicroUSD = origMicro
+	class, usd := t.Spec.PredictedClass, float64(origMicro)/1e6
+	record(ctx, func(ctx context.Context) {
+		r.Metrics.TaskOutcome(ctx, class, cohort, profile, source, rec, harness, "failed", usd)
+	})
 }
 
 // tally is what a terminal task's count says (R34): the outcome it first ended with and its USD;
@@ -187,6 +213,9 @@ func (r *Reconciler) tally(ctx context.Context, cfg *config.Config, t *v1alpha1.
 		outcome = taskOutcome(t)
 	}
 	if !splitApproved(t) {
+		if p := t.Status.Profile; p != nil && p.Cohort == "rescue" && t.Status.RescueBaselineMicroUSD > 0 {
+			micro = max(0, micro-t.Status.RescueBaselineMicroUSD)
+		}
 		return outcome, micro, true, nil
 	}
 	newest, all, err := r.family(ctx, t)
@@ -214,16 +243,19 @@ func (r *Reconciler) count(ctx context.Context, cfg *config.Config, t *v1alpha1.
 	if !counting(t) {
 		return
 	}
-	cohort, profile, source, rec := "none", "none", "floor", "none"
+	cohort, profile, source, rec, harness := "none", "none", "floor", "none", harnessOf(t)
 	if p := t.Status.Profile; p != nil {
 		p.Counted = true
+		if !slices.Contains(t.Status.OutcomeCountedCohorts, p.Cohort) {
+			t.Status.OutcomeCountedCohorts = append(t.Status.OutcomeCountedCohorts, p.Cohort)
+		}
 		cohort, profile, source, rec = p.Cohort, p.Name, p.Source, r.recommendedLabel(cfg, t)
 	} else {
 		t.Status.OutcomeCounted = true
 	}
 	class, usd := t.Spec.PredictedClass, float64(micro)/1e6
 	record(ctx, func(ctx context.Context) {
-		r.Metrics.TaskOutcome(ctx, class, cohort, profile, source, rec, outcome, usd)
+		r.Metrics.TaskOutcome(ctx, class, cohort, profile, source, rec, harness, outcome, usd)
 	})
 	r.countStages(ctx, cfg, t, outcome)
 	r.countCardHealth(ctx, t, outcome, micro)

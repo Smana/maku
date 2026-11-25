@@ -104,8 +104,8 @@ func (p ProfileFact) validate() error {
 		return errors.New("name is 1 to 63 characters")
 	case !slices.Contains(ProfileSources, p.Source):
 		return errors.New("source is " + strings.Join(ProfileSources, ", "))
-	case !slices.Contains([]string{"labeled", "control", "treatment"}, p.Cohort):
-		return errors.New("cohort is labeled, control or treatment")
+	case !slices.Contains([]string{"labeled", "control", "treatment", "rescue"}, p.Cohort):
+		return errors.New("cohort is labeled, control, treatment or rescue")
 	case utf8.RuneCountInString(p.Recommended) > 63:
 		return errors.New("recommended is at most 63 characters")
 	case utf8.RuneCountInString(p.Reason) > 32:

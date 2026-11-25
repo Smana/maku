@@ -101,7 +101,7 @@ const (
 // broker outage never stops the sandbox (§3): the harness keeps its own store,
 // and the bridge resumes from the log's cursor.
 type Bridge struct {
-	Harness *Harness
+	Harness HarnessAPI
 	Broker  *Broker
 	RunID   string
 	// Interval is the poll period; zero means 1 s.

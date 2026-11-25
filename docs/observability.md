@@ -76,6 +76,10 @@ sum(increase(maku_factory_step_ups_total{mode=~"auto|manual", outcome=~"accepted
 
 For the per-repository, per-class breakdown of recent ended tasks (including `typicalUSD` median cost once a class has 30 merged tasks), query [`GET /v1/stages`](reference/api.md#get-v1stages) or run `maku stages --repository <owner/name>`.
 
+### Harness trials and rescue accounting
+
+`maku_factory_task_outcomes_total`, `maku_factory_task_usd_total`, and `maku_factory_run_cost_usd` carry a bounded `harness` label (`openhands` or `opencode`). Trial comparisons filter `cohort=~"control|treatment"` and group `by (cohort, harness)` so explicit OpenHands rescues (`cohort="rescue"`) never inflate treatment acceptance or mix rescue spend into trial arms. See [Opt-in OpenCode harness](opencode-harness.md).
+
 ## Alerts
 
 `monitoring.prometheusRule.enabled` renders one `PrometheusRule`, `maku`: a group per enabled

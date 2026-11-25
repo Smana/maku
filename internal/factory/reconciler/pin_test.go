@@ -49,7 +49,7 @@ func TestPinHonouredInObserveAndApply(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			g := pinRig(t, resolveCfg(mode, 0), issueTask("3buqdlot", 7, "fix it"), "Smana", "workflow:review-search")
 			tk := g.reconcile(t, "3buqdlot", 1)
-			want := v1alpha1.ProfileStatus{Name: "review-search", Source: "label", Cohort: triage.CohortLabeled, Checks: false,
+			want := v1alpha1.ProfileStatus{Name: "review-search", Source: "label", Cohort: triage.CohortLabeled, Harness: "openhands", HarnessSource: "default", Checks: false,
 				Requested: "review-search"}
 			if p := tk.Status.Profile; p == nil || *p != want {
 				t.Fatalf("%+v, want %+v", p, want)

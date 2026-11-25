@@ -174,7 +174,7 @@ type judged struct {
 // Its methods are safe for concurrent use: the bridge's loop calls Observe and
 // OnStatus, the stream calls Decision and, through steering, Gate.
 type Confirmer struct {
-	Harness    *Harness
+	Harness    HarnessAPI
 	Broker     ApprovalRequester
 	Classifier Classifier
 	RunID      string
@@ -424,7 +424,8 @@ func (c *Confirmer) Gate(ctx context.Context, send func(run bool) error) error {
 	c.mu.Lock()
 	c.stale = true
 	c.mu.Unlock()
-	status, err := c.Harness.Status(ctx)
+	conv, err := c.Harness.Conversation(ctx)
+	status := conv.Status
 	if err != nil {
 		c.log().Warn("a steering message is in, but the harness status is unreadable; the loop runs it", "err", err)
 		c.mu.Lock()

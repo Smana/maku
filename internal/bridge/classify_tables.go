@@ -18,8 +18,13 @@ func worse(a, b Class) Class {
 // tools, enabled when get_default_agent runs without cli_mode, would class as
 // mcp.write. search (v3 feature 5, ST8) is another: the harness's read-only child,
 // whose own actions never reach the bridge; Classifier.SearchBuiltin says a run has it.
-var builtins = map[string]bool{"terminal": true, "execute_bash": true, "file_editor": true, "str_replace_editor": true,
-	"task_tracker": true, "think": true, "finish": true, "browser": true}
+var builtins = map[string]bool{
+	"terminal": true, "execute_bash": true, "file_editor": true, "str_replace_editor": true,
+	"task_tracker": true, "think": true, "finish": true, "browser": true,
+	// OpenCode 2.3.0 built-in tools.
+	"shell": true, "bash": true, "edit": true, "write": true, "read": true,
+	"glob": true, "grep": true, "list": true, "patch": true,
+}
 
 func set(s ...string) map[string]bool {
 	m := make(map[string]bool, len(s))

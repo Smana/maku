@@ -1372,7 +1372,7 @@ func (e policyEditor) Drill(ctx context.Context, repository string, number int) 
 // runCost hands the meter's cost report to the metric, key by key.
 func runCost(m *fmetrics.Set) func(context.Context, meter.CostKey, float64, map[string]float64) {
 	return func(ctx context.Context, k meter.CostKey, usd float64, by map[string]float64) {
-		m.RunCost(ctx, k.Tier, k.Role, k.Cohort, k.Profile, usd, by)
+		m.RunCost(ctx, k.Tier, k.Role, k.Cohort, k.Profile, k.Harness, usd, by)
 	}
 }
 
