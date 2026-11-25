@@ -725,7 +725,7 @@ func runEvidence(in ArmInputs, cfg *config.Config) string {
 	hasCustomApprove := false
 	for i := len(in.Verifiers) - 1; i >= 0; i-- {
 		r := in.Verifiers[i]
-		if r.Verdict != "approve" {
+		if r.Verdict != "approve" || r.Role != "reviewer" {
 			continue
 		}
 		if !isBuiltInReviewer(r) {
