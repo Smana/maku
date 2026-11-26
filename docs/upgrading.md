@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Early commands are held, refused input is answered](#early-commands-are-held-refused-input-is-answered)
 - [Queued notes reach the next run of any kind](#queued-notes-reach-the-next-run-of-any-kind)
 - [Web New task starts are broker-confirmed](#web-new-task-starts-are-broker-confirmed)
 - [A step-up is costed at the target workflow's budget](#a-step-up-is-costed-at-the-target-workflows-budget)
@@ -47,6 +48,22 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## Early commands are held, refused input is answered
+
+The `Task` CRD gains `status.held` and `status.refusals`: upgrade the CRDs (`agent-factory-crds`) before
+the factory. No value changes. What a maintainer and a contributor see changes
+([Commands posted early](factory.md#commands-posted-early-and-input-that-is-not-acted-on)):
+
+| Before | Now |
+|---|---|
+| A maintainer's `/factory retry`, `split` or `fix` posted before the task reached its phase was ignored for good | It is held, answered at once, and applied once when the task reaches the phase, or expires with a reply after 24 hours or when the task ends |
+| A plan command posted before the plan existed was ignored without an answer | It is answered at once and not applied to the later plan; that plan's review comment names it |
+| A non-maintainer's command or **Request changes** review was dropped without an answer | It is still not acted on, and answered once per person per task per hour |
+| A maintainer without write access whose command was the newest was asked again on every pass | That command is answered and marked handled; an older maintainer's command can then apply |
+
+The factory reads each running task's issue for early commands at most every 30 seconds: one more
+GitHub call for a task whose phase reads no comments.
 
 ## Queued notes reach the next run of any kind
 

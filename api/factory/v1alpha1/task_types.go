@@ -704,6 +704,21 @@ type TaskStatus struct {
 	// +kubebuilder:validation:MaxItems=512
 	// +optional
 	Handled []int64 `json:"handled,omitempty"`
+	// Maintainers' slash commands posted before the task reached the phase they apply in, held to
+	// be applied once when it does (or, for a plan command, mentioned on the next plan). Each is
+	// removed when applied or expired; the newest of a kind replaces an older one.
+	// +listType=map
+	// +listMapKey=id
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Held []HeldCommand `json:"held,omitempty"`
+	// The last "not acted on" reply to each person whose command or review the factory refused,
+	// at most one per person an hour. The reconciler keeps the newest.
+	// +listType=map
+	// +listMapKey=login
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Refusals []RefusalReply `json:"refusals,omitempty"`
 	// The config that triaged the task: the circuit breaker resets with a new one (§6.4).
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
@@ -1254,6 +1269,29 @@ type Narration struct {
 	// The factory's own words, never text a user wrote.
 	// +kubebuilder:validation:MaxLength=4096
 	Body string `json:"body"`
+}
+
+// HeldCommand is a maintainer's slash command held until the task reaches the phase it applies in.
+type HeldCommand struct {
+	// The GitHub comment id that carried it.
+	// +kubebuilder:validation:Minimum=1
+	ID int64 `json:"id"`
+	// The command, without its /factory prefix.
+	// +kubebuilder:validation:Enum=retry;retry-deeper;retry-openhands;split;fix;plan-approve;plan-revise;plan-split
+	Command string `json:"command"`
+	// The maintainer's GitHub login.
+	// +kubebuilder:validation:MaxLength=39
+	Author string `json:"author"`
+	// When the comment was posted, by GitHub's clock.
+	At metav1.Time `json:"at"`
+}
+
+// RefusalReply is when the factory last told a person their input was not acted on.
+type RefusalReply struct {
+	// The GitHub login, as it was written.
+	// +kubebuilder:validation:MaxLength=39
+	Login string      `json:"login"`
+	At    metav1.Time `json:"at"`
 }
 
 // ConfigGenerations are the generations of the factory's resources a task was triaged under

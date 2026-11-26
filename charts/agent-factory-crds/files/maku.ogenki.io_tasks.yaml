@@ -1827,6 +1827,51 @@ spec:
                 maxItems: 512
                 type: array
                 x-kubernetes-list-type: set
+              held:
+                description: |-
+                  Maintainers' slash commands posted before the task reached the phase they apply in, held to
+                  be applied once when it does (or, for a plan command, mentioned on the next plan). Each is
+                  removed when applied or expired; the newest of a kind replaces an older one.
+                items:
+                  description: HeldCommand is a maintainer's slash command held until
+                    the task reaches the phase it applies in.
+                  properties:
+                    at:
+                      description: When the comment was posted, by GitHub's clock.
+                      format: date-time
+                      type: string
+                    author:
+                      description: The maintainer's GitHub login.
+                      maxLength: 39
+                      type: string
+                    command:
+                      description: The command, without its /factory prefix.
+                      enum:
+                      - retry
+                      - retry-deeper
+                      - retry-openhands
+                      - split
+                      - fix
+                      - plan-approve
+                      - plan-revise
+                      - plan-split
+                      type: string
+                    id:
+                      description: The GitHub comment id that carried it.
+                      format: int64
+                      minimum: 1
+                      type: integer
+                  required:
+                  - at
+                  - author
+                  - command
+                  - id
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
               inputTrust:
                 description: |-
                   What the task's runs read, by source kind and author trust, never by content (hardening
@@ -2610,6 +2655,30 @@ spec:
               reason:
                 maxLength: 1024
                 type: string
+              refusals:
+                description: |-
+                  The last "not acted on" reply to each person whose command or review the factory refused,
+                  at most one per person an hour. The reconciler keeps the newest.
+                items:
+                  description: RefusalReply is when the factory last told a person
+                    their input was not acted on.
+                  properties:
+                    at:
+                      format: date-time
+                      type: string
+                    login:
+                      description: The GitHub login, as it was written.
+                      maxLength: 39
+                      type: string
+                  required:
+                  - at
+                  - login
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - login
+                x-kubernetes-list-type: map
               rescueBaselineMicroUSD:
                 description: |-
                   RescueBaselineMicroUSD is the spend already counted under the original failed cohort when an

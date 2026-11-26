@@ -42,7 +42,24 @@ Every label below is read once a minute (`poll.issues`). Labels applied by non-m
 
 A `factory/ready` applied by the factory App counts only on an issue the broker filed from a web **New task** start and recorded: the task is then the recorded maintainer's ([broker-confirmed handoff](security.md#authorization)). The label waits up to two minutes for the broker's record.
 
-Refused `factory/ready` labels are removed and answered once (`unauthorised_labeller`, `edited_after_label`, `task_active`, `unsanitisable`). The factory applies `factory/class:<class>`, `factory/stale` (closed after 14 quiet days), `factory/orphaned` (PR whose `Task` was lost, human-only thereafter), `factory/needs-author`, `factory/proposed`, `factory/split-proposed`, and `factory/child-of:#p`.
+Refused `factory/ready` labels are removed and answered once (`unauthorised_labeller`, `edited_after_label`, `task_active`, `unsanitisable`); a maintainer re-applying `factory/ready` while the issue's task is still running is answered `task_active`. The factory applies `factory/class:<class>`, `factory/stale` (closed after 14 quiet days), `factory/orphaned` (PR whose `Task` was lost, human-only thereafter), `factory/needs-author`, `factory/proposed`, `factory/split-proposed`, and `factory/child-of:#p`.
+
+### Commands posted early, and input that is not acted on
+
+No command or review is dropped without an answer:
+
+| Input | What the factory does |
+|---|---|
+| A maintainer's command (`/factory retry`, `retry deeper`, `retry harness=openhands`, `split`, `fix`) posted on the task's issue before the task is in the phase it applies in | Holds it in `status.held` and replies at once: `held /factory retry: it applies when the task is escalated`. When the task reaches that phase, the command is applied once, under the same checks as one posted then (write access, caps), whatever its age, and the factory replies that it was acted on |
+| A held command that cannot apply | Expires with a reply mentioning its author: the task left that phase without it (another answer, or the escalation's expiry, came first), the task ended, or 24 hours passed |
+| A maintainer's `/factory plan approve`, `revise` or `split` posted while no plan is under review | Never applied to a later plan: a plan command answers the plan it was posted on. The factory replies at once, and the next plan's review comment names the command under **Posted before this plan existed, not applied**; answer that plan there |
+| A maintainer's command this task can never act on (`/factory fix` on a task that is not a `report`, `/factory split` on a workflow without splits, a plan command with no plan gate, the OpenHands rescue on a task not on OpenCode) | Replies that it was not acted on, and why |
+| A command from anyone without write access on the repository, or who is not one of its maintainers, or a **Request changes** review from someone who is not a maintainer | Not acted on, as before, and answered once on the issue or pull request: what was not acted on and that only maintainers with write steer the factory. One such reply per person per task per hour (`status.refusals`), so a loop of posts cannot make the factory talk on; the reply never quotes what they wrote |
+
+The newest held command of a kind replaces an older one (the three retries are one kind). A task holds
+at most 16. The issue is read for early commands at most every 30 seconds per task; a command posted
+less than a minute before the task's phase changes counts in the new phase, as before. A command
+posted on the pull request rather than the issue is read only in its phase.
 
 ## A task's life
 
@@ -988,7 +1005,7 @@ The notes are quoted after the brief, in the untrusted `QUEUED-DATA` fence, olde
 
 | Condition | Factory action |
 |---|---|
-| Maintainer with `write` comments `/factory retry` alone on a line (outside code fences, unedited, after escalation) | Queues one fresh run within 5 minutes; after `review_rounds_exhausted` or `no_verdict`, buys one revision and one review |
+| Maintainer with `write` comments `/factory retry` alone on a line (outside code fences, unedited, after escalation, or [held](#commands-posted-early-and-input-that-is-not-acted-on) from before it) | Queues one fresh run within 5 minutes; after `review_rounds_exhausted` or `no_verdict`, buys one revision and one review |
 | `AwaitingHuman` PR has no maintainer review, comment or human push for **48 h** | Posts one reminder mentioning maintainers per quiet spell (noting if already approved and waiting for merge) |
 | Still quiet at **14 days** (≥ 24 h after reminder) and latest maintainer review is not an approval | Applies `factory/stale`, closes the PR, and ends the task `Closed` (`stale`); approved PRs are never closed |
 | `Escalated` task has no retry for `caps.escalatedHours` (default `168`, `0` disables) | Ends `Stopped` (`escalation_expired`), leaving the PR open; paused while a human drives the room |

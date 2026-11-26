@@ -44,7 +44,20 @@ A maintainer's **Request changes** is answered where it was made, on the pull re
 | Revising (`revise-<runs>`) | The review sends the task back for a revision | The next run starts on the same branch with the review in its brief |
 | Revised (`revised-<runs>`) | That revision run ends | The new head (short sha, linked) and the files GitHub says changed since the head it started on, the room link, and that the pull request is ready for re-review; or that the revision ended without a new commit. If it took a path the task names (a `## Files` line, or a path in a code span of its acceptance check) out of the pull request, a **Scope changed** line names it and the task waits as `scope_changed` |
 
-Neither quotes the review or the agent's handoff. Each comment carries a hidden marker and is posted at least once and never twice, from an outbox written with the transition that caused it. The outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged `narration_dropped`. A comment GitHub refuses for good (its issue deleted, issues turned off, or the issue locked) is dropped and logged the same way, and the comments after it still post. Comments hold the factory's own words and ids, never text a user wrote.
+Neither quotes the review or the agent's handoff.
+
+Input that arrives while it cannot apply, or from someone the factory takes no input from, is answered rather than dropped ([Commands posted early](../factory.md#commands-posted-early-and-input-that-is-not-acted-on)):
+
+| Event (key) | Class | When |
+|---|---|---|
+| Command held (`held-<comment>`) | `changed` | A maintainer's command was posted before the phase it applies in; names that phase |
+| Plan command noted (`held-<comment>`) | `changed` | A plan command was posted while no plan was under review; the next plan's comment names it |
+| Held command applied (`held-applied-<comment>`) | `changed` | The task reached the phase and the command was acted on |
+| Held command expired (`held-expired-<comment>`) | `needs_you` | It was not applied: the task moved on without it, ended, or 24 hours passed. Mentions its author |
+| Command not applicable (`not-applicable-<comment>`) | `changed` | A maintainer's command this task can never act on, and why |
+| Not acted on (`not-acted-<comment or review>`) | `changed` | A command or **Request changes** review from someone without the standing to steer the factory; at most one per person per task per hour, on the issue or pull request it was posted on |
+
+None quotes the comment or the review. Each comment carries a hidden marker and is posted at least once and never twice, from an outbox written with the transition that caused it. The outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged `narration_dropped`. A comment GitHub refuses for good (its issue deleted, issues turned off, or the issue locked) is dropped and logged the same way, and the comments after it still post. Comments hold the factory's own words and ids, never text a user wrote.
 
 The task's room gets the issue snapshot as its first `task_state` message, then the task's facts (phase, reason, current run, the run history with each run's outcome, end and dollars, token budget, dollar spend, issue and pull request), which the room page and `maku status` show. The history keeps the last 20 runs, oldest first. A run's outcome is `succeeded`, `failed`, `budget_exhausted`, `revoked`, `lost` (a disruption, a lost pod or a vanished claim) or `ended` (the task ended or escalated with the run unfinished); it is empty while the run goes on. A run's dollars and the task's spend are exact in the facts posted, but a tick of a running run never posts: the spend steps by 10% of its cap, or $0.10 without one. A run the meter could not price reads $0, so a task mixing priced and unpriced runs shows a partial dollar figure while its token cap binds: a known limit.
 

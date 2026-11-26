@@ -35,6 +35,7 @@ Everything that happens in a room is an event in its log, assigned a gapless seq
 | **Policy** | One bounded merge rule (`docs-links`, `dead-links`, or one you define); no matching policy hands the pull request to a maintainer |
 | **Merge gate** | Decides whether an agent PR merges itself (`maku/merge-gate`): each bound policy is `live` (merges when checks hold), **shadow** (decided identically without merging), or `disabled` |
 | **Oracle class** | Class backed by a deterministic detector (`dead-links`) whose holdout check proves the PR fixed that exact finding |
+| **Held command** | A maintainer's slash command posted before the task reached the phase it applies in: kept in `status.held`, answered, and applied once when the task gets there ([Commands posted early](factory.md#commands-posted-early-and-input-that-is-not-acted-on)) |
 | **Split** | Breaking a broad task into bounded child tasks proposed by the scoper and approved with `/factory split` |
 | **Kill switch** | `agent-factory-stop` ConfigMap or `factory/stop` on the control issue: pauses intake and revokes active runs |
 | **Narration** | Progress and status comments posted from the factory's outbox onto the issue and pull request |
