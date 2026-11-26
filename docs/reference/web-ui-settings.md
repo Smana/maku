@@ -92,6 +92,36 @@ object names, or a policy's name and mode, shows "3 of 9 repositories", and name
 **Clear** button when nothing matches. The query is kept in `?q=`, so a filtered page can be shared;
 `/` focuses the field, except while you type in another one, and Escape clears it.
 
+### A policy's page, in words
+
+A policy's page opens with the sentence the factory builds about it: what it merges without you,
+what checks the meaning of a change, and what is left open (see
+[holds, agreed, signal-checked](../merge-policies.md#holds-agreed-signal-checked)). The page prints
+that sentence and never builds one: a factory that sends none gets "This factory does not say what
+checks this policy's meaning". Then one line, **Meaning checked by**, with the way to add a signal
+when nothing checks it; the fields the form does not edit (`requires`, `evidence` where no shape or
+oracle allows `low`, `monitor`, `oracle`, `author`), read-only in plain words; and, under
+**Repositories using it**, each binding the reader can see, read-only, linked to the repository's
+page where it is edited.
+
+Every field of the editor carries one help line:
+
+| Field | Help line |
+|---|---|
+| Files it may change | A pull request that touches any other file waits for a maintainer (`file_not_allowed`) |
+| Files it must never touch | One matching file sends the whole pull request to a maintainer (`file_protected`) |
+| Most files changed, most lines changed | Above this, the pull request waits for a maintainer (`patch_too_large`). Lines are additions plus deletions |
+| Most merges a day | After this many, the next one waits until tomorrow (`auto_merge_cap`) |
+| Edit files only | A file added, deleted or renamed sends the pull request to a maintainer (`file_added_or_deleted`) |
+| Required diff shape | Every changed line must have this shape, or the policy does not apply (`class_mismatch`). A shape is what lets Maku check the meaning |
+| Checks that must pass | Each must report success from GitHub Actions on this exact commit. Skipped counts as failed (`holdout_red`). A check says something still works, not that the change is right |
+| Changes that need approval | A matching file asks a maintainer even when the policy is live (`approval_required`) |
+| Required stages (`requires`) | Tasks touching these files run these stages. A plan and tests together are what let Maku check the meaning of a configuration change |
+| Evidence | How many decisions a maintainer must agree with before promotion: 5 when a shape or an oracle checks the meaning, else 20 |
+| After a merge (`monitor`) | What Maku watches after a merge, and for how long. Silence here is quiet, not right |
+| Detector (`oracle`) | A scheduled workflow names the defects. The pull request must fix exactly those (`oracle_unrequested`, `oracle_finding_open`) |
+| Author (`author`) | Whose pull requests this policy takes: the factory's agents, or another bot's by login and branch |
+
 ## Theme
 
 Every page has a theme button, in the room page's dock and in the header elsewhere. Each press
