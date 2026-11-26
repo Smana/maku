@@ -155,6 +155,18 @@ data:
 {{- if not $v.image.digest -}}
 {{- fail "image.digest is required: the gateway proxy's image is pinned by digest" -}}
 {{- end -}}
+{{- $gc := $v.gcpCredentials -}}
+{{- if and (eq $gc.source "external") (not $gc.configMap) -}}
+{{- fail "gcpCredentials.configMap is required with gcpCredentials.source external: the ConfigMap holding the external_account credential" -}}
+{{- end -}}
+{{- if and (ne $gc.source "external") $gc.configMap -}}
+{{- fail "gcpCredentials.configMap: only gcpCredentials.source external reads a credential file; the metadata source has none" -}}
+{{- end -}}
+{{- range $c := $v.proxy.sidecars -}}
+{{- if eq $c.name "agentgateway" -}}
+{{- fail "proxy.sidecars: agentgateway is the proxy's own container; use proxy.env for its environment" -}}
+{{- end -}}
+{{- end -}}
 {{- $presets := include "mgw.presets" . | fromYaml -}}
 {{- range $name, $p := $v.providers -}}
 {{- $preset := index $presets $p.preset -}}

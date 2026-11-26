@@ -79,6 +79,28 @@ broker:
 # The presets carry each provider's quirks (docs/gateway.md, "Presets").
 providers: {}
 
+# Where a gcp-auth preset (vertex) gets the proxy's Google token (docs/gateway.md, "Gemini on Vertex AI"):
+#   source metadata   the GKE metadata server: GKE Workload Identity (the default).
+#   source external   an ADC external_account credential (Workload Identity Federation, e.g. from
+#                     EKS), the key `key` of ConfigMap `configMap` in the release namespace, which the
+#                     proxy reads through GOOGLE_APPLICATION_CREDENTIALS. Not a secret: it names a pool
+#                     provider and where the subject token comes from. The proxy then dials
+#                     sts.googleapis.com, never the metadata server.
+gcpCredentials:
+  source: metadata
+  configMap: ""
+  key: credentials.json
+
+# Additions to the proxy pod the controller generates, merged by name (AgentgatewayParameters'
+# deployment overlay): env on the agentgateway container, sidecar containers and their volumes, for
+# instance a credential source the external credential needs. A sidecar brings its own
+# securityContext, resources and probes, and its own egress: the chart's network policy admits only
+# what the proxy dials.
+proxy:
+  env: []
+  sidecars: []
+  volumes: []
+
 # The model aliases each listener serves, by the AgentRun's model names:
 #   <alias>: {provider: <providers key>, model: <the provider's model>}
 aliases:

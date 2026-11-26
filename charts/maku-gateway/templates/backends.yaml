@@ -40,7 +40,8 @@ spec:
   policies:
     auth:
       {{- if eq ($preset.auth | default "secret") "gcp" }}
-      # Ambient credentials: on GKE, the Workload Identity of the proxy's ServiceAccount.
+      # Ambient credentials: on GKE, the Workload Identity of the proxy's ServiceAccount; elsewhere,
+      # gcpCredentials.source external's external_account file (GOOGLE_APPLICATION_CREDENTIALS).
       gcp:
         type: AccessToken
       {{- else }}
