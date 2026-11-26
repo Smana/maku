@@ -894,6 +894,7 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		"CommandNotApplicable":   {CommandNotApplicable(tk, 99, "/factory fix", "not a report task"), ClassChanged},
 		"NotActedOn":             {NotActedOn(tk, 99, "`/factory retry`"), ClassChanged},
 		"CommentReviewIgnored":   {CommentReviewIgnored(tk), ClassChanged},
+		"ImagesRemoved":          {ImagesRemoved(7, 2), ClassChanged},
 		"Resuming":               {Resuming(tk, "r1", "implementer", 1, 2), ClassChanged},
 		"SandboxRetry":           {SandboxRetry(tk, "r1"), ClassChanged},
 		"ModelHeld":              {ModelHeld(tk, "r1", "model_unavailable_quota", 5*time.Minute, 1, 6), ClassChanged},
@@ -1061,5 +1062,53 @@ func TestEndedSaysTheSpendInDollars(t *testing.T) {
 func TestTheEscalationHintSuggestsNoPush(t *testing.T) {
 	if h := hints()[v1alpha1.PhaseEscalated]; strings.Contains(h, "push") || !strings.Contains(h, "/factory retry") {
 		t.Errorf("hint: %q", h)
+	}
+}
+
+// Developer review gap 3, "say it": the first run tells the developer what the sandbox does not run,
+// and that CI is the judge of a merge.
+func TestSandboxNoteNamesWhatTheSandboxSkips(t *testing.T) {
+	l := Limits{Checks: true, Declared: true, CIOnly: []SkippedCheck{{Check: "test", Part: "integration tests", Why: "they need Postgres"}}}
+	body := SandboxNote(l)
+	if l.Silent() {
+		t.Fatal("a skipped check is worth saying")
+	}
+	for _, want := range []string{"test", "integration tests", "they need Postgres", "CI is the judge"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("lacks %q:\n%s", want, body)
+		}
+	}
+	if !(Limits{Checks: true, Declared: true}).Silent() {
+		t.Error("checks that skip nothing need no comment")
+	}
+	if b := SandboxNote(Limits{Checks: true}); !strings.Contains(b, "declares no agent checks") || !strings.Contains(b, "make-a-repository-ready") {
+		t.Errorf("no declaration:\n%s", b)
+	}
+	if b := SandboxNote(Limits{Declared: true}); !strings.Contains(b, "does not run the repository's agent checks") || !strings.Contains(b, "CI is the judge") {
+		t.Errorf("checks off:\n%s", b)
+	}
+}
+
+// The ciOnly entries are the repository's text: quoted as code, cut, at most ten, and never a mention.
+func TestSandboxNoteQuotesTheRepositorysText(t *testing.T) {
+	var many []SkippedCheck
+	for range 12 {
+		many = append(many, SkippedCheck{Check: "e2e`@team", Part: strings.Repeat("p", 300), Why: "w"})
+	}
+	b := SandboxNote(Limits{Checks: true, Declared: true, CIOnly: many})
+	if strings.Count(b, "\n- ") != 10 || strings.Contains(b, "@team") || strings.Contains(b, strings.Repeat("p", 121)) ||
+		!strings.Contains(b, "and 2 more") {
+		t.Errorf("got:\n%s", b)
+	}
+}
+
+// Developer review gap 5: images in a request that no run will see are named, once.
+func TestImagesRemovedAsksForWords(t *testing.T) {
+	e := ImagesRemoved(7, 2)
+	if e.Key != "images-removed" || !strings.Contains(e.Body, "2 images") || !strings.Contains(e.Body, "in words") {
+		t.Errorf("%+v", e)
+	}
+	if e := ImagesRemoved(7, 1); !strings.Contains(e.Body, "1 image ") {
+		t.Errorf("one: %s", e.Body)
 	}
 }

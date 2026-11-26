@@ -491,6 +491,13 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 	if err := p.Client.Create(ctx, t); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("create task %s: %w", name, err) // AlreadyExists is the dedup (S2)
 	}
+	// Developer review gap 5: images no run will see are named, once, so the author can put them in
+	// words. A repository with screenshots hands them to a run whose model can see them.
+	if rep.Images > 0 && p.repo(cfg).Screenshots == nil {
+		if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), narrate.ImagesRemoved(n, rep.Images)); err != nil {
+			return err
+		}
+	}
 	return p.Forge.RemoveLabel(ctx, n, label)
 }
 
