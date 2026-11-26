@@ -226,6 +226,10 @@ Run confinement is controlled by `maku.networkPolicies.mode` ([network policies 
 
 In `gateway` model mode (the production default), no provider API key enters the runs namespace: each run receives a projected ServiceAccount token scoped to `<prefix>.<dataClass>.<alias>` for the run's deadline plus 10 minutes, verified offline by `agentgateway` ([the run's model credential](reference/security-controls.md#the-runs-model-credential)). Run pods themselves are gated by an in-tree `ValidatingAdmissionPolicy`, `restricted` Pod Security, digest-pinned image repositories and a `runs` `ResourceQuota` ([the run pod's admission](reference/security-controls.md#the-run-pods-admission)).
 
+## The opt-in browser
+
+A Repository with `spec.screenshots` gives its implementer and tester runs a `browser` sidecar. The run-pod admission policy admits a container named `browser` only on implementer and tester pods, mounting only its own `/tmp` and cache, with no env read from a Secret or ConfigMap. Its gate refuses every URL but loopback, and Chromium resolves no other host. Network policy is per pod, so a Chromium exploit can reach what the harness reaches; the sidecar holds no credential. Screenshots reach the broker only through the room-bridge, whose token never enters the harness container, and the broker re-encodes each one. They are shown to room readers only and never posted to GitHub ([Browser verification](browser-verification.md#boundaries)).
+
 ## Untrusted-input hardening
 
 The hardening track moves agent writes to GitHub behind a threat check the factory runs outside
