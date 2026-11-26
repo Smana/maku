@@ -35,10 +35,30 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 
 {{/* The catalog and telemetry key of providers.<name>: the native provider's own name, else <name>
-(each custom backend sets providerOverride to it). */}}
+(each custom backend sets providerOverride to it). agentgateway names its native Vertex AI provider
+gcp.vertex_ai, its catalog key (probe P7). */}}
 {{- define "mgw.catalogKey" -}}
 {{- $p := index .root.Values.providers .name -}}
-{{- if has $p.preset (list "openai" "anthropic") -}}{{ $p.preset }}{{- else -}}{{ .name }}{{- end -}}
+{{- if has $p.preset (list "openai" "anthropic") -}}{{ $p.preset }}
+{{- else if eq $p.preset "vertex" -}}gcp.vertex_ai
+{{- else -}}{{ .name }}{{- end -}}
+{{- end -}}
+
+{{/* The host agentgateway's native Vertex AI provider dials for a region: global, the multi-regions
+us and eu (their restricted endpoints), or a single region. */}}
+{{- define "mgw.vertexHost" -}}
+{{- if eq . "global" -}}aiplatform.googleapis.com
+{{- else if has . (list "us" "eu") -}}aiplatform.{{ . }}.rep.googleapis.com
+{{- else -}}{{ . }}-aiplatform.googleapis.com
+{{- end -}}
+{{- end -}}
+
+{{/* The host providers.<name> dials: (dict "root" . "name" <name>). */}}
+{{- define "mgw.providerHost" -}}
+{{- $p := index .root.Values.providers .name -}}
+{{- if eq $p.preset "vertex" -}}{{ include "mgw.vertexHost" $p.region }}
+{{- else -}}{{ $p.host | default (index (include "mgw.presets" .root | fromYaml) $p.preset).host }}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -137,10 +157,25 @@ data:
 {{- end -}}
 {{- $presets := include "mgw.presets" . | fromYaml -}}
 {{- range $name, $p := $v.providers -}}
-{{- if not $p.existingSecret -}}
+{{- $preset := index $presets $p.preset -}}
+{{- if eq ($preset.auth | default "secret") "gcp" -}}
+{{- if $p.existingSecret -}}
+{{- fail (printf "providers.%s.existingSecret: the %s preset authenticates as the proxy's own Google identity (Workload Identity), so it takes no key; remove it" $name $p.preset) -}}
+{{- end -}}
+{{- else if not $p.existingSecret -}}
 {{- fail (printf "providers.%s.existingSecret is required: the chart reads each provider's key from a Secret you create in the release namespace, never from a value (D14)" $name) -}}
 {{- end -}}
-{{- $preset := index $presets $p.preset -}}
+{{- if eq $p.preset "vertex" -}}
+{{- if not (and $p.projectId $p.region) -}}
+{{- fail (printf "providers.%s: preset vertex needs projectId and region (global, us, eu or a region such as europe-west4)" $name) -}}
+{{- end -}}
+{{- else -}}
+{{- range $k := list "projectId" "region" -}}
+{{- if hasKey $p $k -}}
+{{- fail (printf "providers.%s.%s: only preset vertex takes a Google project and region" $name $k) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if eq $p.preset "custom" -}}
 {{- if not (and $p.host $p.port $p.path) -}}
 {{- fail (printf "providers.%s: preset custom needs host, port and path (its Chat Completions endpoint)" $name) -}}

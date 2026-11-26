@@ -3,12 +3,15 @@
 {{- range $b := include "mgw.backends" . | fromYamlArray }}
 {{- $p := index $.Values.providers $b.provider }}
 {{- $preset := index $presets $p.preset }}
-{{- $host := $p.host | default $preset.host }}
+{{- $host := include "mgw.providerHost" (dict "root" $ "name" $b.provider) }}
 {{- $tls := ternary (ne (toString $p.tls) "false") true (eq $p.preset "custom") }}
 ---
 # {{ $b.alias }} on {{ $b.provider }} ({{ $p.preset }}): the model is forced to the alias whatever the
 # body says, then mapped to {{ $b.model }} (GW5): a caller holds no other alias's audience, so it
-# cannot reach another model. The key is read from Secret {{ $p.existingSecret }} by reference (D14).
+# cannot reach another model.
+{{- if eq ($preset.auth | default "secret") "gcp" }} The proxy authenticates as its own Google identity: no key exists.
+{{- else }} The key is read from Secret {{ $p.existingSecret }} by reference (D14).
+{{- end }}
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
 metadata:
@@ -26,14 +29,25 @@ spec:
             path: {{ $p.path | default $preset.path }}
       host: {{ $host }}
       port: {{ $p.port | default $preset.port }}
+      {{- else if eq $preset.provider "vertexai" }}
+      # Dials {{ $host }}.
+      vertexai:
+        projectId: {{ $p.projectId | quote }}
+        region: {{ $p.region | quote }}
       {{- else }}
       {{ $preset.provider }}: {}
       {{- end }}
   policies:
     auth:
+      {{- if eq ($preset.auth | default "secret") "gcp" }}
+      # Ambient credentials: on GKE, the Workload Identity of the proxy's ServiceAccount.
+      gcp:
+        type: AccessToken
+      {{- else }}
       secretRef:
         name: {{ $p.existingSecret }}
         key: {{ $p.key | default "apiKey" }}
+      {{- end }}
     {{- if and (eq $preset.provider "custom") $tls }}
     tls:
       sni: {{ $host }}

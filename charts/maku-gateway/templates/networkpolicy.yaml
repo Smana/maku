@@ -5,6 +5,7 @@
 {{- $ctlNS := $v.networkPolicy.controller.namespace | default .Release.Namespace }}
 {{- /* The providers the backends dial: {name, host, port, peers, cidrs}, once each. */}}
 {{- $dials := list }}
+{{- $gcpAuth := false }}
 {{- $seen := dict }}
 {{- range $b := include "mgw.backends" . | fromYamlArray }}
 {{- if not (hasKey $seen $b.provider) }}
@@ -12,9 +13,13 @@
 {{- $p := index $v.providers $b.provider }}
 {{- $preset := index $presets $p.preset }}
 {{- $e := $p.egress | default dict }}
-{{- $dials = append $dials (dict "name" $b.provider "host" ($p.host | default $preset.host) "port" ($p.port | default $preset.port) "peers" ($e.peers | default list) "cidrs" ($e.cidrs | default list)) }}
+{{- $dials = append $dials (dict "name" $b.provider "host" (include "mgw.providerHost" (dict "root" $ "name" $b.provider)) "port" ($p.port | default $preset.port) "peers" ($e.peers | default list) "cidrs" ($e.cidrs | default list)) }}
+{{- if eq ($preset.auth | default "secret") "gcp" }}{{ $gcpAuth = true }}{{ end }}
 {{- end }}
 {{- end }}
+{{- /* A provider on the proxy's own Google identity fetches its token from the GKE metadata server:
+169.254.169.254:80, and 169.254.169.252:988 on GKE Dataplane V2. */}}
+{{- $mds := list "169.254.169.254/32" "169.254.169.252/32" }}
 {{- if eq $mode "kubernetes" }}
 # Default deny on the proxy pods (GW13). In: runs on public and internal, the broker on clients, a
 # scraper on 15020. Out: DNS, the controller's xDS, and each provider on its port. The JWKS is not
@@ -81,6 +86,14 @@ spec:
             except: {{- toYaml $v.networkPolicy.exceptCIDRs | nindent 14 }}
         {{- end }}
       ports: [{port: {{ $d.port }}, protocol: TCP}]
+    {{- end }}
+    {{- if $gcpAuth }}
+    # the GKE metadata server: the proxy's Google access token (Workload Identity)
+    - to:
+        {{- range $mds }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      ports: [{port: 80, protocol: TCP}, {port: 988, protocol: TCP}]
     {{- end }}
 {{- else if eq $mode "cilium" }}
 # The same in Cilium's terms, with each provider by FQDN through Cilium's DNS proxy.
@@ -172,6 +185,14 @@ spec:
       toPorts:
         - ports:
             - {port: {{ $d.port | quote }}, protocol: TCP}
+    {{- end }}
+    {{- if $gcpAuth }}
+    # The GKE metadata server: Cilium does not count 169.254.169.254 as the host entity on GKE.
+    - toCIDR: {{- toYaml $mds | nindent 8 }}
+      toPorts:
+        - ports:
+            - {port: "80", protocol: TCP}
+            - {port: "988", protocol: TCP}
     {{- end }}
 {{- end }}
 {{- end }}

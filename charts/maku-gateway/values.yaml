@@ -66,10 +66,11 @@ broker:
   podLabels: {app.kubernetes.io/name: room-broker}
 
 # The model providers, by name. Each one's key is a Secret in the release namespace, named here and
-# never rendered by this chart (D14):
+# never rendered by this chart (D14); vertex has none (the proxy's own Google identity):
 #   <name>:
-#     preset: openai | anthropic | zai | mistral | moonshot | custom
-#     existingSecret: <Secret name>        # required
+#     preset: openai | anthropic | zai | mistral | moonshot | gemini | vertex | custom
+#     existingSecret: <Secret name>        # required; refused for vertex
+#     projectId, region                    # vertex only, and required: global | us | eu | <region>
 #     key: apiKey                          # the Secret's key
 #     dataClasses: [public]                # the listeners its aliases may serve
 #     host, port, path, tls                # custom only: the Chat Completions endpoint

@@ -236,5 +236,56 @@ yeq "select(.kind == \"CiliumNetworkPolicy\") | .spec.ingress[2].fromEndpoints[0
 rejects 'mode cilium with an ipBlock scraper' 'metrics.allowFrom[0]: mode cilium translates namespaceSelector and podSelector matchLabels only' \
   "${cnref[@]}" --set networkPolicy.mode=cilium --set 'metrics.allowFrom[0].ipBlock.cidr=10.0.0.0/8'
 
+# ---- Gemini: the gemini and vertex presets (Gemini design G1, G5; probe P7)
+vtx=(--set providers.vertex.preset=vertex --set providers.vertex.projectId=ogenki-435905 --set providers.vertex.region=eu)
+gal=(--set aliases.public.gemini-standard.provider=vertex --set aliases.public.gemini-standard.model=gemini-4-neon)
+rejects 'vertex with existingSecret' "providers.vertex.existingSecret: the vertex preset authenticates as the proxy's own Google identity" \
+  "${minimal[@]}" "${vtx[@]}" --set providers.vertex.existingSecret=k
+rejects 'vertex without projectId' 'providers.vertex: preset vertex needs projectId and region' \
+  "${minimal[@]}" --set providers.vertex.preset=vertex --set providers.vertex.region=eu
+rejects 'vertex without region' 'providers.vertex: preset vertex needs projectId and region' \
+  "${minimal[@]}" --set providers.vertex.preset=vertex --set providers.vertex.projectId=ogenki-435905
+rejects 'projectId on another preset' 'providers.mistral.projectId: only preset vertex takes a Google project and region' \
+  "${minimal[@]}" --set providers.mistral.preset=mistral --set providers.mistral.existingSecret=k --set providers.mistral.projectId=ogenki-435905
+rejects 'a region that is none' 'region' "${minimal[@]}" "${vtx[@]}" --set providers.vertex.region=mars
+rejects 'an endpoint on vertex' 'providers.vertex.host: only preset custom takes an endpoint' "${minimal[@]}" "${vtx[@]}" --set providers.vertex.host=x.test
+rejects 'gemini without existingSecret (D14)' 'providers.gemini.existingSecret is required' "${minimal[@]}" --set providers.gemini.preset=gemini
+rejects 'a classifier on gemini (Gemini 4 always reasons)' 'clients.classifier: vertex/gemini-4-hydrogen always reasons' \
+  "${minimal[@]}" "${vtx[@]}" --set clients.classifier.enabled=true --set clients.classifier.provider=vertex --set clients.classifier.model=gemini-4-hydrogen
+rejects 'the vertex preset owns thinking_config' 'providers.vertex.transformations.thinking_config: the vertex preset sets it (' \
+  "${minimal[@]}" "${vtx[@]}" --set 'providers.vertex.transformations[0].field=thinking_config' --set-string 'providers.vertex.transformations[0].expression=x'
+out="$(render "${minimal[@]}" "${vtx[@]}" "${gal[@]}" --set aliases.public.gemini-light.provider=gemini --set aliases.public.gemini-light.model=gemini-4-hydrogen \
+  --set providers.gemini.preset=gemini --set providers.gemini.existingSecret=agents-gemini-api-key \
+  --set-json 'modelCatalog.prices.gemini-4-neon={"input": 3, "output": 15, "cacheRead": 0.3}')"
+v='vertex-gemini-standard'
+yeq "$(be $v) | (.spec.ai.provider | keys | join(\",\")) + \" \" + .spec.ai.provider.vertexai.projectId + \" \" + .spec.ai.provider.vertexai.region" \
+  'vertexai ogenki-435905 eu' 'the vertex preset: the native vertexai provider, its project and region'
+yeq "$(be $v) | (.spec.policies.auth | keys | join(\",\")) + \" \" + .spec.policies.auth.gcp.type + \" \" + ((.spec.policies.tls // \"no-tls-policy\") | tostring)" \
+  'gcp AccessToken no-tls-policy' 'vertex: the gcp AccessToken auth, no secretRef, the native TLS'
+yeq "$(be $v) | [.spec.policies.ai.transformations[] | .field] | join(\",\")" 'model,thinking_config' 'vertex: the model forced, then the thinking level'
+yeq "$(be $v) | .spec.policies.ai.transformations[1].expression" \
+  '{"thinkingLevel": llmRequest.reasoning_effort in ["none", "minimal", "low"] ? "low" : llmRequest.reasoning_effort == "medium" ? "medium" : "high"}' \
+  'vertex: reasoning_effort becomes a thinking level, never a budget'
+yeq "$(be $v) | .spec.policies.ai.modelAliases.\"gemini-standard\"" 'gemini-4-neon' 'gemini-standard maps to gemini-4-neon'
+g='gemini-gemini-light'
+yeq "$(be $g) | .spec.ai.provider.custom.providerOverride + \" \" + .spec.ai.provider.host + \":\" + (.spec.ai.provider.port | tostring) + .spec.ai.provider.custom.formats[0].path + \" \" + .spec.policies.auth.secretRef.name" \
+  'gemini generativelanguage.googleapis.com:443/v1beta/openai/chat/completions agents-gemini-api-key' 'the gemini preset: the OpenAI-compatible endpoint and its key'
+yeq "[select(.kind == \"Secret\")] | length" 0 'gemini and vertex render no Secret'
+cat="$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog") | .data."catalog.json"' - <<<"$out")"
+[[ "$(jq -c '.providers."gcp.vertex_ai".models."gemini-4-neon".rates' <<<"$cat")" == '{"cacheRead":"0.30","input":"3.00","output":"15.00"}' ]] \
+  || { echo "FAIL: vertex prices key under gcp.vertex_ai, agentgateway's name for its native provider (got: $cat)" >&2; fail=1; }
+yeq "$np | [.spec.egress[] | select(.to[0].ipBlock.cidr == \"169.254.169.254/32\") | ([.to[].ipBlock.cidr] | join(\",\")) + \" \" + ([.ports[].port] | join(\",\"))] | join(\";\")" \
+  '169.254.169.254/32,169.254.169.252/32 80,988' 'vertex: the GKE metadata server, for the Workload Identity token'
+out="$(render "${minimal[@]}" "${vtx[@]}" "${gal[@]}" --set networkPolicy.mode=cilium)"
+yeq "select(.kind == \"CiliumNetworkPolicy\") | [.spec.egress[] | .toFQDNs[]?.matchName] | join(\",\")" 'aiplatform.eu.rep.googleapis.com,stub.models.svc.cluster.local' 'vertex on eu dials the eu restricted endpoint'
+yeq "select(.kind == \"CiliumNetworkPolicy\") | [.spec.egress[] | select(.toCIDR) | (.toCIDR | join(\",\")) + \" \" + ([.toPorts[0].ports[].port] | join(\",\"))] | join(\";\")" \
+  '169.254.169.254/32,169.254.169.252/32 80,988' 'mode cilium: the metadata server by CIDR'
+for r in global:aiplatform.googleapis.com us:aiplatform.us.rep.googleapis.com europe-west4:europe-west4-aiplatform.googleapis.com; do
+  out="$(render "${minimal[@]}" "${vtx[@]}" "${gal[@]}" --set networkPolicy.mode=cilium --set "providers.vertex.region=${r%%:*}")"
+  yeq "select(.kind == \"CiliumNetworkPolicy\") | [.spec.egress[] | .toFQDNs[]?.matchName] | join(\",\")" "${r#*:},stub.models.svc.cluster.local" "vertex on ${r%%:*} dials ${r#*:}"
+done
+out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium)"
+yeq "[select(.kind == \"CiliumNetworkPolicy\") | .spec.egress[] | select(.toCIDR)] | length" 0 'no gcp provider: no metadata server'
+
 [[ $fail == 0 ]] || exit 1
 echo "maku-gateway chart render checks passed"
