@@ -1294,6 +1294,7 @@ func (r *Reconciler) awaitingHuman(ctx context.Context, cfg *config.Config, t *v
 	if rvs := r.changesRequested(cfg, t, pr); len(rvs) > 0 {
 		return r.revise(ctx, cfg, t, pr, rvs)
 	}
+	r.answerCommentReviews(cfg, t, pr)
 	// A return the factory cannot read is no return: it never blocks the reminder and stale close.
 	if back, err := r.reenter(ctx, cfg, t, pr); err != nil {
 		r.log().Warn("merge gate return unreadable", "task.id", t.Name, "reason", t.Status.Reason, "err", err)

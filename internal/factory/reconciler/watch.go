@@ -228,6 +228,33 @@ func (r *Reconciler) changesRequested(cfg *config.Config, t *v1alpha1.Task, pr f
 	return out
 }
 
+// answerCommentReviews tells a maintainer once per task that a Comment review starts nothing
+// (developer review gap 7): a maintainer whose newest review since the last run started is a comment
+// with text, or with inline comments. A review followed by an approval or a request for changes
+// needs no answer, and anyone else's review is advice to a maintainer.
+func (r *Reconciler) answerCommentReviews(cfg *config.Config, t *v1alpha1.Task, pr forge.PR) {
+	if pr.HeadRef != "agent/"+t.Name || len(t.Status.Runs) == 0 {
+		return
+	}
+	since := current(t).Started
+	newest := map[string]forge.Review{}
+	for _, rv := range pr.Reviews {
+		if !r.repo(cfg, t).IsMaintainer(rv.Author) || rv.State == "PENDING" || (since != nil && !rv.At.After(since.Time)) {
+			continue
+		}
+		login := strings.ToLower(rv.Author)
+		if cur, ok := newest[login]; !ok || rv.At.After(cur.At) || (rv.At.Equal(cur.At) && rv.ID > cur.ID) {
+			newest[login] = rv
+		}
+	}
+	for _, rv := range newest {
+		if rv.State == "COMMENTED" && (strings.TrimSpace(rv.Body) != "" || len(rv.Comments) > 0) {
+			narrateOn(t, pr.Number, narrate.CommentReviewIgnored(t))
+			return
+		}
+	}
+}
+
 // openChangeRequests are the CHANGES_REQUESTED reviews their author has not approved over since,
 // oldest first as GitHub lists them: a login's later APPROVED review lifts its earlier requests.
 // A ghost's (login "") are never lifted: two deleted accounts are not one reviewer. With

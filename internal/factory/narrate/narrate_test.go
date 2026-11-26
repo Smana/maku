@@ -893,6 +893,7 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		"CommandExpired":         {CommandExpired(tk, 99, "/factory retry", "smana", "the task ended"), ClassNeedsYou},
 		"CommandNotApplicable":   {CommandNotApplicable(tk, 99, "/factory fix", "not a report task"), ClassChanged},
 		"NotActedOn":             {NotActedOn(tk, 99, "`/factory retry`"), ClassChanged},
+		"CommentReviewIgnored":   {CommentReviewIgnored(tk), ClassChanged},
 		"Resuming":               {Resuming(tk, "r1", "implementer", 1, 2), ClassChanged},
 		"SandboxRetry":           {SandboxRetry(tk, "r1"), ClassChanged},
 		"ModelHeld":              {ModelHeld(tk, "r1", "model_unavailable_quota", 5*time.Minute, 1, 6), ClassChanged},
@@ -1052,5 +1053,14 @@ func TestEndedSaysTheSpendInDollars(t *testing.T) {
 	legacy := "Agent factory task `x` is done.\n\nTokens used: 600 k."
 	if got := Retotal(legacy, 700_000, 500_000, false); !strings.HasSuffix(got, "\n\nSpent: $0.50 (700 k tokens).") {
 		t.Errorf("a body queued before this release:\n%s", got)
+	}
+}
+
+
+// Developer review gap 7: pushing to the agent's branch blocks the merge bot for good, so the
+// escalation never suggests it.
+func TestTheEscalationHintSuggestsNoPush(t *testing.T) {
+	if h := hints()[v1alpha1.PhaseEscalated]; strings.Contains(h, "push") || !strings.Contains(h, "/factory retry") {
+		t.Errorf("hint: %q", h)
 	}
 }
