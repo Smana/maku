@@ -443,6 +443,11 @@ a merge call that fails after the `success` puts its state back: `pending` for a
 (`head_moved`), for a merge GitHub refuses as it stands (`not_mergeable`, a 405) and for any other
 error (`merge_failed`), so no `success` is left on a head the factory did not merge.
 
+**A conflict gets one rebase run.** When GitHub refuses the merge because the pull request conflicts
+with main, the factory starts a run that rebases `agent/<task>` onto main and resolves the conflicts
+(`rebasing-<n>`), instead of handing off. The run spends one of the task's `merge.fixRuns`, like a CI
+fix run. With none left, the task waits as `not_mergeable`, as for any other refusal.
+
 ### Branch protection for the merge gate
 
 `maku/merge-gate` is the gate a production repository's branch protection can require. It is

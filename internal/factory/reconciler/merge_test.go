@@ -1875,3 +1875,36 @@ func TestDecisionDetailsDoNotGoStale(t *testing.T) {
 		t.Fatalf("stale decision %q", tk.Status.PullRequest.Decision)
 	}
 }
+
+// Developer review gap 7: a pull request that conflicts with main gets a rebase run, charged to the
+// CI fix runs, instead of waiting for a person as not_mergeable.
+func TestAConflictGetsARebaseRun(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.RefuseMerge("PR_12", forge.ErrMergeConflict)
+	tk := g.reconcile(t, "3buqdlot", 2)
+	if tk.Status.Phase != v1alpha1.PhaseImplementing || tk.Status.FixRuns != 1 || tk.Status.Runs[len(tk.Status.Runs)-1].Trigger != "ci" {
+		t.Fatalf("%s %s fixes %d", tk.Status.Phase, tk.Status.Reason, tk.Status.FixRuns)
+	}
+	if text := g.runs.specs[tk.Status.Runs[len(tk.Status.Runs)-1].ID].TaskText; !strings.Contains(text, "conflicts with main") || !strings.Contains(text, "rebase") {
+		t.Fatalf("the brief: %s", text)
+	}
+	if c := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(c, "conflicts with main") {
+		t.Fatalf("%q", c)
+	}
+}
+
+// With the fix runs spent, a conflict waits for a person, as before.
+func TestAConflictWithNoFixRunLeftGoesToAHuman(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	var tk v1alpha1.Task
+	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
+	tk.Status.FixRuns = 2
+	_ = g.c.Status().Update(t.Context(), &tk)
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.RefuseMerge("PR_12", forge.ErrMergeConflict)
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "not_mergeable" {
+		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
+	}
+}

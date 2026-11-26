@@ -885,6 +885,14 @@ func CIFixing(t *v1alpha1.Task, pr int, head string, checks []string, n, limit i
 			t.Name, pr, head, strings.Join(checks, ", "), n, limit)}
 }
 
+// Rebasing says the pull request conflicts with main and a run starts to rebase it (developer
+// review gap 7), as a CI fix run does.
+func Rebasing(t *v1alpha1.Task, pr int, head string, n, limit int) Event {
+	return Event{Key: fmt.Sprintf("rebasing-%d", t.Status.FixRuns), Class: ClassChanged,
+		Body: fmt.Sprintf("Maku task `%s`: #%d conflicts with main at `%s`; a run starts to rebase it (%d/%d).",
+			t.Name, pr, head, n, limit)}
+}
+
 // CIExhausted says the CI fix runs are spent and the named checks are still failing (§6.3).
 func CIExhausted(t *v1alpha1.Task, names []string) Event {
 	return Event{Key: fmt.Sprintf("ci-exhausted-%d", t.Status.FixRuns), Class: ClassNeedsYou,
