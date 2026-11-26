@@ -161,8 +161,8 @@ result; one that may cure itself right after install is retried from 10 s, doubl
   once per change.
 - **The probe pod** is deleted after each verdict, and leftovers from an earlier process before the
   next. The egress proxy logs its CONNECT as `allow run=preflight github.com:443`.
-- **The egress proxy's metrics** on its `:9090`: `maku_egress_proxy_connections_total{decision}`
-  (`allow`, `refuse`, `error`), `maku_egress_proxy_refusals_total{reason}` and
+- **The egress proxy's metrics** on its `:9090`: `maku_egress_proxy_connections_total{decision}`,
+  `maku_egress_proxy_refusals_total{reason}` and
   `maku_egress_proxy_bytes_total`.
 
 
