@@ -21,6 +21,7 @@ jobs:
       contents: read
     outputs:
       harness: ${{ steps.c.outputs.harness }}
+      browser: ${{ steps.c.outputs.browser }}
       deployable: ${{ steps.c.outputs.deployable }}
       charts: ${{ steps.c.outputs.charts }}
     steps:
@@ -238,6 +239,54 @@ jobs:
           SKIP_GO: "1"
         run: images/maku-opencode/tests/runsc-contract.sh
 
+  # v5 Q16 (screenshots): the maku-browser sidecar image's contract (images/maku-browser/tests/
+  # runsc-contract.sh, B1-B8) as the run-controller runs it: read-only, uid 10001, no capabilities,
+  # no network. Under runc first, then under gVisor (runsc), the runtime the run pods use. Not
+  # required. On a pull request, only when it touches the image or the gate it carries
+  # (hack/ci-changes.sh); main's pushes always run it.
+  browser-contract:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install gVisor (release-20261005.0)
+        run: |
+          set -eux
+          curl -fsSLo /tmp/gvisor.tar.zstd https://storage.googleapis.com/gvisor/releases/release/20261005.0/x86_64/gvisor.tar.zstd
+          echo "27fed731b432d6a39d908956623fd273979fda66b3ccf4b9c12413ea417c516e18a9dc3cced403fb28efe495d64dce4251f51cf8c4d9f4a72f9833bd96b6bb35  /tmp/gvisor.tar.zstd" | sha512sum -c -
+          mkdir /tmp/gvisor && tar --zstd -xf /tmp/gvisor.tar.zstd -C /tmp/gvisor
+          sudo install -m 0755 "$(find /tmp/gvisor -name runsc -type f | head -1)" /usr/local/bin/runsc
+          sudo runsc install
+          sudo systemctl restart docker
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: images/maku-browser/Dockerfile
+          load: true
+          push: false
+          tags: maku-browser:contract
+      - name: maku-browser contract under runc
+        env:
+          MAKU_BROWSER_IMAGE: maku-browser:contract
+          SKIP_BUILD: "1"
+          DOCKER_RUNTIME: runc
+        run: images/maku-browser/tests/runsc-contract.sh
+      - name: maku-browser contract under gVisor (runsc)
+        if: ${{ !cancelled() }}
+        env:
+          MAKU_BROWSER_IMAGE: maku-browser:contract
+          SKIP_BUILD: "1"
+          SIZE_COMPRESSED: "1"
+          DOCKER_RUNTIME: runsc
+        run: images/maku-browser/tests/runsc-contract.sh
+
   # The values contract (v4 step 8, CL7; V17): each chart's values against the latest release's,
   # pulled from ghcr.io and cosign-verified, as a table in the job summary. Report-only (step 8 R8): a
   # breaking row never fails it; only a release it cannot pull or verify does. Arming it (--strict) is
@@ -309,7 +358,7 @@ jobs:
     strategy:
       max-parallel: 2
       matrix:
-        image: [maku-broker, maku-bridge, maku-factory, maku-harness, maku-opencode, maku-run-controller, maku-slack]
+        image: [maku-broker, maku-bridge, maku-browser, maku-factory, maku-harness, maku-opencode, maku-run-controller, maku-slack]
     uses: ./.github/workflows/image.yaml
     with:
       image: ${{ matrix.image }}
@@ -360,7 +409,7 @@ jobs:
           BUILDS: ${{ needs.prerelease.result }}
         run: >-
           bash hack/prerelease-publish.sh "$RUNNER_TEMP/digests" "$VERSION"
-          maku-broker maku-bridge maku-factory maku-harness maku-opencode maku-run-controller maku-slack
+          maku-broker maku-bridge maku-browser maku-factory maku-harness maku-opencode maku-run-controller maku-slack
 
   # One signed chart per PR push, <next-patch>-pr<N>.g<sha8>, whose appVersion is the image
   # pre-release of the same push. The `g` keeps a digits-only sha a valid semver identifier

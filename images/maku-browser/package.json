@@ -1,0 +1,9 @@
+{
+  "name": "maku-browser",
+  "private": true,
+  "description": "Playwright MCP for the maku-browser sidecar; versions pinned exactly, the lock committed.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@playwright/mcp": "0.0.85"
+  }
+}

@@ -4,6 +4,8 @@
 # What a pull request touches, for ci.yaml's path-gated jobs: key=value lines on stdout (and in
 # $GITHUB_OUTPUT when set).
 #   harness     images/maku-harness/ (the harness image, its suites and its checks), or this gating
+#   browser     images/maku-browser/ or the gate it carries (cmd/maku-browser-gate, internal/browsergate,
+#               internal/app/browsergate.go), or this gating: ci.yaml's browser-contract under gVisor
 #   deployable  anything but documentation (docs/, LICENSE, the root's *.md): what the prereleases build
 #   install     the charts, the wizard, the preflight, the install jobs' harness and stub, or the workflow
 #               that runs them: demo-e2e.yaml's install jobs (v4 step 7, PR F; D23)
@@ -24,6 +26,7 @@ emit() {
 
 if [[ ${GITHUB_EVENT_NAME:-} != pull_request ]]; then
   emit harness true
+  emit browser true
   emit deployable true
   emit install true
   emit charts true
@@ -35,11 +38,14 @@ git rev-parse -q --verify 'HEAD^2' >/dev/null ||
 files="$(git diff --name-only 'HEAD^1' HEAD)"
 printf 'changed:\n%s\n' "$files" >&2
 
-harness=false deployable=false install=false charts=false
+harness=false browser=false deployable=false install=false charts=false
 while IFS= read -r f; do
   [[ -n $f ]] || continue
   case "$f" in
     images/maku-harness/* | images/maku-opencode/* | .github/workflows/ci.yaml | hack/ci-changes.sh) harness=true ;;
+  esac
+  case "$f" in
+    images/maku-browser/* | cmd/maku-browser-gate/* | internal/browsergate/* | internal/app/browsergate.go | .github/workflows/ci.yaml | hack/ci-changes.sh) browser=true ;;
   esac
   case "$f" in
     charts/* | internal/install/* | internal/preflight/* | hack/install-e2e/* | hack/e2e-stub/* | .github/workflows/demo-e2e.yaml | hack/ci-changes.sh) install=true ;;
@@ -57,6 +63,7 @@ while IFS= read -r f; do
   esac
 done <<<"$files"
 emit harness "$harness"
+emit browser "$browser"
 emit deployable "$deployable"
 emit install "$install"
 emit charts "$charts"

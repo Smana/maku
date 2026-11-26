@@ -32,6 +32,12 @@ want charts/maku/README.md -- deployable=true
 want internal/x.go -- deployable=true harness=false
 want images/maku-harness/x.py -- deployable=true harness=true
 want images/maku-opencode/x.py -- deployable=true harness=true
+# The maku-browser image and the gate it carries (ci.yaml's browser-contract).
+want images/maku-browser/Dockerfile -- deployable=true browser=true harness=false
+want internal/browsergate/proxy.go -- browser=true
+want cmd/maku-browser-gate/main.go -- browser=true
+want internal/app/browsergate.go -- browser=true
+want internal/app/broker.go images/maku-harness/x.py -- browser=false
 # The install jobs (demo-e2e.yaml, v4 step 7 PR F): the charts, the wizard, the preflight, their harness.
 want charts/maku/values.yaml -- install=true
 want internal/install/x.go -- install=true
@@ -51,5 +57,5 @@ if GITHUB_EVENT_NAME=pull_request GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh
 fi
 # Any other event: everything runs.
 out=$(GITHUB_EVENT_NAME=push GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh")
-grep -qx deployable=true <<<"$out" && grep -qx harness=true <<<"$out" && grep -qx install=true <<<"$out" && grep -qx charts=true <<<"$out"
+grep -qx deployable=true <<<"$out" && grep -qx harness=true <<<"$out" && grep -qx browser=true <<<"$out" && grep -qx install=true <<<"$out" && grep -qx charts=true <<<"$out"
 echo "==> ci-changes_test: ok"
