@@ -237,8 +237,9 @@ class OpenCodeDriver(HarnessDriver):
         oc_config.atomic_write(self.session_file, sid + "\n", mode=0o600)
         self._active_cid = sid
         self._attach_tracer(request.span)
-        if not request.resumed:
-            self.send(sid, request.task, run=True)
+        # A new session always gets the task. request.resumed also means "the branch was already
+        # pushed" (every retry and every reviewer): only a reattached session, returned above, has it.
+        self.send(sid, request.task, run=True)
         return sid
 
     def _attach_tracer(self, span) -> None:
