@@ -4,6 +4,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/narrate"
 )
 
@@ -270,7 +272,9 @@ func (r *Reconciler) applyLateDiffRequires(ctx context.Context, cfg *config.Conf
 	if t.Status.Profile != nil && t.Status.Profile.Requires != nil && t.Status.Profile.Requires.DiffChecked {
 		return false, nil
 	}
-	if r.Merger == nil {
+	// The merger App is the repository's, bound on ctx (v2 D8): r.Merger is unset in the factory.
+	m := r.merger(ctx)
+	if m == nil {
 		return false, nil
 	}
 	head := t.Status.PullRequest.HeadSHA
@@ -284,7 +288,10 @@ func (r *Reconciler) applyLateDiffRequires(ctx context.Context, cfg *config.Conf
 	if head == "" {
 		return false, nil
 	}
-	diff, err := r.merger(ctx).Diff(ctx, "main", head)
+	diff, err := m.Diff(ctx, "main", head)
+	if errors.Is(err, forge.ErrNoMerger) { // no merger App key: nothing reads the diff
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
