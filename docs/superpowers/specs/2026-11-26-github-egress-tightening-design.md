@@ -1,6 +1,7 @@
 # GitHub egress tightening: release downloads only while the toolchain installs
 
-**Status:** design, approved for speccing by the owner 2026-11-26, not built.
+**Status:** design, approved by the owner 2026-11-26 with the recommendations on all six open
+questions (see [Owner decisions](#owner-decisions-2026-11-26)); being built.
 **Scope:** Maku (run-controller config, egress proxy, harness) and ai-native-ref (drill runbook,
 pin bump). cloud-native-ref owns none of it. Read against Maku `origin/main` at `5fd4b41e`
 (v0.54.7+4) and the live gcp-0 config of 2026-11-26.
@@ -234,3 +235,78 @@ The results go to `docs/runbooks/agent-factory/results-github-egress-drill-<date
 | 4 | A run that changes a tool pin cannot install the new version. Allow a second install window on a harness request? | No: reopening is what the one-way close forbids. CI covers the bumped pin; the message says so. |
 | 5 | Should `pypi`, `npm` and `crates` get the same install-then-close treatment? | Yes for the hook environments (they install in the phase now). Not for the agent's own `pip install`: the agent legitimately adds dependencies. Pinning there is a separate spec. |
 | 6 | Bake `bash` and the common tools into every harness image so a missing tool never tempts a workaround? | Yes, `bash` at least: that is the image defect behind this incident, tracked separately. Baking the whole toolchain would fight the per-repository pins. |
+
+## Owner decisions (2026-11-26)
+
+The owner accepted the recommendation on every open question.
+
+| # | Decision |
+|---|---|
+| 1 | `git clone` of public repositories stays open. Ship B; watch the `install_closed` alert and `github.com` traffic. Option D only if an incident uses the clone path; never C. |
+| 2 | `cilium` mode gets a follow-up spec that routes its HTTPS through the egress proxy: [2026-11-26-cilium-egress-through-proxy-design.md](2026-11-26-cilium-egress-through-proxy-design.md). Not built with this spec. Until then the install hosts stay open for the whole run in `cilium` mode, and the harness says so. |
+| 3 | `raw.githubusercontent.com` leaves the run set. M1 below shows the install uses it, so it joins the install set. `codeload.github.com` leaves both sets. |
+| 4 | The install window closes one way. A pin bumped during the run is not installed; the message says so and names CI as the place it is checked. |
+| 5 | The `pypi`, `npm` and `crates` hosts get the install window for pre-commit hook environments only: a check-enabled run's install set holds them when its run set does not. A run that requests one of these profiles keeps it for the whole run, so the agent can still add dependencies. |
+| 6 | `bash` in every harness image: already enforced by Maku #736's userland contract (`images/maku-harness/tests/userland-contract.sh`, run in both harness images' builds, so an image without `bash` does not build). Nothing to build here. |
+
+## M1 measurement (gcp-0, 2026-11-25 16:48 to 2026-11-26 21:31 UTC)
+
+Read from VictoriaLogs: every `allow` and `refuse` decision of the egress proxy (2,754 lines, 95
+runs), each placed before or after the run's first agent step (`agent-run step 1:` in the
+harness log). Before step 1 is the install phase plus the clone; after it, the background
+prefetch can still overlap the agent's first turns, so "after" is an upper bound for the agent.
+
+| Host | Before step 1 | After step 1 | Runs | Set after this spec |
+|---|---|---|---|---|
+| `github.com` | most | most | 95 | run |
+| `api.github.com` | most | most | 86 | run |
+| `release-assets.githubusercontent.com` | 72 | 24 | 75 | install |
+| `raw.githubusercontent.com` | 110 | 2 | 57 | install (it follows an `api.github.com` call: mise's GitHub backends) |
+| `objects.githubusercontent.com` | 0 | 0 | 0 | install (older release assets land there) |
+| `codeload.github.com` | 0 | 1 | 1 | none: the one call was the agent's |
+| `dl.google.com` | 136 | 14 | 69 | `golang` profile, unchanged |
+| `pypi.org`, `files.pythonhosted.org` | 0 | 179, 178 | 60 | `pypi` profile, unchanged |
+
+The 22 harness log lines that name `releases/download`, `raw.githubusercontent` or `codeload`
+are all agent steps: eleven fetch `robxu9/bash-static` (the incident, across seven runs), eight
+fetch a `gohugoio/hugo` release the repository already pins, one a `python-build-standalone`
+release, and one reads a JavaScript file from `raw.githubusercontent.com`. B refuses every one.
+
+Install time: from a run's first proxy decision to its last install-host decision, p50 15 s and
+p90 224 s (the tail includes agent downloads); the first agent step comes 39 s (p50) after the
+first decision today. Moving the install to the foreground costs little at p50, well inside the
+60 s budget.
+
+## Implementation notes
+
+What the build settled that the sections above leave open.
+
+- **The close is stored on the pod.** The proxy runs two replicas and restarts, so a closed set
+  held in memory would reopen. `POST /v1/close-install` makes the proxy that receives it patch the
+  pod with `maku.ogenki.io/egress-install-closed: "true"`, with the pod's UID as a precondition;
+  every replica reads it from its pod watch. The proxy's Role gains `patch` on pods, and the
+  run-pod policy holds that write: the proxy may change that one annotation and nothing else, the
+  annotation never changes once set, and `egress-install` and `egress-install-until` never change
+  after create. The harness's self-check retries for a few seconds, since a replica's watch can
+  trail the patch.
+- **The harness finds the endpoint by its environment.** In `kubernetes` mode, a check-enabled
+  run's harness gets `EGRESS_INSTALL_CLOSE_URL` (the proxy's Service, which `NO_PROXY` keeps
+  direct) and `POD_UID` (downward API). Without them (the other modes, or a run with no install
+  set) it closes nothing and says so.
+- **The self-check uses a host of its own.** A CONNECT to `release-assets` after the close would be
+  an `install_closed` refusal and fire the alert on every run. The harness instead connects to
+  `install-check.maku.invalid:443`, which the proxy never dials: 409 while the client's set is
+  open, 403 with reason `install_check` once it is closed. The answer comes from the same entry and
+  the same open/closed test as every install host's.
+- **An install tunnel ends with the set.** A tunnel to an install host opened in the window
+  re-checks the pod's entry every second and closes once the set is closed (on any replica) or
+  past its deadline, so a download started in the install phase cannot run on into the agent's.
+- **The window is 1,200 s by default** (`installEgress.windowSeconds`): image pull, clone and two
+  300 s install bounds (tools, then hook environments) with a margin. The harness closes long before
+  it in a healthy run.
+- **Refusals by reason.** A new counter, `maku_egress_proxy_refusals_total{reason}`, keeps the
+  existing `maku_egress_proxy_connections_total{decision}` series unchanged. Every decision's log
+  line carries `phase=install|agent` (M1's field) and `reason=` on a refusal.
+- **The browser sidecar gets no window of its own.** It shares the pod's IP, so it shares the
+  pod's install set while the set is open; nothing drives it until the agent starts, which is
+  after the close and the self-check. It gets neither variable above.
