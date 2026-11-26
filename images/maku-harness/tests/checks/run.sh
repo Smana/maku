@@ -14,9 +14,11 @@ set -euo pipefail
 image=$1 repo=$2 profiles=$3 token=$4
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# The composition's _EGRESS_PROFILES, the two v3 hosts included; runctl's defaultProfiles are the same.
+# runctl's defaultProfiles, and its defaultInstallHosts under [install]: a check run reaches them while
+# its toolchain installs, which is all this suite runs, so they are allowed here throughout.
 declare -A HOSTS=(
-  [github]="github.com api.github.com codeload.github.com objects.githubusercontent.com raw.githubusercontent.com release-assets.githubusercontent.com"
+  [github]="github.com api.github.com"
+  [install]="release-assets.githubusercontent.com objects.githubusercontent.com raw.githubusercontent.com"
   [pypi]="pypi.org files.pythonhosted.org"
   [npm]="registry.npmjs.org"
   [golang]="proxy.golang.org sum.golang.org dl.google.com"
@@ -31,7 +33,7 @@ case "$code" in
   *) echo "FAIL ${repo}: could not read its declaration (HTTP $code)"; exit 1 ;;
 esac
 
-allow=${HOSTS[github]}
+allow="${HOSTS[github]} ${HOSTS[install]}"
 for p in ${profiles//,/ }; do
   [ -n "${HOSTS[$p]:-}" ] || { echo "unknown profile $p" >&2; exit 2; }
   allow="$allow ${HOSTS[$p]}"
@@ -108,13 +110,13 @@ grep -qi gvisor "$out/kernel" 2>/dev/null || { echo "FAIL ${repo}: the container
 if grep '^refuse' "$out/proxy.log" | sort -u | grep .; then
   echo "FAIL ${repo}: the checks reached hosts beyond the run's egress (above)"; fail=1
 fi
-[ "$(cat "$out/install.exit" 2>/dev/null || echo missing)" = 0 ] || { echo "FAIL ${repo}: the install left a tool missing"; cat "$out/install.out" 2>/dev/null || true; fail=1; }
+[ "$(cat "$out/install.exit" 2>/dev/null || echo missing)" = 0 ] || { echo "FAIL ${repo}: the install left a tool missing"; cat "$out/install.out" 2>/dev/null || true; tail -40 "$out/install.log" 2>/dev/null || true; fail=1; }
 cat "$out/checks.out" 2>/dev/null || true
 [ "$rc" = 0 ] || exit 1
 python3 - "$out" "$repo" "$here" <<'EOF' || fail=1
 import glob, json, os, re, sys
 out, repo, here = sys.argv[1:4]
-res = [json.load(open(p)) for p in glob.glob(os.path.join(out, "*.json")) if ".step-" not in p]
+res = [json.load(open(p)) for p in glob.glob(os.path.join(out, "*.json")) if ".step-" not in p and os.path.basename(p) != "install.json"]
 assert len(res) == 1, "want one result, got %d" % len(res)
 steps = res[0]["steps"]
 sys.path.insert(0, here)

@@ -43,7 +43,7 @@ if cmd == "install":
         os.makedirs(b, exist_ok=True)
         tool = os.path.join(b, s.split("@")[0])
         with open(tool, "w") as f:
-            f.write("#!/bin/sh\necho %s\n" % s)
+            f.write("#!/bin/sh\necho \"%s $* HOME=$HOME\" >> %s\n%s\necho %s\n" % (s, os.path.join(here, "tools.log"), knobs.get("tool_exit", ""), s))
         os.chmod(tool, 0o755)
     sys.exit(0)
 if cmd == "env":
@@ -354,6 +354,67 @@ class ToolchainTest(Rig):
         self.assertEqual(code, 0)
         self.assertIn("agent-checks: toolchain ready", self.text(lines))
         self.assertFalse(os.path.exists(os.path.join(self.repo, "first.out")))
+
+    def test_the_install_records_the_pins_it_installed(self):
+        self.run_checks("--install")
+        with open(os.path.join(agent_checks.STATE, agent_checks.INSTALLED)) as f:
+            self.assertEqual(json.load(f), {"pins": {"task": "3.54.0", "go": "1.27.2"}})
+
+    def close_install(self):
+        with open(os.path.join(agent_checks.STATE, agent_checks.CLOSED), "w") as f:
+            f.write("closed\n")
+
+    def test_after_the_install_closed_a_bumped_pin_is_named_and_not_installed(self):
+        self.run_checks("--install")
+        self.close_install()
+        self.commit("mise.toml", '[tools]\ntask = "3.55.0"\ngo = {version = "1.27.2"}\n')
+        _, lines = self.run_checks()
+        with open(self.mise_log) as f:
+            self.assertEqual(len(f.readlines()), 1, "nothing installs after the install phase")
+        self.assertEqual(self.result()["missingTools"], ["task"])
+        self.assertIn("toolchain incomplete: task (pin changed after the install phase; CI checks it)", self.text(lines))
+
+    def test_after_the_install_closed_a_tool_it_left_missing_is_named(self):
+        self.write(self.tmp, "fake-mise.json", '{"fail": "go"}')
+        self.run_checks("--install")
+        self.close_install()
+        _, lines = self.run_checks()
+        with open(self.mise_log) as f:
+            self.assertEqual(len(f.readlines()), 1)
+        self.assertIn("toolchain incomplete: go (not installed in the install phase; CI checks it)", self.text(lines))
+
+    def declare_pre_commit(self):
+        self.base_declares(DECLARED.replace("tools: [task, go]", "tools: [task, go, pre-commit]"))
+        self.write(self.repo, ".pre-commit-config.yaml", "repos: []\n")
+        self.write(self.repo, "mise.toml", '[tools]\ntask = "3.54.0"\ngo = {version = "1.27.2"}\npre-commit = "4.0.0"\n')
+        sh(self.repo, *self.git, "add", "-A")
+        sh(self.repo, *self.git, "commit", "-qm", "pre-commit")
+
+    def tools_log(self):
+        p = os.path.join(self.tmp, "tools.log")
+        if not os.path.exists(p):
+            return ""
+        with open(p) as f:
+            return f.read()
+
+    def test_the_install_builds_the_pre_commit_hook_environments(self):
+        self.declare_pre_commit()
+        code, lines = self.run_checks("--install")
+        self.assertEqual(code, 0, self.text(lines))
+        self.assertIn("pre-commit@4.0.0 install-hooks", self.tools_log())
+        self.assertIn("agent-checks: toolchain ready", self.text(lines))
+        self.assertIn("HOME=%s" % agent_checks.TOOLCHAIN, self.tools_log(), "the zipapp unpacks under an executable HOME")
+
+    def test_hook_environments_that_fail_to_build_leave_the_toolchain_incomplete(self):
+        self.declare_pre_commit()
+        self.write(self.tmp, "fake-mise.json", '{"tool_exit": "exit 3"}')
+        code, lines = self.run_checks("--install")
+        self.assertEqual(code, 1)
+        self.assertIn("toolchain incomplete: pre-commit hooks", self.text(lines))
+
+    def test_no_hook_install_without_pre_commit_or_its_config(self):
+        self.run_checks("--install")
+        self.assertNotIn("install-hooks", self.tools_log())
 
 
 class StepTest(Rig):

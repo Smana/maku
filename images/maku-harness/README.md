@@ -24,7 +24,8 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 | `GIT_TOKEN_FILE` | the git credential helper prints this file's token, and revokes it on exit only with `GIT_TOKEN_REVOCABLE=1` (each run's own token sets it, a PAT never is) | git and gh have no token: the helper refuses, naming the variable |
 | `MCP_URL` | the platform MCP entry and progress notes are wired | no platform tools, no progress notes |
 | `MCP_TOKEN_FILE` | every MCP request (the platform entry's, re-read per POST by `site/sitecustomize.py`, and the progress notes') carries `Authorization: Bearer <the file>`: the portable runtime's room tools token, which the broker's `:8090` verifies itself | no `Authorization`: a gateway in front authenticates the run |
-| `AGENT_CHECKS` | `1`: the toolchain installs in the background after the clone, the rules gain the repository-checks rule, and a `finished` implementer run checks its head, notes the result in the room and emits the span `agent-run.checks` | today's run |
+| `AGENT_CHECKS` | `1`: the toolchain and pre-commit's hook environments install after the clone, before the agent starts (bounded at 660 s; an incomplete install never fails the run), the rules gain the repository-checks rule, and a `finished` implementer run checks its head, notes the result in the room and emits the span `agent-run.checks` | today's run |
+| `EGRESS_INSTALL_CLOSE_URL`, `POD_UID` | After the install phase, `agent-run` posts `{"podUID"}` to the egress proxy's close, then checks the close with a CONNECT to the proxy's check host `install-check.maku.invalid:443`, which must answer 403, not 409 (retrying 10 s, for a replica's watch). Either failing ends the run `egress_install_open` and the agent never starts. Then nothing installs: `agent-checks` names a missing tool, `(pin changed after the install phase; CI checks it)` or `(not installed in the install phase; CI checks it)` | a check run says its install hosts stay open (cilium mode) |
 | `AGENT_RUN_SECONDS` | the pod's deadline: the final checks are skipped (`skipped: deadline`) when less than the declaration's budget plus 2 min is left | the final checks always run |
 | `AGENT_LOOP` | an implementer runs under the [loop policy](#loop-policy): a JSON object holding any of `stallSteps`, `continuations` and `judgeModel`; `{}` is 80, 2 and `tier-light` | no judge and no stall rule: the run ends when its conversation does |
 | `JUDGE_BASE_URL` | the judge posts to `$JUDGE_BASE_URL/chat/completions` with `JUDGE_MODEL` as its model (required: without it the judge is unavailable and says so on stderr), on the key `LLM_API_KEY_FILE` names; for a runtime with no identity proxy (maku-run-controller) | the identity proxy's `/judge/v1`, as below |
@@ -142,7 +143,7 @@ wasted implementer run, CI's "Test contract" job is the judge.
 
 **The mode** is `ROLE=tester` and no `TASK_URL` (F1-R1). A verifier tester always carries the pull
 request's URL and runs as before. In the mode, `agent-run` sets the clone's `remote.origin.pushurl` to
-`disabled://the-tester-never-pushes`, so the model commits and never pushes, and the prefetch installs the
+`disabled://the-tester-never-pushes`, so the model commits and never pushes, and the install phase installs the
 toolchain as for any role. The rules gain a "Test contract" section naming where tests go and `test-contract red`.
 
 **The ends.** When the conversation ends `finished`, `agent-run` squashes the model's commits since the

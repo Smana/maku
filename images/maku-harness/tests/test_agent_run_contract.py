@@ -97,16 +97,12 @@ class TesterCloneTest(Origin, unittest.TestCase):
 
 
 class ToolchainTest(Origin, unittest.TestCase):
-    def test_contract_env_waits_for_the_prefetch_then_installs_once(self):
+    def test_contract_env_installs_once_and_builds_the_step_env(self):
         ac = agent_run.checks_module()
-        proc = mock.Mock()
-        order = []
-        proc.wait.side_effect = lambda timeout=None: order.append(("wait", timeout))
         with mock.patch.object(ac, "pins", return_value={"go": "1.2"}) as pins, \
-                mock.patch.object(ac, "install", side_effect=lambda t, say: order.append("install") or []) as install, \
+                mock.patch.object(ac, "install", return_value=[]) as install, \
                 mock.patch.object(ac, "step_env", return_value={"PATH": "/x"}) as step_env:
-            env = agent_run.contract_env({"tools": ["go"]}, proc)
-        self.assertEqual(order, [("wait", ac.INSTALL_S), "install"])
+            env = agent_run.contract_env({"tools": ["go"]})
         pins.assert_called_once_with(["go"])
         self.assertEqual(install.call_count, 1)
         step_env.assert_called_once_with({"go": "1.2"}, [])
@@ -115,19 +111,11 @@ class ToolchainTest(Origin, unittest.TestCase):
         self.assertTrue(os.path.isdir(trees))
         self.assertEqual(env["PATH"], "/x")
 
-    def test_a_prefetch_that_overruns_is_not_waited_for_twice(self):
-        ac = agent_run.checks_module()
-        proc = mock.Mock()
-        proc.wait.side_effect = subprocess.TimeoutExpired("x", 1)
-        with mock.patch.object(ac, "pins", return_value={}), mock.patch.object(ac, "install", return_value=[]), \
-                mock.patch.object(ac, "step_env", return_value={}):
-            self.assertIn("TMPDIR", agent_run.contract_env({}, proc))
-
-    def test_no_prefetch_is_fine(self):
+    def test_no_tools_is_fine(self):
         ac = agent_run.checks_module()
         with mock.patch.object(ac, "pins", return_value={}), mock.patch.object(ac, "install", return_value=[]), \
                 mock.patch.object(ac, "step_env", return_value={}):
-            self.assertIn("TMPDIR", agent_run.contract_env({}, None))
+            self.assertIn("TMPDIR", agent_run.contract_env({}))
 
     def test_the_start_base_is_the_clones_default_branch_and_does_not_move(self):
         self.assertEqual(agent_run.start_base(), self.base)
@@ -603,7 +591,7 @@ class MainContractTest(unittest.TestCase):
             stack.enter_context(mock.patch("agent_run.LOOP_STATE", os.path.join(d, "loop.json")))
             for name, kw in {"subprocess.Popen": {}, "wait_ready": {}, "persisted": {"return_value": resumed},
                              "clone": {"return_value": False}, "declared": {"return_value": decl},
-                             "prefetch": {"return_value": "proc"}, "start_base": {"return_value": "b"},
+                             "install_toolchain": {}, "close_install": {}, "start_base": {"return_value": "b"},
                              "load_contract": {"return_value": contract}, "build_request": {"return_value": {}},
                              "head": {"return_value": "h0"}, "http": {"return_value": {"id": "c1"}},
                              "poll": {"return_value": poll}, "drive": {"return_value": (0, None, "")},
@@ -624,7 +612,8 @@ class MainContractTest(unittest.TestCase):
         r.disable_push.assert_called_once()
         r.tester_end.assert_called_once()
         self.assertEqual(r.tester_end.call_args.args[:3], (mock.ANY, "c1", "b"))
-        r.prefetch.assert_called_once()
+        r.install_toolchain.assert_called_once()
+        r.close_install.assert_called_once()
 
     def test_a_tester_with_a_task_url_is_todays_verifier(self):
         r = self.main({"TASK_URL": "https://github.com/o/r/pull/1"})
