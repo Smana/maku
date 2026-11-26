@@ -24,6 +24,7 @@
 #       metadata server's token and no key, reasoning_effort as a thinking level, a two-tool loop
 #       from a caller that drops unknown fields, the catalog key and the cost. gemini: the
 #       OpenAI-compatible path and key, and what a caller must echo for the signature.
+#   P8  image parts: a user message's image_url part reaches the provider on every OpenAI-compatible preset.
 # Usage: probe.sh   (docker, k3d, helm, kubectl, jq, yq, openssl). KEEP=1 keeps the cluster for a look around.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -172,6 +173,15 @@ r="$(report "$(call "$PUB/m/mistral-light/v1/chat/completions" /tokens/public-mi
 r="$(report "$(call "$PUB/m/kimi-frontier/v1/chat/completions" /tokens/public-kimi-frontier tier-light)")"
 jq -e '.temperature == 1 and .top_p == "<absent>" and .model == "k3.1-pro"' <<<"$r" >/dev/null \
   && pass "P4 moonshot: temperature 1 and no top_p though the caller sent 0 and 0.5" || fail "P4 moonshot: $r"
+
+echo "==> P8: image parts"
+# A screenshot reaches the model as an image_url part on a user message (screenshots ledger L1, L2):
+# every OpenAI-compatible preset forwards it unchanged. Anthropic's translation is proven live (drill D4).
+for alias in tier-light mistral-light kimi-frontier; do
+  r="$(report "$(call "$PUB/m/$alias/v1/chat/completions" "/tokens/public-$alias" tier-light IMAGE)")"
+  jq -e '[.images[] | select(.role == "user" and .n == 1)] | length == 1' <<<"$r" >/dev/null \
+    && pass "P8 $alias: the user message after a tool result reaches the provider with its image part" || fail "P8 $alias: $r"
+done
 
 echo "==> P5: metrics"
 out="$(call "$PUB/m/tier-light/v1/chat/completions" /tokens/public-tier-light tier-light THROTTLE)"

@@ -54,6 +54,11 @@ class Handler(BaseHTTPRequestHandler):
             "x-api-key": "present" if self.headers.get("x-api-key") else ABSENT,
             "x-ar-agent": self.headers.get("x-ar-agent", ABSENT),
             "x-ar-human": self.headers.get("x-ar-human", ABSENT),
+            # Image parts per list-content message, by role (probe P7).
+            "images": [
+                {"role": m.get("role"), "n": sum(1 for p in m["content"] if isinstance(p, dict) and p.get("type") == "image_url")}
+                for m in req.get("messages", []) if isinstance(m, dict) and isinstance(m.get("content"), list)
+            ],
         }
         print(json.dumps(report), flush=True)
         return self._send(200, {
