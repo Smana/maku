@@ -915,5 +915,18 @@ out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set r
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .images.opencode == "ghcr.io/smana/maku-opencode:'"$digest"'"' 'opencode image reaches run-controller config'
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression) == "['"'"'ghcr.io/smana/maku-harness'"'"', '"'"'ghcr.io/smana/maku-bridge'"'"', '"'"'ghcr.io/smana/maku-run-controller'"'"', '"'"'ghcr.io/smana/maku-opencode'"'"']"' 'opencode repository joins run-pod policy allow-list when configured'
 bad 'image.tag is <version>@sha256:<digest>, never a bare tag' --set runController.images.opencode.tag=v1
+# The browser sidecar image is opt-in (v5 Q16): absent by default; with its tag, it reaches the
+# controller's config with its resources, joins the run-pod policy's images, and the vision aliases
+# load against the served ones.
+out="$q"
+ynone 'select(.kind=="ConfigMap" and .metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | select(has("browser") or (.images | has("browser")))' 'default: no browser image and no browser block'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.images.browser.tag=$digest \
+  --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["agent-default","tier-light"],"internal":["tier-light"]}' \
+  --set-json 'runController.model.gateway.vision={"public":["tier-light"],"internal":["tier-light"]}')"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.images.browser == "ghcr.io/smana/maku-browser:'"$digest"'" and .browser.resources.limits.memory == "2Gi" and .browser.resources.requests.cpu == "250m" and (.model.gateway.vision.public | join(",")) == "tier-light")' 'browser image, its resources and the vision aliases reach run-controller config'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression) | contains("ghcr.io/smana/maku-browser")' 'browser repository joins run-pod policy allow-list when configured'
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/rc-browser.yaml"
+go run ./tests/loadconfig run-controller-gateway "$tmp/rc-browser.yaml" || fail=1
+bad 'image.tag is <version>@sha256:<digest>, never a bare tag' --set runController.images.browser.tag=v1
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"

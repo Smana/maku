@@ -51,6 +51,13 @@ data:
         aliases:
           public: {{ $gw.aliases.public | toJson }}
           internal: {{ $gw.aliases.internal | toJson }}
+        {{- if or $gw.vision.public $gw.vision.internal }}
+        # The aliases whose model accepts images (v5 Q16): a screenshots run on one gets its
+        # screenshots as images; on any other the browser gate keeps them for the room only.
+        vision:
+          public: {{ $gw.vision.public | toJson }}
+          internal: {{ $gw.vision.internal | toJson }}
+        {{- end }}
         lightAlias: {{ default "" $gw.lightAlias | quote }}
     {{- else }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
@@ -77,10 +84,18 @@ data:
       {{- if and $c.images.opencode $c.images.opencode.tag }}
       opencode: {{ include "ap.image" (dict "root" . "image" $c.images.opencode) | quote }}
       {{- end }}
+      {{- if and $c.images.browser $c.images.browser.tag }}
+      browser: {{ include "ap.image" (dict "root" . "image" $c.images.browser) | quote }}
+      {{- end }}
       {{- if eq $mode "kubernetes" }}
       # The preflight's netprobe pod: this controller's own image.
       probe: {{ include "ap.image" (dict "root" . "image" $c.image) | quote }}
       {{- end }}
+    {{- if and $c.images.browser $c.images.browser.tag $c.browser }}
+    # The opt-in browser sidecar's resources (v5 Q16): its own budget, beside the harness's.
+    browser:
+      resources: {{- toYaml $c.browser.resources | nindent 8 }}
+    {{- end }}
     {{- $tr := $c.tracing | default dict }}
     {{- $col := $tr.collector | default dict }}
     {{- if $tr.otlpEndpoint }}

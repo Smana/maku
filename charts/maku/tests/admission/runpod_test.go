@@ -451,3 +451,59 @@ func TestRunPodPolicyOpenCode(t *testing.T) {
 		t.Fatalf("look-alike opencode repo must be refused, got %v", err)
 	}
 }
+
+// TestRunPodPolicyBrowser: the opt-in browser sidecar (v5 Q16) is admitted on implementer and tester
+// pods only, from the chart's browser repository, holding only its own /tmp and cache, and no env
+// from a source.
+func TestRunPodPolicyBrowser(t *testing.T) {
+	ctx := t.Context()
+	browserImage := "ghcr.io/smana/maku-browser:" + digest
+	always := corev1.ContainerRestartPolicyAlways
+	withBrowser := func(role string, mut func(*corev1.Container, *corev1.Pod)) *corev1.Pod {
+		p := runPod(t, true, true)
+		p.Labels[runctl.LabelRole] = role
+		sc := p.Spec.InitContainers[0].SecurityContext.DeepCopy()
+		b := corev1.Container{Name: "browser", Image: browserImage, RestartPolicy: &always, SecurityContext: sc,
+			Env: []corev1.EnvVar{{Name: "MAX_SCREENSHOTS", Value: "10"}, {Name: "VISION", Value: "0"}},
+			Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("2Gi")}},
+			VolumeMounts: []corev1.VolumeMount{{Name: "browser-tmp", MountPath: "/tmp"}, {Name: "browser-cache", MountPath: "/home/browser/.cache"}}}
+		p.Spec.Volumes = append(p.Spec.Volumes,
+			corev1.Volume{Name: "browser-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			corev1.Volume{Name: "browser-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+		if mut != nil {
+			mut(&b, p)
+		}
+		p.Spec.InitContainers = append(p.Spec.InitContainers, b)
+		return p
+	}
+
+	// Without runController.images.browser.tag, maku-browser is not in the allow-list.
+	if err := startPodEnv(t).ctl.Create(ctx, withBrowser("implementer", nil), client.DryRunAll); !deniedByPolicy(err) || !strings.Contains(err.Error(), "images come from") {
+		t.Fatalf("the default policy must refuse maku-browser, got %v", err)
+	}
+
+	pe := startPodEnv(t, "runController.images.browser.tag="+digest)
+	for _, role := range []string{"implementer", "tester"} {
+		if err := pe.ctl.Create(ctx, withBrowser(role, nil), client.DryRunAll); err != nil {
+			t.Fatalf("a browser on a %s pod is refused: %v", role, err)
+		}
+	}
+	for name, p := range map[string]*corev1.Pod{
+		"on a reviewer pod": withBrowser("reviewer", nil),
+		"mounting the workspace": withBrowser("implementer", func(b *corev1.Container, _ *corev1.Pod) {
+			b.VolumeMounts = append(b.VolumeMounts, corev1.VolumeMount{Name: "workspace", MountPath: "/workspace"})
+		}),
+		"reading env from a secret": withBrowser("tester", func(b *corev1.Container, _ *corev1.Pod) {
+			b.Env = append(b.Env, corev1.EnvVar{Name: "X", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "agent-git"}, Key: "token"}}})
+		}),
+		"with envFrom": withBrowser("tester", func(b *corev1.Container, _ *corev1.Pod) {
+			b.EnvFrom = []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "x"}}}}
+		}),
+	} {
+		if err := pe.ctl.Create(ctx, p, client.DryRunAll); !deniedByPolicy(err) || !strings.Contains(err.Error(), "browser sidecar") {
+			t.Errorf("a browser %s must be refused by the browser rule, got %v", name, err)
+		}
+	}
+}

@@ -281,6 +281,15 @@ runController:
     bridge: {repository: ghcr.io/smana/maku-bridge, tag: ""}
     # Optional opt-in OpenCode runner image (same "<version>@sha256:<digest>" rule when tag is set).
     opencode: {repository: ghcr.io/smana/maku-opencode, tag: ""}
+    # Optional browser sidecar image (v5 Q16, docs/browser-verification.md): set it to let a
+    # Repository with spec.screenshots run its implementer and tester with a loopback-only browser.
+    browser: {repository: ghcr.io/smana/maku-browser, tag: ""}
+  # The browser sidecar's own budget, beside the harness's (v5 Q16). Size the runs namespace's
+  # ResourceQuota for it: +512Mi request and +2Gi limit per opted-in run.
+  browser:
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "2", memory: 2Gi}
   # Secrets in runs.namespace the controller reads: model (api_key, model, base_url) and git.
   # modelSecret is model.mode secret's, and not read in model.mode gateway.
   modelSecret: agent-model
@@ -307,6 +316,10 @@ runController:
       # or judge alias its listener does not serve is refused before its pod exists; an internal run
       # needs internal aliases.
       aliases: {public: [], internal: []}
+      # The aliases whose model accepts images, each one a served alias of its listener (v5 Q16). A
+      # screenshots run on one sends its screenshots to the model; on any other the gate keeps them
+      # for the room and answers the model with text.
+      vision: {public: [], internal: []}
       # The alias the light jobs run on (CP12): an internal run's condenser summary and a search
       # implementer's child. Every non-empty listener must serve it; the run-controller refuses its
       # config at load otherwise. Empty: the controller's tier-light default.

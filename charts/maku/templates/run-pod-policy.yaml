@@ -4,6 +4,7 @@
 {{- $c := .Values.runController -}}
 {{- $images := list $c.images.harness.repository $c.images.bridge.repository $c.image.repository -}}
 {{- if and $c.images.opencode $c.images.opencode.tag }}{{ $images = append $images $c.images.opencode.repository }}{{ end -}}
+{{- if and $c.images.browser $c.images.browser.tag }}{{ $images = append $images $c.images.browser.repository }}{{ end -}}
 {{- range .Values.runPodPolicy.extraImages }}{{ $images = append $images . }}{{ end -}}
 {{- $quoted := list -}}
 {{- /* Each value below is pasted into a CEL string: one that could close the quote is refused. */ -}}
@@ -100,6 +101,15 @@ spec:
         s.serviceAccountToken.audience in ['room-broker', 'room-tools'])))
       message: "a run pod's projected ServiceAccount tokens are for room-broker or room-tools only"
     {{- end }}
+    # The opt-in browser sidecar (v5 Q16, screenshots plan C3): the policy sees the pod only, so it keys
+    # on the role label, which only the run-controller sets. The browser holds its own /tmp and cache
+    # and nothing else: no workspace, no token volume, no env read from a Secret or ConfigMap.
+    - expression: >-
+        variables.containers.all(c, c.name != 'browser' ||
+        (has(object.metadata.labels) && object.metadata.labels[?'agents.ogenki.io/role'].orValue('') in ['implementer', 'tester'] &&
+        (!has(c.volumeMounts) || c.volumeMounts.all(m, m.name in ['browser-tmp', 'browser-cache'])) &&
+        (!has(c.env) || c.env.all(e, !has(e.valueFrom))) && !has(c.envFrom)))
+      message: "the browser sidecar runs on implementer and tester pods only, mounting its own /tmp and cache, with no secret, token or env from a source (v5 Q16)"
     - expression: "!has(object.spec.ephemeralContainers)"
       message: "a run pod takes no ephemeral container: no kubectl debug into a run"
     - expression: >-
