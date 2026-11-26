@@ -302,6 +302,7 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.HandleFunc("POST /api/rooms", s.createRoom)
 	mux.HandleFunc("POST /api/handoffs", s.handoffCreateRoute)
+	mux.HandleFunc("GET /api/handoffs/repositories", s.handoffRepositoriesRoute)
 	mux.HandleFunc("POST /api/handoffs/{id}/check", s.handoffCheckRoute)
 	mux.HandleFunc("POST /api/handoffs/{id}/start", s.handoffStartRoute)
 	mux.HandleFunc("GET /api/rooms/{id}/summary", s.roomSummary)

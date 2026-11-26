@@ -81,7 +81,7 @@ var sentences = map[string]string{
 	ReasonPlanChanged:               "the plan was superseded; the newer one is the one to confirm",
 	ReasonRepositoryUnverified:      "GitHub could not confirm this repository, so the planner will not guess; try again later",
 	ReasonRepositoryNotInCandidates: "the plan names a repository outside the ones this request may use; name one of them",
-	ReasonRepositoryNotServedHere:   "%s; an operator adds it to the repositories served here",
+	ReasonRepositoryNotServedHere:   "%s; ask your platform team to serve it: they run maku repo add with its owner/name",
 	ReasonRepositoryServedElsewhere: "%s; hand it off from that repository, or name it as the target",
 	ReasonInvalidClass:              "the class is not one this broker's config defines (%s); name one of the classes it serves",
 	ReasonNotLinked:                 "your account is not linked to GitHub, so the broker cannot tell what you may write; link it first",
