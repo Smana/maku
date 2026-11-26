@@ -64,6 +64,9 @@ type bridgeConfig struct {
 	suspendable bool
 	// searchBuiltin is AGENT_SEARCH=1: the run has the harness's search tool (v3 feature 5).
 	searchBuiltin bool
+	// browserGate is BROWSER_GATE_URL, the run's browser gate on loopback: set, the bridge relays
+	// the screenshots it keeps to the room (harness screenshots Task 15).
+	browserGate string
 }
 
 func loadBridgeConfig(getenv func(string) string) (bridgeConfig, error) {
@@ -84,6 +87,7 @@ func loadBridgeConfig(getenv func(string) string) (bridgeConfig, error) {
 	c.memLimitSet = getenv("GOMEMLIMIT") != ""
 	c.suspendable = getenv("AGENT_SUSPENDABLE") == "true"
 	c.searchBuiltin = getenv("AGENT_SEARCH") == "1"
+	c.browserGate = getenv("BROWSER_GATE_URL")
 	c.branch, c.egress = getenv("BRANCH"), map[string]bool{}
 	c.readOnlyMCP = map[string]bool{}
 	for k, dst := range map[string]map[string]bool{"EGRESS_PROFILES": c.egress, "MCP_READ_ONLY_TOOLS": c.readOnlyMCP} {
@@ -97,6 +101,11 @@ func loadBridgeConfig(getenv func(string) string) (bridgeConfig, error) {
 	if v := getenv("MCP_BARE_SERVER"); v != "" {
 		if c.bareServer = strings.TrimSpace(v); c.bareServer == "" || strings.Contains(c.bareServer, "_") {
 			missing = append(missing, fmt.Errorf("MCP_BARE_SERVER %q must be a server name: non-empty, with no underscore", v))
+		}
+	}
+	if c.browserGate != "" {
+		if err := bridge.ValidGateURL(c.browserGate); err != nil {
+			missing = append(missing, err)
 		}
 	}
 	if v := getenv("FLUSH_GRACE"); v != "" {
@@ -311,6 +320,9 @@ func RunBridge(ctx context.Context, log *slog.Logger, getenv func(string) string
 	}
 	b := &bridge.Bridge{Harness: harness, Broker: broker,
 		RunID: cfg.runID, Logger: log, FlushGrace: cfg.flushGrace}
+	if cfg.browserGate != "" {
+		b.Shots = &bridge.ShotRelay{Gate: cfg.browserGate, Broker: broker, RunID: cfg.runID, Logger: log}
+	}
 	_, _ = wireBridge(b, broker, cfg, log)
 
 	var lc net.ListenConfig
