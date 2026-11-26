@@ -23,6 +23,7 @@ Reference for the broker, bridge, factory, CLI and web UI. See the [status page]
 | Page | Answers |
 |---|---|
 | [Onboard a repository](onboard-a-repository.md) | One path from a GitHub repository to a first task (`maku repo add` and `maku repo check`) |
+| [Browser verification](browser-verification.md) | Opting a Repository into the headless browser, the vision aliases, and the screenshots humans see |
 | [Merge policies](merge-policies.md) | Catalog, bindings, rollout stages, fields, recipes, checking and promoting |
 | [maku](cli.md) | Install, one-command setup, subcommands, MCP tools and `maku-handoff` |
 | [Web UI](web-ui.md) | Signing in, the room list, working a room, approvals and refusals |

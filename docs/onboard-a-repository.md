@@ -95,6 +95,8 @@ If your `Factory` does not set `spec.mergeDefaults`, pass `--merge-defaults=fals
 
 If the repository is private or internal, `maku repo add` requires `--acknowledge-private-code` and writes `spec.privateCode.acknowledged: true` into the `Repository`. That field records the repository owner's agreement that repository contents are sent to the configured model providers ([Private code](install.md#private-code)). Without it, the factory refuses new tasks on private repositories.
 
+For a web application or a documentation site, add `spec.screenshots` so the implementer and tester can check their changes in a headless browser, and humans see the screenshots in the room ([Browser verification](browser-verification.md)).
+
 ## The merge gate ruleset
 
 Review `github/ruleset-merge-gate.json` and `github/apply-ruleset.sh`, then apply the ruleset with a GitHub token that has admin access to the repository:
