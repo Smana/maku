@@ -558,9 +558,9 @@ func (r *Reconciler) workflow(cfg *config.Config, t *v1alpha1.Task) string {
 // An internal run accepts only a tier alias; with no override it keeps its tier's model, or the
 // template's reviewerModel.
 func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) string {
-	if m := labelModel(t, s.Role); m != "" {
+	if m, source := profileModel(t, s.Role); m != "" {
 		s.Model = m
-		return v1alpha1.ModelSourceLabel
+		return source
 	}
 	if s.Persona != "" && s.Persona != s.Role {
 		if _, custom := cfg.Roles[s.Persona]; custom {
@@ -586,8 +586,9 @@ func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec
 // template's reviewerModel ran on it.
 func (r *Reconciler) modelSourceOf(cfg *config.Config, t *v1alpha1.Task, x runs.Run) string {
 	switch rm := cfg.Templates[t.Spec.Template].ReviewerModel; {
-	case x.Model != "" && x.Model == labelModel(t, x.Role):
-		return v1alpha1.ModelSourceLabel
+	case x.Model != "" && x.Model == profileModelName(t, x.Role):
+		_, source := profileModel(t, x.Role)
+		return source
 	case config.PublicOnly(x.Model):
 		return v1alpha1.ModelSourceClassModels
 	case x.Role == "reviewer" && rm != "" && x.Model == rm:
@@ -596,13 +597,28 @@ func (r *Reconciler) modelSourceOf(cfg *config.Config, t *v1alpha1.Task, x runs.
 	return v1alpha1.ModelSourceTier
 }
 
-// labelModel is the alias a model:<alias> pin put role on (Gemini plan A7): the implementer and the
-// reviewer of a task whose profile froze an honoured pin; "" for any other role or task.
-func labelModel(t *v1alpha1.Task, role string) string {
-	if t.Status.Profile == nil || (role != "implementer" && role != "reviewer") {
-		return ""
+// profileModel is the alias the task's profile froze for role, and why (Gemini plan A7, A8): a
+// model:<alias> label (the implementer and the reviewer) or the evaluation's treatment (its roles);
+// "" for any other role or task.
+func profileModel(t *v1alpha1.Task, role string) (model, source string) {
+	p := t.Status.Profile
+	if p == nil || p.Model == "" {
+		return "", ""
 	}
-	return t.Status.Profile.Model
+	roles := p.ModelRoles
+	if len(roles) == 0 {
+		roles = []string{"implementer", "reviewer"}
+	}
+	if !slices.Contains(roles, role) {
+		return "", ""
+	}
+	return p.Model, cmp.Or(p.ModelSource, v1alpha1.ModelSourceLabel)
+}
+
+// profileModelName is profileModel's alias alone.
+func profileModelName(t *v1alpha1.Task, role string) string {
+	m, _ := profileModel(t, role)
+	return m
 }
 
 // current is the task's last run record.

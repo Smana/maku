@@ -103,7 +103,7 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 			cf.Evaluation.ControlPercent = c.percent
 			g := profileRig(t, cf, issueTask("3buqdlot", 7, "fix it"), c.label)
 			tk := g.reconcile(t, "3buqdlot", 1)
-			if tk.Status.Profile == nil || *tk.Status.Profile != c.want {
+			if tk.Status.Profile == nil || !reflect.DeepEqual(*tk.Status.Profile, c.want) {
 				t.Fatalf("%+v", tk.Status.Profile)
 			}
 			if tk.Spec.Template != "pair" || tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 40 || !tk.Spec.Search ||

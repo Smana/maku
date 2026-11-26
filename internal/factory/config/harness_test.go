@@ -3,6 +3,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -34,5 +35,31 @@ func TestHarnessConfigValidation(t *testing.T) {
 	badEval := good + "\nevaluation:\n  treatmentHarness: invalid\n"
 	if _, err := Parse([]byte(badEval)); err == nil || !strings.Contains(err.Error(), "evaluation.treatmentHarness") {
 		t.Fatalf("invalid evaluation.treatmentHarness must fail: %v", err)
+	}
+}
+
+// evaluation.treatmentModel (Gemini plan A8): an alias the factory knows, on roles that exist, and
+// the measurement's one variable: never beside treatmentHarness or a treatment workflow.
+func TestTreatmentModelValidation(t *testing.T) {
+	ok := good + "\nevaluation:\n  treatmentModel: gemini-standard\n  treatmentRoles: [implementer, reviewer]\n"
+	c, err := Parse([]byte(ok))
+	if err != nil || c.Evaluation.TreatmentModel != "gemini-standard" || !slices.Equal(c.Evaluation.ModelRoles(), []string{"implementer", "reviewer"}) {
+		t.Fatalf("treatmentModel: %v %+v", err, c.Evaluation)
+	}
+	if c, _ := Parse([]byte(good + "\nevaluation:\n  treatmentModel: gemini-standard\n")); !slices.Equal(c.Evaluation.ModelRoles(), []string{"implementer"}) {
+		t.Fatalf("treatmentRoles defaults to the implementer: %+v", c.Evaluation)
+	}
+	for name, c := range map[string]struct{ eval, want string }{
+		"an unknown alias":    {"treatmentModel: gpt-9", "evaluation.treatmentModel"},
+		"an unknown role":     {"treatmentModel: gemini-standard\n  treatmentRoles: [merger]", "evaluation.treatmentRoles"},
+		"beside a harness":    {"treatmentModel: gemini-standard\n  treatmentHarness: opencode", "one variable"},
+		"beside a workflow":   {"treatmentModel: gemini-standard\n  treatment: standard", "one variable"},
+		"roles with no model": {"treatmentRoles: [reviewer]", "evaluation.treatmentRoles"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(good + "\nevaluation:\n  " + c.eval + "\n")); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err %v, want %q", err, c.want)
+			}
+		})
 	}
 }

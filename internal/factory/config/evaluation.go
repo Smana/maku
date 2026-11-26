@@ -28,6 +28,26 @@ type Evaluation struct {
 	// +kubebuilder:validation:Enum=openhands;opencode
 	// +optional
 	TreatmentHarness string `json:"treatmentHarness,omitempty"`
+	// TreatmentModel puts the treatment cohort's TreatmentRoles on a gateway alias (Gemini plan A8),
+	// changing nothing else: workflow, template, harness, effort and caps stay the control's. A
+	// provider alias applies to public tasks only. The measurement's one variable: it is refused
+	// beside treatmentHarness or a treatment workflow.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	TreatmentModel string `json:"treatmentModel,omitempty"`
+	// TreatmentRoles are the roles TreatmentModel moves; unset, the implementer.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=32
+	// +optional
+	TreatmentRoles []string `json:"treatmentRoles,omitempty"`
+}
+
+// ModelRoles are the roles TreatmentModel moves: TreatmentRoles, else the implementer.
+func (e Evaluation) ModelRoles() []string {
+	if len(e.TreatmentRoles) > 0 {
+		return e.TreatmentRoles
+	}
+	return []string{"implementer"}
 }
 
 // The evaluation modes; unset is observe.
@@ -211,5 +231,21 @@ func (c *Config) validateEvaluation(bad func(string, ...any)) {
 	}
 	if h := c.Evaluation.TreatmentHarness; h != "" && !ValidHarness(h) {
 		bad("evaluation.treatmentHarness %q is not openhands or opencode", h)
+	}
+	e := c.Evaluation
+	if m := e.TreatmentModel; m != "" {
+		if !IsAlias(m) {
+			bad("evaluation.treatmentModel %q is not a gateway alias", m)
+		}
+		if e.TreatmentHarness != "" || e.Treatment != "" {
+			bad("evaluation.treatmentModel is the measurement's one variable: unset evaluation.treatmentHarness and evaluation.treatment")
+		}
+	} else if len(e.TreatmentRoles) > 0 {
+		bad("evaluation.treatmentRoles needs evaluation.treatmentModel")
+	}
+	for _, r := range e.TreatmentRoles {
+		if !slices.Contains(templateRoles(), r) {
+			bad("evaluation.treatmentRoles: unknown role %q", r)
+		}
 	}
 }

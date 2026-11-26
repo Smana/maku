@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [`evaluation.treatmentModel`](#evaluationtreatmentmodel)
 - [The `model:<alias>` label pin](#the-modelalias-label-pin)
 - [Run aliases and per-alias prices](#run-aliases-and-per-alias-prices)
 - [Gemini: the gemini and vertex presets](#gemini-the-gemini-and-vertex-presets)
@@ -52,6 +53,13 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## `evaluation.treatmentModel`
+
+The `Factory` and `Task` CRDs gain `evaluation.treatmentModel`, `evaluation.treatmentRoles`,
+`status.profile.modelRoles` and `status.profile.modelSource`, and a run's `modelSource` may be
+`treatment`: upgrade the CRDs before the factory. No value changes; the new keys are off unless set
+([config reference](reference/config.md)).
 
 ## The `model:<alias>` label pin
 

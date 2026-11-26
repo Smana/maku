@@ -451,11 +451,21 @@ type ProfileStatus struct {
 	// +kubebuilder:validation:Enum=openhands;opencode
 	// +optional
 	Harness string `json:"harness,omitempty"`
-	// Model is the gateway alias a maintainer's model:<alias> label pinned the implementer and the
-	// reviewer to (Gemini plan A7), frozen at triage; empty without an honoured pin.
+	// Model is the gateway alias frozen at triage for ModelRoles: a maintainer's model:<alias> label
+	// (Gemini plan A7, the implementer and the reviewer), or evaluation.treatmentModel for a
+	// treatment task (A8, evaluation.treatmentRoles). Empty: every role keeps its own model.
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	Model string `json:"model,omitempty"`
+	// ModelRoles are the roles Model moves; unset with a Model, the implementer and the reviewer.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=32
+	// +optional
+	ModelRoles []string `json:"modelRoles,omitempty"`
+	// ModelSource is why Model was chosen: a maintainer's label or the evaluation's treatment.
+	// +kubebuilder:validation:Enum=label;treatment
+	// +optional
+	ModelSource string `json:"modelSource,omitempty"`
 	// HarnessSource records why Harness was chosen: labeled, treatment, default, or rescue.
 	// +kubebuilder:validation:Enum=labeled;treatment;default;rescue
 	// +optional
@@ -1051,7 +1061,7 @@ type RunProvenance struct {
 	ServedModels []string `json:"servedModels,omitempty"`
 	// Which config chose the run's model (v3 F15, F3): the tier's model, the template's
 	// reviewerModel, or the class's loops.<class>.models (a public task only), set at creation.
-	// +kubebuilder:validation:Enum=tier;reviewerModel;classModels;label
+	// +kubebuilder:validation:Enum=tier;reviewerModel;classModels;label;treatment
 	// +optional
 	ModelSource string `json:"modelSource,omitempty"`
 	// Harness is the harness recorded on the run's AgentRun claim (openhands or opencode).
@@ -1070,6 +1080,8 @@ const (
 	ModelSourceClassModels   = "classModels"
 	// ModelSourceLabel is a maintainer's model:<alias> label pin (Gemini plan A7).
 	ModelSourceLabel = "label"
+	// ModelSourceTreatment is evaluation.treatmentModel on a treatment task (Gemini plan A8).
+	ModelSourceTreatment = "treatment"
 )
 
 // IsZero reports whether no fact the room shows is known yet: ModelSource is the factory's own

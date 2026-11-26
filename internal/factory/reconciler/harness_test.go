@@ -3,6 +3,7 @@
 package reconciler
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -132,5 +133,32 @@ func TestModelLabelPin(t *testing.T) {
 				t.Fatalf("want the refusal narrated: %v", g.f.Comments(7))
 			}
 		})
+	}
+}
+
+// evaluation.treatmentModel (Gemini plan A8) moves only the treatment cohort's treatmentRoles onto
+// the alias, frozen on the profile; workflow, template, harness and caps stay the control's, and a
+// provider alias leaves an internal task on its tier's model.
+func TestTreatmentModelChangesOnlyTheModel(t *testing.T) {
+	run := func(percent int, dataClass string) *v1alpha1.Task {
+		cf := profileCfg(true)
+		cf.Evaluation.ControlPercent = percent
+		cf.Evaluation.TreatmentModel = "gemini-standard"
+		tk := issueTask("3buqdlot", 7, "fix it")
+		tk.Spec.DataClass = dataClass
+		g := profileRig(t, cf, tk, "")
+		return g.reconcile(t, "3buqdlot", 1)
+	}
+	treat, ctrl, internal := run(0, "public"), run(100, "public"), run(0, "internal")
+	p := treat.Status.Profile
+	if p.Model != "gemini-standard" || !slices.Equal(p.ModelRoles, []string{"implementer"}) || p.ModelSource != v1alpha1.ModelSourceTreatment || p.Cohort != triage.CohortTreatment {
+		t.Fatalf("treatment profile: %+v", p)
+	}
+	if ctrl.Status.Profile.Model != "" || internal.Status.Profile.Model != "" {
+		t.Fatalf("control %+v / internal %+v: want no model", ctrl.Status.Profile, internal.Status.Profile)
+	}
+	if treat.Spec.Template != ctrl.Spec.Template || treat.Spec.Budget != ctrl.Spec.Budget ||
+		p.Name != ctrl.Status.Profile.Name || p.Harness != ctrl.Status.Profile.Harness {
+		t.Fatalf("treatment changed more than the model:\ntreat=%+v %+v\nctrl =%+v %+v", treat.Spec, p, ctrl.Spec, ctrl.Status.Profile)
 	}
 }

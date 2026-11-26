@@ -2370,9 +2370,25 @@ spec:
                     type: string
                   model:
                     description: |-
-                      Model is the gateway alias a maintainer's model:<alias> label pinned the implementer and the
-                      reviewer to (Gemini plan A7), frozen at triage; empty without an honoured pin.
+                      Model is the gateway alias frozen at triage for ModelRoles: a maintainer's model:<alias> label
+                      (Gemini plan A7, the implementer and the reviewer), or evaluation.treatmentModel for a
+                      treatment task (A8, evaluation.treatmentRoles). Empty: every role keeps its own model.
                     maxLength: 64
+                    type: string
+                  modelRoles:
+                    description: ModelRoles are the roles Model moves; unset with
+                      a Model, the implementer and the reviewer.
+                    items:
+                      maxLength: 32
+                      type: string
+                    maxItems: 4
+                    type: array
+                  modelSource:
+                    description: 'ModelSource is why Model was chosen: a maintainer''s
+                      label or the evaluation''s treatment.'
+                    enum:
+                    - label
+                    - treatment
                     type: string
                   name:
                     maxLength: 63
@@ -2851,6 +2867,7 @@ spec:
                           - reviewerModel
                           - classModels
                           - label
+                          - treatment
                           type: string
                         screenshots:
                           description: Screenshots says the run's claim asked for
