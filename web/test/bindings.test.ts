@@ -23,7 +23,7 @@ describe("a bound repository's page", () => {
     expect(app.querySelectorAll("article.class-card")).toHaveLength(2);
     const dead = card(app, "dead-links");
     expect(dead.textContent).not.toContain("Refused");
-    expect(dead.textContent).toContain("files under docs/");
+    expect(dead.querySelector(".raw-pattern")?.textContent).toBe("^docs/");
     expect(dead.querySelector('a[href="/settings/merge-policies/policies/dead-links"]')).not.toBeNull();
     const health = app.querySelectorAll(".policy-header .repository-health");
     expect(health).toHaveLength(1);
@@ -35,7 +35,7 @@ describe("a bound repository's page", () => {
   it("keeps generation statistics under the evidence fold, and says where a promotion is made", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/ai-native-ref", fakeFetch({ "/api/policy/repositories/Smana/ai-native-ref": boundPage() }));
-    expect(card(app, "dead-links").querySelector("details.policy-certainty")?.textContent).toContain("gen 4: 3 clean · gen 3: 17 clean, 1 changed · before the binding: 12 clean");
+    expect(card(app, "dead-links").querySelector("details.policy-certainty")?.textContent).toContain("gen 4: 3 agreed · gen 3: 17 agreed, 1 changed · before the binding: 12 agreed");
     expect(card(app, "docs-links").textContent).toContain("To promote, set mode: live on the binding in repository-ai-native-ref.yaml and merge the change.");
     const cut = boundPage();
     cut.report.repositoryStatus!.status.authority = "repository";
@@ -66,7 +66,7 @@ describe("a bound repository's page", () => {
   });
 
   it("writes each generation's share in words", () => {
-    expect(generationLine(ev())).toBe("gen 4: 3 clean · gen 3: 17 clean, 1 changed · before the binding: 12 clean");
+    expect(generationLine(ev())).toBe("gen 4: 3 agreed · gen 3: 17 agreed, 1 changed · before the binding: 12 agreed");
     expect(generationLine(ev({ shadow: { ...ev().shadow, byGeneration: undefined } }))).toBe("");
   });
 });

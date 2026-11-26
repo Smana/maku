@@ -168,7 +168,9 @@ export function progressWords(c: ClassReport): string {
       : m.prose ? ", unchecked: nothing checks the meaning of prose" : ", unchecked: nothing checks their meaning";
     return `Live. ${merges} merged alone${by}. ${quiet} quiet. ${wrong}.`;
   }
-  return `${e.clean} of ${e.minimum} agreed: you merged ${e.clean} unchanged, changed ${e.shadow.changed}. ${wrong}. Rollback drill: ${drillWords(e.drill)}.`;
+  // Past the minimum the count says what was needed: "9 of 5" reads as a fraction (#629).
+  const agreed = e.clean > e.minimum ? `${e.clean} agreed (${e.minimum} needed)` : `${e.clean} of ${e.minimum} agreed`;
+  return `${agreed}: you merged ${e.clean} unchanged, changed ${e.shadow.changed}. ${wrong}. Rollback drill: ${drillWords(e.drill)}.`;
 }
 
 export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
