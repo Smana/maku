@@ -13,6 +13,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 cd "$(dirname "$0")/.."
 go run ./hack/gen-reasons.go
+go run ./hack/gen-policy-explainer.go
 go run ./cmd/maku config validate --config examples/merge-policies/factory.yaml examples/merge-policies/docs-scoped.yaml
 if [ $# -eq 0 ]; then
   files=()

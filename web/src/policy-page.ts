@@ -8,6 +8,7 @@ import { backtestView, type Backtest } from "./backtest";
 import { patternDetails } from "./policy-words";
 import { FIELD_HELP, READ_ONLY, readOnlyWords } from "./policy-help";
 import { checkedByLine, meaningNode, sentenceNode, type Sentence } from "./sentence";
+import { policyExplainer } from "./policy-explainer";
 import { settingsFrame } from "./settings";
 import type { ThemeController } from "./theme";
 
@@ -79,6 +80,7 @@ export async function policyPage(app: HTMLElement, name: string, get: typeof fet
   main.append(meaningNode(p.meaning));
   const checked = checkedByLine(p.meaning);
   if (checked) main.append(checked);
+  main.append(policyExplainer());
   const fixed = readOnlyFields(p.spec);
   if (fixed) main.append(fixed);
   const patterns = Array.isArray(p.spec.allowedFiles) ? p.spec.allowedFiles as string[] : [];
