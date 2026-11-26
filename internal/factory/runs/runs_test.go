@@ -538,8 +538,12 @@ func TestCreateIsStrictOnlyForANewerSpecClaim(t *testing.T) {
 
 // v5 Q16: spec.screenshots is written only for a run that gets the browser, and read back.
 func TestBuildWritesScreenshotsOnlyWhenOn(t *testing.T) {
-	if _, found, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, spec()).Object, "spec", "screenshots"); found {
+	off := Build(runwatch.DefaultKind, spec())
+	if _, found, _ := unstructured.NestedMap(off.Object, "spec", "screenshots"); found {
 		t.Fatal("spec.screenshots written for a run without the browser")
+	}
+	if _, found := off.GetAnnotations()[AnnScreenshots]; found {
+		t.Fatal("screenshots annotation written for a run without the browser")
 	}
 	s := spec()
 	s.Screenshots = 10
@@ -547,6 +551,9 @@ func TestBuildWritesScreenshotsOnlyWhenOn(t *testing.T) {
 	got, _, _ := unstructured.NestedMap(u.Object, "spec", "screenshots")
 	if !reflect.DeepEqual(got, map[string]any{"enabled": true, "maxScreenshots": int64(10)}) {
 		t.Fatalf("spec.screenshots %v", got)
+	}
+	if a := u.GetAnnotations()[AnnScreenshots]; a != "10" {
+		t.Fatalf("annotation %s = %q, want 10", AnnScreenshots, a)
 	}
 	if r, ok := FromUnstructured(runwatch.DefaultKind, u); !ok || r.Screenshots != 10 {
 		t.Fatalf("read back: %+v", r)

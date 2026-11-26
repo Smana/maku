@@ -81,6 +81,9 @@ const (
 	// AnnReviewChecks is what a reviewer run was asked to check (runwatch.ReviewChecksAnnotation):
 	// the broker quotes it in an approve's comment that carries no summary. CREATE only.
 	AnnReviewChecks = runwatch.ReviewChecksAnnotation
+	// AnnScreenshots is the run's screenshot cap (runwatch.ScreenshotsAnnotation), written at CREATE
+	// beside spec.screenshots: the broker accepts screenshot uploads for such a run only (v5 Q16).
+	AnnScreenshots = runwatch.ScreenshotsAnnotation
 )
 
 // safeOutputTypes are the types a claim may name as safe outputs: H2's four, and push from stage H3.
@@ -372,6 +375,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Persona != "" && s.Persona != s.Role {
 		ann[AnnPersona] = s.Persona
+	}
+	if s.Screenshots > 0 {
+		ann[AnnScreenshots] = strconv.FormatInt(int64(s.Screenshots), 10)
 	}
 	if s.ReviewChecks != "" {
 		ann[AnnReviewChecks] = clipUTF8(s.ReviewChecks, runwatch.MaxReviewChecks)

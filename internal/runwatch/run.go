@@ -42,13 +42,16 @@ const (
 	// it on an approve with no summary, so the verdict's comment says what the approval covers.
 	ReviewChecksAnnotation = "agents.ogenki.io/review-checks"
 	// ScreenshotsAnnotation is a browser run's screenshot cap, 1 to MaxScreenshots, written by the
-	// run-controller on the claim of a run whose browser sidecar keeps screenshots (harness
-	// screenshots Task 15). The broker takes uploads for such a run only, numbered 1 to the cap.
+	// factory at CREATE beside spec.screenshots and by the run-controller on the run's pod (v5 Q16).
+	// The broker takes uploads for such a run only, numbered 1 to the cap.
 	ScreenshotsAnnotation = "agents.ogenki.io/screenshots"
 	// MaxScreenshots is the hard ceiling of ScreenshotsAnnotation (phase A).
 	MaxScreenshots = 25
 	// MaxReviewChecks bounds ReviewChecksAnnotation.
 	MaxReviewChecks = 2 << 10
+	// VisionAnnotation set to "true" marks a screenshots run whose model accepts images (v5 Q16, C4): the
+	// run-controller writes it on the run's pod, as it alone knows the vision list.
+	VisionAnnotation = "agents.ogenki.io/vision"
 	// OperatingModeAnnotation asks a suspendable run's Sandbox to be Suspended or Running
 	// (v2 warm-sandboxes design §6). The room-broker writes it and the next two; the
 	// composition reads them only when spec.suspendable is true.
