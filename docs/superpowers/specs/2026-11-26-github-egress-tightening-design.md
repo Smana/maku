@@ -293,6 +293,17 @@ What the build settled that the sections above leave open.
   run's harness gets `EGRESS_INSTALL_CLOSE_URL` (the proxy's Service, which `NO_PROXY` keeps
   direct) and `POD_UID` (downward API). Without them (the other modes, or a run with no install
   set) it closes nothing and says so.
+- **The self-check uses a host of its own.** A CONNECT to `release-assets` after the close would be
+  an `install_closed` refusal and fire the alert on every run. The harness instead connects to
+  `install-check.maku.invalid:443`, which the proxy never dials: 409 while the client's set is
+  open, 403 with reason `install_check` once it is closed. The answer comes from the same entry and
+  the same open/closed test as every install host's.
+- **An install tunnel ends with the set.** A tunnel to an install host opened in the window
+  re-checks the pod's entry every second and closes once the set is closed (on any replica) or
+  past its deadline, so a download started in the install phase cannot run on into the agent's.
+- **The window is 1,200 s by default** (`installEgress.windowSeconds`): image pull, clone and two
+  300 s install bounds (tools, then hook environments) with a margin. The harness closes long before
+  it in a healthy run.
 - **Refusals by reason.** A new counter, `maku_egress_proxy_refusals_total{reason}`, keeps the
   existing `maku_egress_proxy_connections_total{decision}` series unchanged. Every decision's log
   line carries `phase=install|agent` (M1's field) and `reason=` on a refusal.
