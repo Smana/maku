@@ -1,0 +1,13 @@
+# What an agent runs before it pushes: the CI's fast subset. Read from the default branch only.
+# The repository's Repository object names the registry access a run gets: golang here.
+version: 1
+timeoutMinutes: 12
+tools: [go, golangci-lint]
+definedBy: [mise.toml, go.mod, .golangci.yaml, .github/workflows/ci.yaml]
+steps:
+  - {name: build, run: go build ./..., ci: test, stopOnFailure: true}
+  - {name: unit, run: go test -short ./..., ci: test}
+  - {name: lint, run: golangci-lint run, ci: lint}
+ciOnly:
+  - {check: test, part: "integration tests (go test -run Integration)", why: "they need Postgres; the sandbox has no Docker and no service"}
+  - {check: release, part: all, why: "pushes an image with the workflow's identity"}

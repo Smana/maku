@@ -1,0 +1,4 @@
+# The checks' tools, pinned: the sandbox installs exactly these before it runs a step.
+[tools]
+java = "temurin-21"
+maven = "3.9"

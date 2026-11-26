@@ -1,0 +1,4 @@
+# The checks' tools, pinned: the sandbox installs exactly these before it runs a step.
+[tools]
+python = "3.13"
+uv = "0.9"

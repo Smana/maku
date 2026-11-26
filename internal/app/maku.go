@@ -118,7 +118,8 @@ const makuUsage = `usage: maku <command>
                                   login, and write the repository's Repository, fence, ruleset and its gh
                                   script to DIR; it applies nothing and opens no pull request
   repo check <owner/name> [--namespace NS] [--factory NAME] [--kubeconfig FILE] [--context NAME]
-                                  check one repository's onboarding: its fence, its Repository's conditions,
+                                  check one repository's onboarding: its fence, its readiness files
+                                  (.github/agent-checks.yaml, mise.toml, AGENTS.md), its Repository's conditions,
                                   and the factory's apps, merge-gate and private-code checks for it; one line
                                   each, a fix under each failure; exit 1 on a fail or a warning
   demo app --dir DIR [--owner ORG] [--name NAME]

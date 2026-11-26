@@ -1,0 +1,3 @@
+# The checks' tools, pinned: the sandbox installs exactly these before it runs a step.
+[tools]
+node = "24.21.0"

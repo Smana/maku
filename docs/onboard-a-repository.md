@@ -20,9 +20,9 @@ sequenceDiagram
   M->>GH: Run github/apply-ruleset.sh (require maku/merge-gate)
   M->>K8s: Apply factory/repository-my-service.yaml
   M->>CLI: maku repo check acme/my-service
-  CLI->>GH: Check fence on default branch
+  CLI->>GH: Check fence & readiness files on default branch
   CLI->>K8s: Check Repository conditions & /preflight?repository=acme/my-service
-  CLI-->>M: PASS fence, repository, apps, merge-gate, private-code
+  CLI-->>M: PASS fence, readiness, repository, apps, merge-gate, private-code
   M->>GH: Add label factory/ready to an issue
   K8s->>GH: Triage issue, run agent in room, open pull request
 ```
@@ -109,16 +109,17 @@ The script is idempotent: it creates (or updates) a default-branch ruleset named
 
 ## The first task
 
-Once the `Repository` resource has reconciled and the factory has run a fence pass, verify all five onboarding seams with `maku repo check`:
+Once the `Repository` resource has reconciled and the factory has run a fence pass, verify all six onboarding seams with `maku repo check`:
 
 ```bash
 maku repo check acme/my-service --namespace maku
 ```
 
-`maku repo check` reads `.github/agent-factory.yaml` on the default branch via `gh`, checks the `Repository`'s `Accepted` and `BindingsValid` conditions in the cluster, and queries the factory pod's `/preflight?repository=acme/my-service` endpoint for the repository's `apps`, `merge-gate`, and `private-code` checks:
+`maku repo check` reads `.github/agent-factory.yaml` and the readiness files ([Make a repository ready](make-a-repository-ready.md)) on the default branch via `gh`, checks the `Repository`'s `Accepted` and `BindingsValid` conditions in the cluster, and queries the factory pod's `/preflight?repository=acme/my-service` endpoint for the repository's `apps`, `merge-gate`, and `private-code` checks:
 
 ```text
 PASS  fence          .github/agent-factory.yaml names agent-factory
+PASS  readiness      .github/agent-checks.yaml, mise.toml and AGENTS.md are on the default branch
 PASS  repository     Accepted
 PASS  apps           all served repositories have both App installations
 PASS  merge-gate     maku/merge-gate is required on every served default branch
@@ -127,4 +128,4 @@ PASS  private-code   every served repository is public or acknowledged
 
 If any line prints `FAIL` or `WARN`, `maku repo check` exits `1` and prints a `Fix:` line naming the file or command to run.
 
-When all five checks pass, create the `factory/ready` label in `acme/my-service` (and, if you want to pin workflows from GitHub, `workflow:quick`, `workflow:standard`, and `workflow:careful`). Open a small issue and apply `factory/ready` from a maintainer account listed in `spec.maintainers` ([Triggers](factory.md#triggers)). Within one poll interval, the factory creates a `Task` and a `Room`, posts the room link on the issue, runs the agent in its sandbox, and opens a pull request with a shadow merge-gate decision record.
+When all six checks pass, create the `factory/ready` label in `acme/my-service` (and, if you want to pin workflows from GitHub, `workflow:quick`, `workflow:standard`, and `workflow:careful`). Open a small issue and apply `factory/ready` from a maintainer account listed in `spec.maintainers` ([Triggers](factory.md#triggers)). Within one poll interval, the factory creates a `Task` and a `Room`, posts the room link on the issue, runs the agent in its sandbox, and opens a pull request with a shadow merge-gate decision record.

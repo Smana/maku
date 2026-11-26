@@ -29,6 +29,7 @@ var (
 // acme/my-service on main with no required check and both Apps by default. Never the real API.
 type fakeGH struct {
 	repo, rules, protection, fence ghReply
+	checks, mise, agents           ghReply // the readiness files: present unless set
 	calls                          *[]string
 }
 
@@ -51,6 +52,12 @@ func (f fakeGH) api(_ context.Context, path string) (int, []byte, error) {
 		return or(f.protection, notProtected)
 	case "repos/acme/my-service/contents/.github/agent-factory.yaml?ref=main":
 		return or(f.fence, ghReply{200, `{"encoding":"base64","content":"ZmFjdG9yeTogYWdlbnQtZmFjdG9yeQo="}`})
+	case "repos/acme/my-service/contents/.github/agent-checks.yaml?ref=main":
+		return or(f.checks, ghReply{200, `{"type":"file"}`})
+	case "repos/acme/my-service/contents/mise.toml?ref=main":
+		return or(f.mise, ghReply{200, `{"type":"file"}`})
+	case "repos/acme/my-service/contents/AGENTS.md?ref=main":
+		return or(f.agents, ghReply{200, `{"type":"file"}`})
 	case "user":
 		return 200, []byte(`{"login":"alice"}`), nil
 	case "apps/acme-factory":

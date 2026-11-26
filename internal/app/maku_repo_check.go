@@ -54,11 +54,16 @@ var repoCheckFixes = map[string]string{
 	"repository_refused":  "kubectl describe repository the object: its Accepted message names the field to change.",
 	"bindings_invalid":    "kubectl describe repository the object: its BindingsValid message names the binding to change.",
 
-	preflight.Undecided:           "the check could not decide: run again once the factory has read the repository, or read the factory's log.",
-	"app_not_installed":           "install both Apps on the repository (the links maku repo add printed).",
-	"app_permission_missing":      "accept the App's requested permissions in its installation's settings on GitHub.",
-	"merge_gate_not_required":     "run github/apply-ruleset.sh (written by maku repo add), or require the maku/merge-gate status on the default branch.",
-	"merge_gate_rules_unread":     "let the factory App read the default branch's rules (its installation's permissions), then run again.",
+	preflight.Undecided:       "the check could not decide: run again once the factory has read the repository, or read the factory's log.",
+	"app_not_installed":       "install both Apps on the repository (the links maku repo add printed).",
+	"app_permission_missing":  "accept the App's requested permissions in its installation's settings on GitHub.",
+	"merge_gate_not_required": "run github/apply-ruleset.sh (written by maku repo add), or require the maku/merge-gate status on the default branch.",
+	"merge_gate_rules_unread": "let the factory App read the default branch's rules (its installation's permissions), then run again.",
+	"checks_missing":          "write .github/agent-checks.yaml: docs/make-a-repository-ready.md says how, and examples/agent-ready/ has one per stack.",
+	"toolchain_missing":       "pin the checks' tools in mise.toml: the sandbox installs them from it.",
+	"agents_missing":          "add AGENTS.md: how to build, test and lint this repository, in a few lines.",
+	"readiness_unread":        "run gh auth login with an account that can read the repository, then run again.",
+
 	"private_code_unacknowledged": "set spec.privateCode.acknowledged: true on the Repository once its owner agrees its code goes to the model provider (maku repo add --acknowledge-private-code).",
 }
 
@@ -108,7 +113,7 @@ func (r Maku) repoCheck(ctx context.Context, args []string) error {
 	if repoObj != nil {
 		name = repoObj.Spec.FactoryRef
 	}
-	lines = append(lines, r.fenceLine(ctx, repo, name), line)
+	lines = append(lines, r.fenceLine(ctx, repo, name), r.readinessLine(ctx, repo), line)
 	lines = append(lines, factoryLines(ctx, c, *ns, repo)...)
 
 	failed := false
@@ -173,6 +178,47 @@ func (r Maku) fenceLine(ctx context.Context, repo, factory string) repoLine {
 		return fail("fence_other_factory", fmt.Sprintf("names %s, this factory is %s", got, factory))
 	}
 	return repoLine{check: "fence", outcome: preflight.Pass, message: fence.Path + " names " + factory}
+}
+
+// readiness are the files that make a repository ready for agent runs (docs/make-a-repository-ready.md),
+// in the order they are reported, each with the code of its fix.
+var readiness = []struct{ path, code string }{
+	{".github/agent-checks.yaml", "checks_missing"},
+	{"mise.toml", "toolchain_missing"},
+	{"AGENTS.md", "agents_missing"},
+}
+
+// readinessLine reads the readiness files on repo's default branch with the developer's gh: a WARN
+// naming every missing one, with the fix of the first. A run still starts without them; it cannot
+// check its own work.
+func (r Maku) readinessLine(ctx context.Context, repo string) repoLine {
+	warn := func(code, msg string) repoLine {
+		return repoLine{check: "readiness", outcome: preflight.Warn, code: code, message: msg}
+	}
+	g, err := r.readRepo(ctx, repo)
+	if err != nil {
+		return warn("readiness_unread", err.Error())
+	}
+	var missing []string
+	code := ""
+	for _, f := range readiness {
+		path := "repos/" + repo + "/contents/" + f.path + "?ref=" + url.QueryEscape(g.DefaultBranch)
+		switch status, body, err := r.gh()(ctx, path); {
+		case err != nil:
+			return warn("readiness_unread", "cannot read "+f.path+": "+err.Error())
+		case status == http.StatusNotFound:
+			missing = append(missing, f.path)
+			if code == "" {
+				code = f.code
+			}
+		case status != http.StatusOK:
+			return warn("readiness_unread", fmt.Sprintf("cannot read %s: HTTP %d: %s", f.path, status, ghMessage(body)))
+		}
+	}
+	if len(missing) > 0 {
+		return warn(code, "missing on the default branch: "+strings.Join(missing, ", "))
+	}
+	return repoLine{check: "readiness", outcome: preflight.Pass, message: ".github/agent-checks.yaml, mise.toml and AGENTS.md are on the default branch"}
 }
 
 // findRepository is the Repository serving repo in ns, and its line: Accepted, then BindingsValid.

@@ -119,6 +119,14 @@ func TestRepoCheck(t *testing.T) {
 		"a fence the factory cannot read": {with(healthy, func(w *fakeWorld) {
 			w.gh.fence = ghReply{200, `{"encoding":"base64","content":"` + b64("factory: agent-factory\nextra: 1\n") + `"}`}
 		}), 1, "Fix: the file is one line: factory: agent-factory"},
+		"ready":              {healthy, 0, "PASS  readiness      .github/agent-checks.yaml, mise.toml and AGENTS.md are on the default branch"},
+		"no checks":          {with(healthy, func(w *fakeWorld) { w.gh.checks = notFound }), 1, "WARN  readiness      missing on the default branch: .github/agent-checks.yaml"},
+		"no checks, its fix": {with(healthy, func(w *fakeWorld) { w.gh.checks = notFound }), 1, "Fix: write .github/agent-checks.yaml: docs/make-a-repository-ready.md"},
+		"nothing ready": {with(healthy, func(w *fakeWorld) { w.gh.checks, w.gh.mise, w.gh.agents = notFound, notFound, notFound }), 1,
+			"WARN  readiness      missing on the default branch: .github/agent-checks.yaml, mise.toml, AGENTS.md"},
+		"only AGENTS.md missing": {with(healthy, func(w *fakeWorld) { w.gh.agents = notFound }), 1, "Fix: add AGENTS.md"},
+		"readiness unreadable": {with(healthy, func(w *fakeWorld) { w.gh.mise = ghReply{500, `{"message":"boom"}`} }), 1,
+			"WARN  readiness      cannot read mise.toml: HTTP 500"},
 		"repository unknown": {with(healthy, func(w *fakeWorld) { w.repositories = nil }), 1, "FAIL  repository     no Repository serves acme/my-service"},
 		"repository refused": {with(healthy, func(w *fakeWorld) {
 			w.repositories = []factoryv1.Repository{repository(cond(factoryv1.ConditionAccepted, metav1.ConditionFalse, "Invalid"))}
