@@ -5,6 +5,7 @@ package runctl
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,9 +64,30 @@ func TestLoadConfigDefaultsTheEgressProfiles(t *testing.T) {
 	if got := c.EgressProfiles["github"]; len(got) != 2 || got[0] != "github.com" {
 		t.Fatalf("github profile %v", got)
 	}
-	for _, p := range []string{"pypi", "npm", "golang", "crates"} {
+	for _, p := range []string{"pypi", "npm", "golang", "crates", "maven", "node"} {
 		if len(c.EgressProfiles[p]) == 0 {
 			t.Errorf("profile %s missing", p)
+		}
+	}
+}
+
+// Developer review gap 2, owner decision D2: maven and node are named, platform-reviewed profiles,
+// and no profile but github names a GitHub host (the GitHub egress tightening, Maku #742).
+func TestTheMavenAndNodeProfiles(t *testing.T) {
+	c := testConfig(t)
+	for p, want := range map[string][]string{
+		"maven": {"repo.maven.apache.org", "repo1.maven.org", "plugins.gradle.org", "plugins-artifacts.gradle.org", "services.gradle.org", "downloads.gradle.org"},
+		"node":  {"nodejs.org"},
+	} {
+		if got := c.EgressProfiles[p]; !slices.Equal(got, want) {
+			t.Errorf("%s: %v, want %v", p, got, want)
+		}
+	}
+	for p, hosts := range c.EgressProfiles {
+		for _, h := range hosts {
+			if p != "github" && (strings.Contains(h, "github") || strings.Contains(h, "githubusercontent")) {
+				t.Errorf("profile %s names the GitHub host %s", p, h)
+			}
 		}
 	}
 }
