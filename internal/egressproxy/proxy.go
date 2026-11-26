@@ -37,11 +37,17 @@ const (
 	ReasonInstallClosed      = "install_closed"
 	ReasonTooMany            = "too_many"
 	ReasonDeniedAddress      = "denied_address"
+	ReasonInstallCheck       = "install_check"
 	phaseInstall, phaseAgent = "install", "agent"
 )
 
 // Reasons are every refusal reason, for a metric that exports each from the start.
-var Reasons = []string{ReasonBadRequest, ReasonUnknownClient, ReasonNotAllowed, ReasonInstallClosed, ReasonTooMany, ReasonDeniedAddress}
+var Reasons = []string{ReasonBadRequest, ReasonUnknownClient, ReasonNotAllowed, ReasonInstallClosed, ReasonTooMany, ReasonDeniedAddress, ReasonInstallCheck}
+
+// InstallCheckHost is the harness's self-check after a close: a CONNECT to it answers 409 while the
+// client's install set is open and 403 once it is closed. It is never dialled, and its refusal is
+// install_check, not install_closed: the alert on install_closed stays for real downloads.
+const InstallCheckHost = "install-check.maku.invalid:443"
 
 // ClosePath is where a run pod closes its own install set: POST {"podUID": "<its UID>"}.
 const ClosePath = "/v1/close-install"
@@ -167,6 +173,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case !mapped:
 		p.refuse(w, run, target, phase, ReasonUnknownClient, "the client "+ip+" is no single running run pod", http.StatusForbidden)
+		return
+	case target == InstallCheckHost && phase == phaseInstall:
+		p.Log.Info("install-check run="+run+" open", "phase", phase)
+		http.Error(w, "the install set is open", http.StatusConflict)
+		return
+	case target == InstallCheckHost:
+		p.refuse(w, run, target, phase, ReasonInstallCheck, "the install set is closed", http.StatusForbidden)
 		return
 	case slices.Contains(e.Allow, target):
 	case slices.Contains(e.Install, target) && phase == phaseInstall:

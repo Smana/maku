@@ -338,3 +338,29 @@ func TestInstallTunnelEndsWithTheSet(t *testing.T) {
 		})
 	}
 }
+
+// The harness's self-check asks the proxy about its own set through a host no one serves: 409 while
+// the set is open, 403 once closed, and never as install_closed, so the alert stays for real downloads.
+func TestInstallCheckHost(t *testing.T) {
+	x := NewIndex()
+	x.Upsert(installPod("run-abcdefgh", "127.0.0.1", "uid-1"))
+	rs := &reasons{n: map[string]int{}}
+	f := installProxy(t, x, newClock(t0), &fakeCloser{}, rs)
+	if r, _, _ := connect(t, f.url, http.MethodConnect, InstallCheckHost); r.StatusCode != http.StatusConflict {
+		t.Fatalf("open set: %d, want 409", r.StatusCode)
+	}
+	if code := closeInstall(t, f.url, uidBody("uid-1")); code != http.StatusOK {
+		t.Fatalf("close: %d", code)
+	}
+	if r, _, _ := connect(t, f.url, http.MethodConnect, InstallCheckHost); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("closed set: %d, want 403", r.StatusCode)
+	}
+	if rs.get(ReasonInstallClosed) != 0 || rs.get(ReasonInstallCheck) != 1 || !strings.Contains(f.log.String(), "reason=install_check") {
+		t.Fatalf("the check is no install_closed refusal: %v %s", rs.n, f.log.String())
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.dial) != 0 {
+		t.Fatalf("the check host is never dialled: %v", f.dial)
+	}
+}

@@ -235,6 +235,9 @@ namespace). Its guarantees:
   replica keeps it, across restarts. A pod can close only its own set, and nothing reopens one: the
   run-pod policy refuses a change to the set or its deadline after create, refuses removing the
   closed annotation, and lets the proxy's ServiceAccount change that annotation and nothing else.
+  A tunnel to an install host ends within a second of the close or the deadline. The harness checks
+  the close with a CONNECT to `install-check.maku.invalid:443`, which the proxy never dials: 409
+  while the set is open, 403 (`install_check`) once it is closed.
 - **No private address.** It refuses an IP literal, and a name that resolves to any loopback,
   private, link-local, CGNAT, NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`), IPv4-compatible (`::/96`)
   or `privateCIDRs` address. It dials the address it checked, never the name again. Its own
