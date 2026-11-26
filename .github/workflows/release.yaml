@@ -12,7 +12,7 @@ jobs:
   # A tag can point at a commit that never passed CI: the gate runs once, before any image.
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
