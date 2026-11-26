@@ -40,13 +40,15 @@ RUN set -eux; \
     find / -xdev -type f -perm /6000 -exec chmod ug-s {} +
 
 # Locked OTel + PyYAML dependencies only (no OpenHands packages).
-# Symlink /agent-server/.venv/bin/python so shared agent_run.py's shebang works unchanged.
+# The venv lives where shared agent_run.py's shebang names it, /agent-server/.venv; /opt/agent/.venv
+# links to the whole directory. A symlink to the interpreter alone is not a venv: Python finds
+# pyvenv.cfg next to the path it was started by, so it ran with the system prefix and none of these
+# packages (no repository checks, no tracing).
 COPY images/maku-opencode/requirements.txt /tmp/requirements.txt
-RUN python3 -m venv /opt/agent/.venv \
- && /opt/agent/.venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/requirements.txt \
+RUN python3 -m venv /agent-server/.venv \
+ && /agent-server/.venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/requirements.txt \
  && rm /tmp/requirements.txt \
- && mkdir -p /agent-server/.venv/bin \
- && ln -s /opt/agent/.venv/bin/python /agent-server/.venv/bin/python
+ && ln -s /agent-server/.venv /opt/agent/.venv
 
 # Shared runner modules and git/gh wrappers from images/maku-harness/.
 COPY --chmod=0755 \
