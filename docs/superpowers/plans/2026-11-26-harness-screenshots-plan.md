@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** An `implementer` or `tester` run of a Repository that opts in gets a loopback-only headless browser (Playwright MCP in a `maku-browser` native sidecar). The agent looks at the dev server it started and checks its own visual fix (phase A). **Every screenshot it takes also reaches the humans**: it shows in the room, in a gallery on the run, and the pull request and the reviewer's verdict link to it; on a public repository a maintainer can publish chosen screenshots into the pull request (phase B). Images attached to the issue reach the agent when its model can see them (phase B3).
+**Goal:** An `implementer` or `tester` run of a Repository that opts in gets a loopback-only headless browser (Playwright MCP in a `maku-browser` native sidecar). The agent looks at the dev server it started and checks its own visual fix (phase A). **Every screenshot it takes also reaches the humans**: it shows in the room, in a gallery on the run, and the pull request and the reviewer's verdict link to it (phase B). Images attached to the issue reach the agent when its model can see them (phase B3).
 
-**Architecture:** The factory freezes `Repository.spec.screenshots` onto the task at triage. It stamps `AgentRun.spec.screenshots` on implementer and tester runs only. The run-controller adds a `browser` native sidecar (an init container with `restartPolicy: Always`, the same shape as `room-bridge`) to those pods. The sidecar runs `@playwright/mcp` on `127.0.0.1:9224` behind a small Go gate on `127.0.0.1:9223`. The gate is the one place that filters tools, checks the URL, counts screenshots, caps image size **and keeps a copy of each capped screenshot**. The harness (OpenCode or OpenHands) adds a `browser` MCP server that points at the gate and turns on image input only when the run's alias is on the controller's vision list; on a text-only alias the gate strips the image from the model's answer and keeps it for the room. The `room-bridge` sidecar, whose broker token never enters the harness container, relays the gate's screenshots to the broker, which re-encodes, bounds and stores them next to the room's events (the `output_bundles` pattern). The room UI shows them; GitHub gets a link, and pixels only after a maintainer publishes them on a public repository.
+**Architecture:** The factory freezes `Repository.spec.screenshots` onto the task at triage. It stamps `AgentRun.spec.screenshots` on implementer and tester runs only. The run-controller adds a `browser` native sidecar (an init container with `restartPolicy: Always`, the same shape as `room-bridge`) to those pods. The sidecar runs `@playwright/mcp` on `127.0.0.1:9224` behind a small Go gate on `127.0.0.1:9223`. The gate is the one place that filters tools, checks the URL, counts screenshots, caps image size **and keeps a copy of each capped screenshot**. The harness (OpenCode or OpenHands) adds a `browser` MCP server that points at the gate and turns on image input only when the run's alias is on the controller's vision list; on a text-only alias the gate strips the image from the model's answer and keeps it for the room. The `room-bridge` sidecar, whose broker token never enters the harness container, relays the gate's screenshots to the broker, which re-encodes, bounds and stores them next to the room's events (the `output_bundles` pattern). The room UI shows them; GitHub gets a link, never pixels (owner decision OQ1).
 
 ```mermaid
 flowchart LR
@@ -18,7 +18,6 @@ flowchart LR
   BR --> DB[("run_screenshots<br/>bytea, room retention")]
   BR -->|"screenshot event"| UI["room UI gallery<br/>same-origin, GitHub-read gate"]
   BR -->|"link (all repos)"| GH["PR verdict / footer"]
-  BR -.->|"maintainer publishes,<br/>public repos only"| PUB["/p/shots/... signed URL<br/>embedded in a PR comment"]
 ```
 
 **Tech Stack:** Go 1.27 (controller, gate, broker, bridge), TypeScript (room UI, `web/`), Postgres (Atlas migrations), controller-gen CRDs, Helm (charts `maku`, `agent-factory`, `agent-factory-crds`), Python 3 harness drivers (OpenCode 2.4.1, OpenHands agent-server 1.56.0), Node + `@playwright/mcp` + Chromium headless shell, gVisor `runsc`, agentgateway 1.6/1.7.
@@ -41,7 +40,7 @@ Grounded on Maku `origin/main` `fb2833cc` (phase A rows first written against `a
 - Images are pinned by digest and multi-arch (`linux/amd64`, `linux/arm64`). Playwright never downloads at runtime (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`).
 - The `maku-opencode` and `maku-harness` image sizes grow by 0 bytes (AC1). Python goes into `images/maku-harness/browser_tools.py`, which both images already COPY from.
 - Platform constitution: restricted securityContext, `readOnlyRootFilesystem`, `drop: [ALL]`, `RuntimeDefault` seccomp, requests and limits, and probes on long-running containers.
-- **Phase B: pixels are data of the run's class.** A screenshot is stored by the broker and shown only to principals who may read the room (`internal/humanapi/access.go:38-73`). It never reaches Postgres events, Slack or GitHub as bytes. GitHub gets a link to the room for every repository. A screenshot's pixels reach GitHub only when a human with write access publishes it, only for `dataClass: public` on a public repository, and only when the Repository allows it.
+- **Phase B: pixels are data of the run's class.** A screenshot is stored by the broker and shown only to principals who may read the room (`internal/humanapi/access.go:38-73`). It never reaches Postgres events, Slack or GitHub as bytes. GitHub gets a link to the room for every repository. No screenshot pixels reach GitHub (owner decision OQ1).
 - **Phase B: never an arbitrary file.** Only the bridge uploads screenshots, and only what the gate captured from Playwright's own answer. The broker decodes every upload (`image.DecodeConfig` first: at most 1920×1080, refusing a decompression bomb), re-encodes it (PNG, or JPEG q80 when the PNG is over 1 MiB), which drops metadata, ancillary chunks and trailing bytes, and stores the re-encoded bytes with `Content-Type` set by the broker.
 - **Phase B caps:** 25 screenshots per run (the phase A ceiling), 100 per room, 1 MiB per stored image, 64 MiB per room. Request images: 4 per issue, 5 MiB each before re-encoding, long side at most 1568 px.
 - Commits are conventional, in English, with no trailers.
@@ -67,7 +66,7 @@ The code contradicts the spec, or the spec cannot be built as written, in these 
 | C11 | §1: "working identically across … OpenCode, OpenHands". | OpenCode is still per-issue opt-in on ANR (`ai-native-ref/infrastructure/base/room-broker/helmrelease.yaml:81-87`). Default runs use OpenHands. | Both drivers are wired (Task 10). The drill runs once per harness. |
 | C12 | §9: phase B adds "a typed `output_screenshot` safe output on `platform` MCP". | Safe outputs are model requests the factory applies (`internal/mcp/hardening.go:166-220`), and the `platform` MCP token sits in the harness container where the model's commands run (`internal/runctl/pod.go:317-326`). An `output_screenshot` would accept any bytes the model chose. | No model-facing tool uploads pixels. The gate keeps each screenshot it served (or stripped), and the `room-bridge` relays them with its own `room-broker` token, which "never enters the container where the model's commands run" (`pod.go:315-317`). The broker re-encodes every upload anyway (Global Constraints). |
 | C13 | §9: "a bounded artifact store (e.g. per-install object bucket …)". | The broker already stores bounded binaries in Postgres: `output_bundles` (`internal/store/migrations/20261113120000_output_bundles.sql`, `internal/store/bundles.go:21-30`), with per-run and per-room quotas, a seal check and a retention sweep. | `run_screenshots` copies that table's shape. No bucket, no new credential. Rows go with the room (`internal/store/retention.go:30-100`). |
-| C14 | §9: "per-PR cap, private-repo visibility check so private screenshots are never posted to public URLs". | The verdict comment is posted by the broker (`internal/verdictpost/poster.go:97-115`) and includes the summary only for `dataClass == public`. The enforced PR body passes T2 `sanitize.Text`, which defuses every image (`internal/hardening/text.go:67-90`). `dataClass` is a defaults value, not the repository's visibility (`internal/factory/intake/issues.go:355`). | Every repository gets a link to the room's gallery in the verdict comment and the factory's PR footer. Pixels need a human: `POST /api/rooms/{id}/screenshots/publish` by a writer, for a `public` room whose repository GitHub reports public at that moment, on a Repository with `screenshots.publish: onApproval`. The broker then serves those images at signed unauthenticated URLs and the verdict poster embeds them. |
+| C14 | §9: "per-PR cap, private-repo visibility check so private screenshots are never posted to public URLs" (owner decision OQ1: link only, the publishing half below is dropped). | The verdict comment is posted by the broker (`internal/verdictpost/poster.go:97-115`) and includes the summary only for `dataClass == public`. The enforced PR body passes T2 `sanitize.Text`, which defuses every image (`internal/hardening/text.go:67-90`). `dataClass` is a defaults value, not the repository's visibility (`internal/factory/intake/issues.go:355`). | Every repository gets a link to the room's gallery in the verdict comment and the factory's PR footer. No pixels reach GitHub (owner decision OQ1). |
 | C15 | §5.3 and §6.3: no vision means no `browser_take_screenshot`. | Humans can see a screenshot whatever the run's model is. | On a text-only alias the gate still serves `browser_take_screenshot`, keeps the image for the room and answers the model with text only (`screenshot #n kept for the room; your model cannot see images`). The model never receives an image it cannot read (the fail-closed rule holds), and public default runs (`glm-5.3`, text-only, ledger BQ2) still give humans screenshots. |
 | C16 | — (issue images are not in the spec) | Intake defuses every issue image to `⟦image: alt⟧` (`internal/factory/sanitize/sanitize.go:67-68,186-196`) and the brief is a ConfigMap `task.md` (`internal/runctl/objects.go:57-69`), which cannot carry binaries of any size. | Phase B3: intake fetches GitHub-hosted issue images only (no arbitrary URL), re-encodes and stores them in the broker as the room's request images, and a room tool `room_image` returns one as MCP image content, served only to a run whose model can see images. The placeholder becomes `⟦image 1: alt⟧` so the brief names them. |
 
@@ -92,19 +91,19 @@ The code contradicts the spec, or the spec cannot be built as written, in these 
 | BQ7 | Refuse screenshots without a vision alias? | No. The run-controller decides per run (`SCREENSHOTS_VISION=0|1`), and C15 keeps screenshots for humans. |
 | PB1 | Where are human-visible screenshots stored? | **The broker's Postgres** (C13), not GitHub. Committing images to a branch would write pixels into public git history for good, needs a `contents: write` token, and GitHub has no API for comment attachments. |
 | PB2 | Who uploads? | **The bridge**, from the gate (C12). The model has no upload tool. |
-| PB3 | What reaches GitHub? | A link for every repository; pixels only after a writer publishes them on a public repository (C14). |
+| PB3 | What reaches GitHub? | A link for every repository (owner decision OQ1). No pixels. |
 | PB4 | How do request images reach the agent? | Through a room tool returning MCP image content (C16), the path BQ1 proved, never through the brief ConfigMap. |
 
-### Owner questions {#owner-questions}
+### Owner decisions, 2026-11-26 {#owner-decisions}
 
-| # | Question | Recommendation | Blocks |
-|---|---|---|---|
-| OQ1 | Publishing pixels into a public pull request needs the broker's `/p/shots/` path to be reachable without login (GitHub's image proxy fetches it anonymously). On ANR that is an oauth2-proxy `skip_auth_routes` entry for `^/p/shots/`. Accept it? | Yes, with signed, room-and-digest-bound URLs that serve only images a writer published, and only for public rooms. Otherwise ship link-only (Tasks 13–18 stand alone). | Task 19, ANR A8 |
-| OQ2 | On a text-only model, keep screenshots for humans while the model gets text only (C15)? | Yes. No token cost, and it is the only way public default runs show anything. | Task 8 |
-| OQ3 | Keep the phase A cuts: no `/workspace/.maku-screenshots/` copies and no ephemeral vision window (C8, C9; was BQ6)? | Yes, measure AC6 in the drill first. | none |
-| OQ4 | Screenshot retention: with the room (default 90 days) or a shorter floor like bundles (14 days)? | With the room: the gallery is the record of what the agent saw, and the per-room 64 MiB cap bounds it. | Task 13 |
-| OQ5 | Request images (B3): the factory downloads GitHub-hosted issue images with its installation token, for private repositories too, and stores them in the room. Accept? | Yes, GitHub hosts only, same data class as the issue text it already stores. | Task 20 |
-| OQ6 | Run drill D0 (one curl per alias, ledger BQ2) to confirm the vision list. | The exact command is in [Drill D0](#drill-d0). | ANR A2 |
+| # | Question | Decision |
+|---|---|---|
+| OQ1 | Publish screenshot pixels into public pull requests through an unauthenticated signed `/p/shots/` route? | **No, link only for now.** There is no unauthenticated route. Pull requests and verdicts get a link to the room's gallery. Task 19 is cut to that link (it is Task 18) and pixel publishing to GitHub is dropped. ANR row A8 is dropped. |
+| OQ2 | Keep screenshots for humans when the run's model is text-only (C15)? | **Yes.** |
+| OQ3 | Keep the phase A cuts: no `/workspace/.maku-screenshots/` copies and no ephemeral vision window (C8, C9)? | **Yes.** |
+| OQ4 | Screenshot retention? | **The room's retention.** Rows are deleted with the room. |
+| OQ5 | Download GitHub-hosted issue images (B3)? | **Yes, for public and private repositories.** They are stored in the room and served to vision-capable runs only. |
+| OQ6 | Run drill D0? | **The owner runs it** after the ANR adoption is deployed. |
 
 ## File structure
 
@@ -138,10 +137,10 @@ The code contradicts the spec, or the spec cannot be built as written, in these 
 | `internal/envelope/screenshot.go` | create | phase B: the `screenshot` event payload |
 | `internal/bridgeapi/screenshots.go` | create | phase B: `POST /v1/bridge/screenshots` (run token) and `POST /v1/rooms/{id}/images` (factory) |
 | `internal/bridge/shots.go` | create | phase B: the relay from the gate to the broker |
-| `internal/humanapi/screenshots.go` | create | phase B: list, image, publish, and the signed public route |
+| `internal/humanapi/screenshots.go` | create | phase B: list and image |
 | `internal/summary/flow.go` | modify | phase B: `FlowNode.Screenshots` |
 | `web/src/shots.ts`, `web/src/chat.ts`, `web/src/runview.ts`, `web/src/app.css` | create/modify | phase B: the chat card, the run gallery and the viewer |
-| `internal/verdictpost/poster.go`, `internal/hardening/footer.go` | modify | phase B: the gallery link, and published images |
+| `internal/verdictpost/poster.go`, `internal/hardening/footer.go` | modify | phase B: the gallery link |
 | `internal/factory/intake/images.go`, `internal/factory/sanitize/sanitize.go` | create/modify | phase B3: GitHub-hosted issue images |
 | `internal/mcp/image.go` | create | phase B3: the `room_image` tool |
 
@@ -149,7 +148,7 @@ The code contradicts the spec, or the spec cannot be built as written, in these 
 
 ## Delivery: the PR sequence {#pr-sequence}
 
-Each PR is stacked on the one before, green before the next is built on it, and merged by the owner. Humans see screenshots at the first Maku release carrying PR 1–7, adopted by ANR PR A; so phase B's room work (PR 6–7) comes right after the gate, before the docs, and GitHub (PR 8–9) and request images (PR 10) follow.
+Each PR is stacked on the one before, green before the next is built on it, and merged by the owner. Humans see screenshots at the first Maku release carrying PR 1–7, adopted by ANR PR A; so phase B's room work (PR 6–7) comes right after the gate, before the docs, and GitHub's link (PR 8) and request images (PR 10) follow.
 
 | PR | Repo | Tasks | What it makes true |
 |---|---|---|---|
@@ -162,10 +161,9 @@ Each PR is stacked on the one before, green before the next is built on it, and 
 | 6 | Maku | 13, 14, 15 (relay) | the broker stores what the bridge relays |
 | 7 | Maku | 16, 17 | **humans see the screenshots in the room** |
 | 8 | Maku | 18, 12, 22 (B1 parts) | the verdict and the pull request link to the gallery; docs |
-| 9 | Maku | 19 | publishing into a public pull request (after OQ1) |
 | 10 | Maku | 20, 21 | request images reach a vision run |
 | A | ANR | A1–A7 | adoption on the Maku release carrying PR 1–8; the drill (D0–D10) |
-| B | ANR | A8, A9 | publishing and request images, after PR 9–10 are released |
+| B | ANR | A9 | request images, after PR 10 is released |
 
 ## Task 1: Offline spike (BQ1, BQ2, BQ3). Done 2026-11-26.
 
@@ -1048,7 +1046,7 @@ git commit -m "docs(browser): document the opt-in browser verification and its b
 
 # Phase B: humans see the screenshots
 
-Phase B builds on the gate's keep (Task 8). Tasks 13–17 are B1 (the room) and B2 (GitHub link and publishing), Task 20–21 are B3 (request images). Each task names its tests first; the executor writes them failing, then the code.
+Phase B builds on the gate's keep (Task 8). Tasks 13–17 are B1 (the room) and B2 (the GitHub link), Task 20–21 are B3 (request images). Each task names its tests first; the executor writes them failing, then the code.
 
 ## Task 13: Broker store: `run_screenshots`
 
@@ -1142,21 +1140,9 @@ Phase B builds on the gate's keep (Task 8). Tasks 13–17 are B1 (the room) and 
 - [ ] **Step 2–4:** FAIL, implement, PASS.
 - [ ] **Step 5: Commit** `feat(github): link the verdict and the pull request to the room's screenshots`
 
-## Task 19: Publishing chosen screenshots into a public pull request (owner question OQ1)
+## Task 19: Dropped (owner decision OQ1)
 
-**Files:**
-- Modify: `api/factory/v1alpha1/factoryconfig_types.go` and `internal/factory/config/screenshots.go` (`Publish string "publish,omitempty"`, enum `never|onApproval`, default `never`), frozen with the rest at triage and carried to the room as the annotation `maku.ogenki.io/screenshots-publish`
-- Modify: `internal/humanapi/screenshots.go` (`POST /api/rooms/{id}/screenshots/publish {digests}`; `GET /p/shots/{room}/{digest}.{ext}?exp=&sig=`), `internal/verdictpost/poster.go` (a follow-up comment embedding the published images), `web/src/shots.ts` (select and "Publish to the pull request")
-- Config: `broker.publicShots.keyFile` (HMAC key, a mounted Secret), `broker.publicShots.ttl` (default 30 days)
-
-**Interfaces:**
-- `publish` is allowed only when every check holds at that moment: the principal `writes()` the room; the room's `dataClass` is `public`; the Repository says `onApproval`; GitHub reports the repository public (`forge` visibility through `intake.CachedPublicity`, `internal/intake/publicity.go`, cache at most 5 minutes); at most 6 images per pull request. Refusals name the failed check.
-- The signed URL: `sig = HMAC-SHA256(key, room|digest|exp)`, compared in constant time; served only if the row's `published_at` is set and the room is still public; same headers as Task 16 plus `Cache-Control: public, max-age=86400`. Unpublishing is not offered: GitHub's image proxy may keep a copy, which the publish dialog says.
-- The comment: `Screenshots published by @<login>:` then one `![Screenshot n: <page path>](<signed URL>)` per image, alt text factory-authored, posted by `verdictpost` with its existing App token.
-
-- [ ] **Step 1: Tests:** each refusal (reader, internal room, `never`, private repository, a 7th image); a good publish sets `published_at` and the poster posts one comment with signed URLs; a bad or expired `sig` is 404; an unpublished digest with a valid-looking `sig` is 404; a public route never serves an internal room's image even with a valid `sig` (the room's class is read at serve time).
-- [ ] **Step 2–4:** FAIL, implement, PASS (`go test ./internal/humanapi/ ./internal/verdictpost/ ./internal/factory/config/`, `task ui:test`).
-- [ ] **Step 5: Commit** `feat(screenshots): let a maintainer publish chosen screenshots into a public pull request`
+Pixel publishing into pull requests is out of scope: there is no unauthenticated route and no `publish` field. GitHub gets the gallery link from Task 18. `run_screenshots.published_at` stays unused until the owner revisits OQ1.
 
 ## Task 20 (B3): Issue images become the room's request images
 
@@ -1217,7 +1203,7 @@ No cloud-native-ref change is needed. The `gvisor` RuntimeClass (aws-0 `runtimec
 | A5 | Amend the spec: §5.2 and §8 per C1 and C2, §6 per C4 and C5, §4.3 and §5.3 per C8 and C9, and add "Phase A as built" pointing at the Maku plan | `docs/superpowers/specs/2026-11-23-v5-harness-screenshots-design.md` | `task docs` |
 | A6 | Runbook for the drill below | `docs/runbooks/<next>-browser-verification.md` (follow `docs/docs-style.md`) | `task docs` |
 | A7 | Phase B: nothing to configure for the room gallery and the link (Tasks 13–18): the migration ships in the Maku chart's `atlas-db-migrations` ConfigMap, and the broker already has a public URL. Check the `rooms_broker` grants test in `scripts/ci/tests/` still passes. | — | `task check` |
-| A8 | Phase B publishing (Task 19), only on OQ1 yes: `publish: onApproval` on the `ai-native-ref` Repository, an oauth2-proxy `skip_auth_routes` entry `^/p/shots/` for the rooms host, and the HMAC key Secret from OpenBao (ExternalSecret beside the broker's). | `tooling/base/agent-factory/resources/repository-ai-native-ref.yaml`, the broker's oauth2-proxy values, `infrastructure/base/room-broker/` | `task check`; drill D11 |
+| A8 | Dropped (owner decision OQ1). | — | — |
 | A9 | Phase B3 (Tasks 20–21): the factory's egress allow-list gains `private-user-images.githubusercontent.com` and `user-images.githubusercontent.com`. | the agent-factory HelmRelease | `task check`; drill D12 |
 
 ---
@@ -1239,7 +1225,6 @@ Batch this into one gcp-0 session, per "offline before platform". Preconditions:
 | D8 | Check `git status` on the PR branch and the PR diff | no PNG anywhere; the PR fixes only the CSS | AC4 |
 | D9 | Open the D2 room in the web UI as a reader, then as a GitHub user without read access | the run shows its gallery; each card names the page and size; the non-reader gets 404 for the room and for an image URL | B1 |
 | D10 | Read the verdict comment and the PR footer of D2's pull request | one line links to `/r/<room>#screenshots`, which opens on the gallery | B2 link |
-| D11 | (OQ1 yes) Publish two screenshots from the room as a writer; try the same as a reader and on the D4 internal room | the PR gains one comment with both images rendered by GitHub; the reader and the internal room are refused with the failed check named | B2 publish |
 | D12 | File an issue with a pasted screenshot of the bug on a vision alias | the brief says `⟦image 1: …⟧`; the agent calls `room_image {n:1}`; the room shows the image under the request | B3 |
 
 Record each step in `ai-native-ref/docs/runbooks/…` with the run IDs and costs. Close the drill with the spec amendment (A5).
@@ -1305,7 +1290,7 @@ Expected: `red` on every alias but public `agent-default` (`glm-5.3`, text-only:
 
 Most runs take 2–4 screenshots, so the typical extra cost is about $0.05–0.10 per run. That is why the ephemeral window (C8) is deferred.
 
-**Build effort:** 22 Maku tasks plus 9 ANR rows. Phase A: roughly 5–7 agent-days (Tasks 7–9 are the bulk). Phase B: roughly 4–5 agent-days (Tasks 13–17 about 3 d, Task 19 about 1 d, Tasks 20–21 about 1 d). ANR about 1 d, and one gcp-0 session of 4–5 h for the drill (D0–D12). Live spend for the drill is under $5 in model calls, plus the cluster hours.
+**Build effort:** 22 Maku tasks plus 9 ANR rows. Phase A: roughly 5–7 agent-days (Tasks 7–9 are the bulk). Phase B: roughly 4–5 agent-days (Tasks 13–17 about 3 d, Tasks 20–21 about 1 d). ANR about 1 d, and one gcp-0 session of 4–5 h for the drill (D0–D12, without D11). Live spend for the drill is under $5 in model calls, plus the cluster hours.
 
 **Storage:** a run that takes 10 screenshots of a docs page stores about 1–3 MiB (re-encoded PNG of flat UI compresses to 100–300 KiB).
 
