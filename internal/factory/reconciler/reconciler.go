@@ -1354,7 +1354,17 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 	harness, harnessSource := triage.HarnessFor(cfg, t, d.HarnessPin, cohort)
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
 		Harness: harness, HarnessSource: harnessSource,
-		Checks: p.EffectiveChecks(), TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused}
+		Checks: p.EffectiveChecks(), TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused,
+		Screenshots: screenshotsOf(r.repo(cfg, t))}
+}
+
+// screenshotsOf is the repository's browser opt-in as triage freezes it (v5 Q16): a copy, so a later
+// config change never reaches the task; nil for a repository the config does not serve.
+func screenshotsOf(rc *config.Repository) *config.Screenshots {
+	if rc == nil {
+		return nil
+	}
+	return rc.Screenshots.DeepCopy()
 }
 
 // pinTestsPaths is the one pin check triage leaves to the reconciler, since it reads the repository:

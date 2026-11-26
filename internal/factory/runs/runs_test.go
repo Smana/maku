@@ -508,6 +508,7 @@ func TestCreateIsStrictOnlyForANewerSpecClaim(t *testing.T) {
 		{"a loop", &Loop{StallSteps: 80, Continuations: 2}, false, "", "Strict"},
 		{"search", nil, true, "", "Strict"},
 		{"effort", nil, false, "medium", "Strict"},
+		{"screenshots", nil, false, "", "Strict"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var got string
@@ -522,6 +523,9 @@ func TestCreateIsStrictOnlyForANewerSpecClaim(t *testing.T) {
 				}}).Build()
 			sp := spec()
 			sp.Loop, sp.Search, sp.Effort = c.loop, c.search, c.effort
+			if c.name == "screenshots" {
+				sp.Role, sp.Screenshots = "implementer", 10
+			}
 			if err := (Client{C: cl, Kind: runwatch.DefaultKind}).Create(t.Context(), sp); err != nil {
 				t.Fatal(err)
 			}
@@ -529,6 +533,27 @@ func TestCreateIsStrictOnlyForANewerSpecClaim(t *testing.T) {
 				t.Fatalf("fieldValidation %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// v5 Q16: spec.screenshots is written only for a run that gets the browser, and read back.
+func TestBuildWritesScreenshotsOnlyWhenOn(t *testing.T) {
+	if _, found, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, spec()).Object, "spec", "screenshots"); found {
+		t.Fatal("spec.screenshots written for a run without the browser")
+	}
+	s := spec()
+	s.Screenshots = 10
+	u := Build(runwatch.DefaultKind, s)
+	got, _, _ := unstructured.NestedMap(u.Object, "spec", "screenshots")
+	if !reflect.DeepEqual(got, map[string]any{"enabled": true, "maxScreenshots": int64(10)}) {
+		t.Fatalf("spec.screenshots %v", got)
+	}
+	if r, ok := FromUnstructured(runwatch.DefaultKind, u); !ok || r.Screenshots != 10 {
+		t.Fatalf("read back: %+v", r)
+	}
+	s.Screenshots = 26
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "screenshots") {
+		t.Fatalf("a cap above 25 was accepted: %v", err)
 	}
 }
 
