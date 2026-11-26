@@ -116,3 +116,19 @@ func TestARetryIsChargedToTheRetrier(t *testing.T) {
 		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Runs)
 	}
 }
+
+// Developer review gap 1, D1 (plan Task 9): a task a developer with write access started is charged
+// to them, and their spent day refuses its run as any person's does: the cap that gates
+// access.start: write is the same one, at the same door, whatever surface started the task.
+func TestAWritersTaskIsHeldToTheirOwnDay(t *testing.T) {
+	tk := issueTask("3buqdlot", 7, "x")
+	tk.Spec.Source.RequestedBy = "github:dev1" // not a maintainer: started under access.start: write
+	g := newRig(t, tk, spentLedger(map[string]int64{"github:dev1": 5_000_000}))
+	g.r.Cfg.Current().Budgets = personBudgets(true, true)
+	g.r.Cfg.Current().Repositories[0].Access = config.RepositoryAccess{Start: config.AccessWrite}
+	got := g.reconcile(t, "3buqdlot", 3)
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-person" || len(g.runs.specs) != 0 ||
+		!strings.Contains(strings.Join(g.f.Comments(7), "\n"), "`github:dev1`") {
+		t.Fatalf("%s %s %v", got.Status.Phase, got.Status.Reason, g.runs.specs)
+	}
+}
