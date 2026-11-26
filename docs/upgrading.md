@@ -10,6 +10,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 - [The `model:<alias>` label pin](#the-modelalias-label-pin)
 - [Run aliases and per-alias prices](#run-aliases-and-per-alias-prices)
+- [GitHub release downloads only while the toolchain installs](#github-release-downloads-only-while-the-toolchain-installs)
 - [Gemini: the gemini and vertex presets](#gemini-the-gemini-and-vertex-presets)
 - [The OpenCode image runs repository checks](#the-opencode-image-runs-repository-checks)
 - [Early commands are held, refused input is answered](#early-commands-are-held-refused-input-is-answered)
@@ -66,6 +67,25 @@ No value changes. A gateway run's pod gets `MAKU_ALIASES`, the aliases its liste
 OpenCode image now lists as its models instead of a built-in list. `runController.model.gateway.prices`
 (`{<alias>: {input, output}}`, USD per million tokens as strings, each a served alias) is new and
 optional: it gives OpenHands its alias's rates ([the gateway](gateway.md)).
+
+## GitHub release downloads only while the toolchain installs
+
+A run no longer reaches GitHub's release and raw hosts once its agent is running. An install that
+keeps the built-in profiles needs no value change; upgrade the harness images with the run-controller.
+
+| What | Before | Now |
+|---|---|---|
+| Built-in `github` profile | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com`, `release-assets.githubusercontent.com` | `github.com`, `api.github.com` |
+| Release and raw hosts | Every run, for the whole run | A check-enabled run's install set (`runController.installEgress`): in `kubernetes` mode until the harness closes it, or `windowSeconds` (1200) after the pod's creation; in `cilium` mode for the whole run |
+| `pypi`, `npm`, `crates` | Only when the run requests them | Also in a check run's install set, for pre-commit's hook environments |
+| `codeload.github.com` | Every run | No run |
+| Toolchain install | In the background while the agent starts | Before the agent starts. A tool whose pin changes during the run is not installed: `agent-checks` says `toolchain incomplete: <tool> (pin changed after the install phase; CI checks it)` |
+| Egress proxy | Watches run pods | Also patches a run pod's `maku.ogenki.io/egress-install-closed` annotation, which the run-pod policy holds to that one change |
+
+An install that overrides `runController.egressProfiles.github` with the old list keeps those hosts
+for the whole run; the run-controller logs a warning naming them. Drop them from the override to get
+the install window. A new alert, `MakuEgressInstallClosedRefusal`, fires when an agent tries a
+release download after the window ([Run path alerts](reference/alerts.md#run-path-alerts)).
 
 ## Gemini: the gemini and vertex presets
 
