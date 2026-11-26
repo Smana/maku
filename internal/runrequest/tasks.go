@@ -71,7 +71,7 @@ var actResults = []string{
 	"plan_approved", "plan_revised", "plan_split", "no_plan",
 	"not_linked", "not_maintainer", "not_allowed",
 	"not_running", "not_escalated", "no_question", "unknown_task",
-	"no_deeper_workflow", "deeper_over_cap",
+	"no_deeper_workflow", "deeper_over_cap", "task_cap_holds",
 }
 
 // RetryResult is the factory's answer to POST /v1/tasks/{task}/retries (WR4).

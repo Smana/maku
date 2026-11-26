@@ -1418,11 +1418,7 @@ func (r *Reconciler) triaged(ctx context.Context, cfg *config.Config, t *v1alpha
 			return err
 		}
 	}
-	var members []roomv1.Member
-	if p := t.Sponsored(); p != "" { // R8, R13: the principal reads its own task's room, as a watcher
-		members = append(members, roomv1.Member{Principal: p, Role: "watcher"})
-	}
-	err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository, members...)
+	members, err := r.ensureRoom(ctx, t)
 	if errors.Is(err, rooms.ErrForeignRoom) {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "foreign_room")
 	}
@@ -1441,6 +1437,25 @@ func (r *Reconciler) triaged(ctx context.Context, cfg *config.Config, t *v1alpha
 	return nil
 }
 
+// ensureRoom makes t's room, or finds the factory's own (R2), with the task's sponsored principal as
+// a watcher (R8, R13); members is that list, for the caller's error handling.
+func (r *Reconciler) ensureRoom(ctx context.Context, t *v1alpha1.Task) (members []roomv1.Member, err error) {
+	if p := t.Sponsored(); p != "" {
+		members = append(members, roomv1.Member{Principal: p, Role: "watcher"})
+	}
+	return members, rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository, members...)
+}
+
+// retryPhase is where a retry sends an escalated task: Queued when it has a room and has run, else
+// Triaged, which checks its room (foreign_room) and its dependencies again and resolves an unscoped
+// task, as a first pass does. A task bounced at intake has a room (askAtIntake) but never ran.
+func retryPhase(t *v1alpha1.Task) string {
+	if t.Status.RoomRef == "" || len(t.Status.Runs) == 0 {
+		return v1alpha1.PhaseTriaged
+	}
+	return v1alpha1.PhaseQueued
+}
+
 // costReader is the run meter's hand-off of each run's cost (meter.Costs).
 type costReader interface {
 	Get(id string) (meter.Cost, bool)
@@ -1452,6 +1467,15 @@ type costReader interface {
 // a flat-rate model's nominal prices left the dollars far from their cap while the task ran to
 // 4 M of its 3 M tokens (#465).
 func runFits(t *v1alpha1.Task) bool { return runFitsFor(t, "implementer") }
+
+// RetryHeld reports that a plain retry of escalated task t would not be taken (F-4): it escalated at its task
+// cap, the cap still leaves less than a whole run, and the cap is enforced. The factory's retries
+// route and the room's facts read this same predicate, so no surface offers a retry the
+// reconciler then refuses.
+func RetryHeld(cfg *config.Config, t *v1alpha1.Task) bool {
+	return t.Status.Phase == v1alpha1.PhaseEscalated && t.Status.Reason == "budget-task" && !runFits(t) &&
+		(cfg.Budgets.EnforceTask || t.Sponsored() != "")
+}
 
 // runFitsFor sizes the fit check by the role about to run (#475). Every role but the reviewer
 // needs a whole run's tokens left. A reviewer reads a diff and needs a quarter of one

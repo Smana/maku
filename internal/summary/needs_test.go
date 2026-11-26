@@ -425,3 +425,24 @@ func TestARecoveryOffersNoDeeperRunAboveTheConfirmedCost(t *testing.T) {
 		t.Fatal("a task with no confirmed cost keeps its deeper run")
 	}
 }
+
+// F-4, gcp-0 drill (#519): at a held task cap the recovery offers no plain retry, and its next step
+// says so; an offered deeper run stays the card's act.
+func TestARecoveryAtAHeldCapOffersNoRetry(t *testing.T) {
+	in := summary.NeedsIn{Room: "4za2no42", URL: "https://rooms.example/r/4za2no42", Repository: "Smana/maku", FactsRead: true,
+		Caller: summary.Caller{CanClose: true}}
+	in.Facts = &envelope.TaskFacts{Phase: "Escalated", Reason: "budget-task", RetryHeld: true,
+		Issue: &envelope.IssueFact{Number: 519, URL: "https://github.com/Smana/maku/issues/519"}}
+	got := summary.Items(in)
+	if len(got) != 1 || !got[0].RetryHeld || got[0].Act != "" || got[0].Action.Kind != "close" || strings.Contains(got[0].What, "/factory retry`") {
+		t.Fatalf("items %+v", got)
+	}
+	if _, next := summary.Waiting(in.Facts); strings.Contains(next, "comments `/factory retry` on the issue to run it again") {
+		t.Fatalf("next step offers the refused retry: %q", next)
+	}
+	in.Facts.Profile = &envelope.ProfileFact{Name: "standard", StepUp: &envelope.StepUpFact{From: "standard", To: "careful", Mode: "offered"}}
+	got = summary.Items(in)
+	if len(got) != 1 || got[0].Act != "retry" || got[0].Deeper == nil || !strings.Contains(got[0].What, "deeper") {
+		t.Fatalf("items %+v", got)
+	}
+}

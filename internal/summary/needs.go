@@ -151,7 +151,7 @@ type Caller struct {
 
 // NeedAction is a need's one thing to do, and where.
 type NeedAction struct {
-	Kind  string `json:"kind"`  // decide | comment | answer | merge | review | retry | release
+	Kind  string `json:"kind"`  // decide | comment | answer | merge | review | retry | release | close
 	Label string `json:"label"` // one sentence
 	URL   string `json:"url,omitempty"`
 }
@@ -342,6 +342,18 @@ func recoveryNeed(in NeedsIn, f *envelope.TaskFacts) Need {
 		n.What = clipWhat(fmt.Sprintf("a maintainer comments `/factory retry` on issue #%d to run it again, or closes the room", n.Issue))
 	}
 	n.Action = NeedAction{Kind: "retry", Label: "retry the task or close the room", URL: in.URL}
+	if f.RetryHeld {
+		// F-4: a plain retry would only stop at the cap again, and the factory refuses it.
+		n.RetryHeld = true
+		n.What = clipWhat("the task's cap leaves less than a whole run, so a retry would stop again: open a new task with a higher cap, or close the room")
+		n.Action = NeedAction{Kind: "close", Label: "open a new task with a higher cap, or close the room", URL: in.URL}
+		if n.Deeper != nil {
+			n.What = clipWhat(fmt.Sprintf("the task's cap leaves less than a whole run, so only a deeper run under `%s` may go on: run it again deeper, or close the room", n.Deeper.Workflow))
+			n.Action = NeedAction{Kind: "retry", Label: "run it again deeper or close the room", URL: in.URL}
+		} else {
+			n.Act = ""
+		}
+	}
 	return stamp(n, in, NeedSource{Kind: "facts", Reason: f.Reason})
 }
 

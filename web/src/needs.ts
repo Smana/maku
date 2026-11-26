@@ -28,6 +28,9 @@ export const stallAfter = 30_000;
 export const stalledText = "Sent, but the task has not moved yet — see the room log.";
 export const unansweredText = "No answer from the broker yet: check the room log before retrying.";
 export const notSentText = "Not connected: the action was not sent. Retry once the room is live.";
+// settledFor is how long an accepted act's confirmation stays once its card has left: the card goes
+// because the task moved, and the reader is told what moved it rather than seeing it vanish.
+export const settledFor = 60_000;
 
 // What a card says, in place of its buttons, once the broker took its act.
 export function ackText(action: Record<string, unknown>): string {
@@ -113,9 +116,15 @@ const NEED_TITLE: Record<string, string> = {
   merge: "Merge the pull request",
   review: "Review the pull request",
   failed_check: "A check needs a re-run",
-  recovery: "Retry the task, or run it again deeper",
   hold: "The task is on hold",
 };
+
+// recoveryTitle names only what the card offers: Retry unless the task cap holds (F-4), and Run
+// again deeper only when a deeper workflow is offered.
+export function recoveryTitle(n: NeedItem): string {
+  if (n.retryHeld) return n.deeper?.workflow ? "Run it again deeper" : "The task's cap leaves no room for another run";
+  return n.deeper?.workflow ? "Retry the task, or run it again deeper" : "Retry the task";
+}
 
 const isHttps = (url?: string) => { try { return !!url && new URL(url).protocol === "https:"; } catch { return false; } };
 const isGitHubUrl = (url?: string) => { try { const u = url ? new URL(url) : null; return !!u && u.protocol === "https:" && u.hostname === "github.com"; } catch { return false; } };
@@ -184,7 +193,8 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
   li.dataset.kind = n.kind;
   const type = n.type || needType(n.kind);
   if (type) li.dataset.type = type;
-  const title = n.kind === "merge" && n.approve ? "Approve the pull request" : NEED_TITLE[n.kind] ?? cap(n.kind.replace(/_/g, " "));
+  const title = n.kind === "merge" && n.approve ? "Approve the pull request" : n.kind === "recovery" ? recoveryTitle(n)
+    : NEED_TITLE[n.kind] ?? cap(n.kind.replace(/_/g, " "));
   const what = el("p", { className: "need-what" });
   what.append(...inlineCode(n.what));
   li.append(el("p", { className: "need-title", textContent: title }), what);
@@ -236,8 +246,12 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
       button("Split", "need-plan-split", () => ctx.hands.plan!("split")),
     );
   } else if (n.kind === "recovery") {
-    if (ctx.hands.retry && actEnabled("retry")) {
-      bar.append(confirmButton("Retry", "need-retry", () => ctx.hands.retry!(false)));
+    if (n.retryHeld && !n.deeper?.workflow) {
+      // F-4: the factory refuses a plain retry; the cap is part of the task's spec.
+      if (ctx.hands.openSession) bar.append(button("Close the room…", "need-close", () => ctx.hands.openSession!("close")));
+      bar.append(where("Raise the cap on a new task: a retry here would stop at the same cap."));
+    } else if (ctx.hands.retry && actEnabled("retry")) {
+      if (!n.retryHeld) bar.append(confirmButton("Retry", "need-retry", () => ctx.hands.retry!(false)));
       if (n.deeper?.workflow) {
         const ceil = n.deeper.ceilingMicroUSD && n.deeper.ceilingMicroUSD > 0
           ? `, up to $${(n.deeper.ceilingMicroUSD / 1e6).toFixed(2)}`
@@ -372,6 +386,8 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       plan: proposedPlan,
     };
   };
+  // The confirmations of accepted acts whose card left, each until its time (settledFor).
+  let settled: { text: string; until: number }[] = [];
   let listedItems: NeedItem[] | undefined;
   let proposedPlan: ProposedPlan | undefined;
   let summarisedItems: NeedItem[] = [];
@@ -470,8 +486,13 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     for (const k of [...cards.keys()]) if (!items.includes(cards.get(k)!)) cards.delete(k);
     // An act's card that changed or left has moved: its state goes. The rest show theirs in place.
     for (const [kind, st] of acts) {
-      if (JSON.stringify(itemFor(kind) ?? null) !== st.sig) { clearTimeout(st.timer); acts.delete(kind); }
+      if (JSON.stringify(itemFor(kind) ?? null) !== st.sig) {
+        clearTimeout(st.timer);
+        acts.delete(kind);
+        if (st.phase === "accepted" || st.phase === "stalled") settled.push({ text: st.ok, until: Date.now() + settledFor });
+      }
     }
+    settled = settled.filter((s) => s.until > Date.now());
     (listedItems ?? summarisedItems).forEach((n, i) => applyAct(items[i], acts.get(cardAct(n))));
     const note = (cls: string, text: string) => {
       const kept = other.querySelector<HTMLLIElement>(`:scope > li.${cls}`);
@@ -480,14 +501,16 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     const notes: HTMLLIElement[] = [];
     if (stale) notes.push(note("needs-stale", stale));
     if (unread.length) notes.push(note("needs-unread", unreadLine(unread)));
+    for (const s of settled) notes.push(note("needs-settled", s.text));
     const next = [...items, ...notes];
     if (next.length !== other.children.length || next.some((e, i) => other.children[i] !== e)) other.replaceChildren(...next);
     others = items.length;
-    const show = items.length + pending.length + unread.length + (stale ? 1 : 0) > 0;
+    const show = items.length + pending.length + unread.length + settled.length + (stale ? 1 : 0) > 0;
     // A viewer who decides nothing here and has no merge, answer or hold reads the cards as
     // someone else's turn; when every card left is expired, no one is awaited any more.
     const lapsed = pending.length > 0 && pending.every((a) => expiredAt(a.expiresAt));
-    const heading = panel.count() > 0 ? "Needs you" : lapsed ? "Expired: no one decided" : "Waiting for an approver";
+    const onlySettled = settled.length > 0 && !items.length && !pending.length && !unread.length && !stale;
+    const heading = panel.count() > 0 ? "Needs you" : lapsed ? "Expired: no one decided" : onlySettled ? "Sent" : "Waiting for an approver";
     if (title.textContent !== heading) title.textContent = heading;
     root.hidden = !show;
   };

@@ -1123,7 +1123,7 @@ func TestARetryThatEscalatesAgainIsNarrated(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-task" {
 		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
 	}
-	if n := strings.Count(strings.Join(eventCommentBodies(g.f, 7), "\n"), "no room left for another run"); n != 1 {
+	if n := strings.Count(strings.Join(eventCommentBodies(g.f, 7), "\n"), "less than a whole run needs"); n != 1 {
 		t.Fatalf("the second escalation is narrated once: %q", eventCommentBodies(g.f, 7))
 	}
 }
@@ -1148,5 +1148,37 @@ func TestARetryCannotLiftTheTaskCap(t *testing.T) {
 	}
 	if slices.Contains(g.metrics.recorded, "intervention retry none none none") {
 		t.Fatal("a refused retry is no intervention")
+	}
+}
+
+// F-4, gcp-0 drill (#519): a retry the task cap would only stop again is refused, and the refusal
+// leaves no trace of a retry under way: no stale next trigger, and the room's facts say the retry
+// is held, so no surface offers it again.
+func TestARetryAtAHeldTaskCapIsRefusedEverywhere(t *testing.T) {
+	tk := escalatedTask(false)
+	tk.Status.Reason = "budget-task"
+	tk.Status.NextTrigger = "retry" // the run that spent the cap was itself a retry
+	tk.Spec.Budget.TaskTokens = 3_000_000
+	tk.Status.Runs[0].Tokens, tk.Status.Usage.Tokens = 1_900_000, 1_900_000
+	g := newRig(t, tk, roomOf("3buqdlot"))
+	cfg := g.r.Cfg.Current()
+	cfg.Budgets.EnforceTask = true
+	if !RetryHeld(cfg, tk) {
+		t.Fatal("1.1 M tokens left of a 1.5 M run: the retry is held")
+	}
+	if f := g.r.factsFor(cfg, tk); !f.RetryHeld {
+		t.Fatal("the room's facts say the retry is held")
+	}
+	g.f.SetComments(7, retryBy(77, "Smana", time.Minute))
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Retries != 0 || got.Status.NextTrigger != "" {
+		t.Fatalf("%s retries=%d next=%q", got.Status.Phase, got.Status.Retries, got.Status.NextTrigger)
+	}
+	if say := strings.Join(eventCommentBodies(g.f, 7), "\n"); !strings.Contains(say, "was not retried") {
+		t.Fatalf("the refusal is answered: %q", say)
+	}
+	cfg.Budgets.EnforceTask = false
+	if RetryHeld(cfg, tk) {
+		t.Fatal("an unenforced cap holds no retry")
 	}
 }

@@ -87,7 +87,7 @@ var roleRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
 // failureWords is why a task failed, in words, by the factory's reason code.
 func failureWords() map[string]string {
 	return map[string]string{
-		"budget-task": "budget reached", "resume_budget": "budget reached", "ci_red": "CI stayed red",
+		"budget-task": "too little task budget left for a run", "resume_budget": "too little task budget left to resume", "ci_red": "CI stayed red",
 		"ci_cancelled": "a check was cancelled", "deadline": "time limit reached", "agent_error": "the agent stopped on an error",
 		"model_unavailable_billing": "the model provider refused: billing", "model_unavailable_auth": "the model provider refused: auth",
 		"model_unavailable_quota": "the model provider refused: quota", "scoper_failed": "the scope was not checked",

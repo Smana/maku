@@ -136,7 +136,7 @@ export interface Summary {
   needsYou: { kind: "plan_confirmation" | "plan_review" | "approval" | "question" | "merge" | "review" | "failed_check" | "recovery" | "hold";
     type?: string; act?: string;
     id: string; what: string; deadline?: string; url: string; author?: string; approve?: boolean;
-    deeper?: { workflow: string; ceilingMicroUSD?: number } }[];
+    deeper?: { workflow: string; ceilingMicroUSD?: number }; retryHeld?: boolean }[];
   // The one thing to do for the room and where: "pr" and "answer" are on GitHub, "approve" on this page.
   // approve: the pr step is an approval of the current commit, not a merge by hand.
   step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
@@ -254,6 +254,7 @@ export function needsItems(s: Summary): NeedItem[] {
       ...(n.act ? { act: n.act } : {}),
       ...(n.approve ? { approve: true } : {}),
       ...(n.deeper ? { deeper: n.deeper } : {}),
+      ...(n.retryHeld ? { retryHeld: true } : {}),
     };
     // approve: under approveToMerge an approval of the current commit merges it (#308, #310).
     if (n.kind === "merge") out.push({ ...base, action: { kind: "merge", label: n.approve ? "approve the head on the pull request" : "open the pull request", url: n.url } });

@@ -5,7 +5,7 @@ import type { NeedItem, NeedsPage } from "../src/api";
 import type { Snapshot } from "../src/conn";
 import { RULES } from "../src/approval-help";
 import { approvalCard, rejection } from "../src/controls";
-import { mountNeeds, needCard, notSentText, stallAfter, stalledText, unansweredText, type NeedHands } from "../src/needs";
+import { mountNeeds, needCard, notSentText, settledFor, stallAfter, stalledText, unansweredText, type NeedHands } from "../src/needs";
 import { NEED_FIXTURES } from "../preview/needs-fixtures";
 import { RoomState } from "../src/room-state";
 import type { Summary } from "../src/summary";
@@ -497,6 +497,22 @@ describe("a need's one action", () => {
     );
     expect(readOnly.querySelector("button")).toBeNull();
   });
+  it("a recovery card offers only what the factory takes: no Retry at a held task cap, and no deeper promise without one", () => {
+    const retries: boolean[] = [];
+    const hands = { retry: (deeper: boolean) => retries.push(deeper), openSession: () => {} };
+    const plain = needCard({ kind: "recovery", id: "resume_budget", what: "w", issue: 12 }, { hands });
+    expect(plain.querySelector(".need-title")?.textContent).toBe("Retry the task");
+    const held = needCard({ kind: "recovery", id: "budget-task", what: "w", issue: 12, retryHeld: true }, { hands });
+    expect(held.querySelector(".need-title")?.textContent).toBe("The task's cap leaves no room for another run");
+    expect(held.querySelector('button[data-act="need-retry"]')).toBeNull();
+    expect(held.querySelector('button[data-act="need-close"]')).not.toBeNull();
+    expect(held.querySelector(".need-where")?.textContent).toContain("new task");
+    const deeper = needCard({ kind: "recovery", id: "budget-task", what: "w", issue: 12, retryHeld: true,
+      deeper: { workflow: "careful" } }, { hands });
+    expect(deeper.querySelector(".need-title")?.textContent).toBe("Run it again deeper");
+    expect(deeper.querySelector('button[data-act="need-retry"]')).toBeNull();
+    expect(deeper.querySelector('button[data-act="need-retry-deeper"]')?.textContent).toBe("Run again deeper (careful)");
+  });
   it("never links a need back to the room page it sits on", async () => {
     const { root } = await draw({ hands: { openSession: () => {}, focusCoordination: () => {} } });
     expect([...root.querySelectorAll("a")].map((a) => a.getAttribute("href")).filter((h) => h?.startsWith("https://rooms.example/"))).toEqual([]);
@@ -707,6 +723,12 @@ describe("room cards acting on the page (phase G2)", () => {
       vi.advanceTimersByTime(stallAfter);
       expect(root.querySelector(".need-ack-stalled")).toBeNull();
       expect(root.querySelector('li.need[data-kind="plan_review"]')).toBeNull();
+      // The card left because the task moved: what moved it stays, for a while, then goes.
+      expect(root.querySelector("li.needs-settled")?.textContent).toBe("✓ Approved by you — the implementer starts next.");
+      expect(root.hidden).toBe(false);
+      vi.advanceTimersByTime(settledFor);
+      await panel.refresh();
+      expect(root.querySelector("li.needs-settled")).toBeNull();
     });
 
     it("gives the buttons back when the broker never answers", async () => {

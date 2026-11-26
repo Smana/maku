@@ -23,7 +23,7 @@ export const REASONS: Record<string, { short: string; long: string; next: string
   "budget-person": { short: "the daily budget in dollars of the pers…", long: "the daily budget in dollars of the person its next run is charged to is spent", next: "a maintainer reviews the task and chooses the next step" },
   "budget-principal": { short: "the factory's daily budget in dollars i…", long: "the factory's daily budget in dollars is spent", next: "a maintainer reviews the task and chooses the next step" },
   "budget-run": { short: "the run spent its token budget", long: "the run spent its token budget", next: "a maintainer reviews the task and chooses the next step" },
-  "budget-task": { short: "the task is out of budget", long: "the task's token budget has no room left for another run", next: "a maintainer reviews the task and chooses the next step" },
+  "budget-task": { short: "too little task budget left for a run", long: "what is left of the task's budget, in tokens or dollars, is less than a whole run needs", next: "a maintainer reviews the task and chooses the next step" },
   "budget_calls": { short: "the scoper hit its tool-call limit", long: "the scoper reached its tool-call limit before handing off", next: "a maintainer reviews the task and chooses the next step" },
   "cancelled": { short: "its owner or a maintainer cancelled it …", long: "its owner or a maintainer cancelled it from its room", next: "a maintainer reviews the task and chooses the next step" },
   "changes_requested": { short: "changes were requested", long: "a reviewer requested changes, and the factory does not merge over them", next: "a maintainer reviews the task and chooses the next step" },

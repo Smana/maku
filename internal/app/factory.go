@@ -663,7 +663,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	apiSrv := &api.Server{Auth: auth, Log: log,
 		Cfg: live, Groups: groups, Runs: rc, Rooms: ledgers, APIReader: mgr.GetAPIReader(), Namespace: ns, Stopped: stopped, SlackLinks: broker, Logins: logins,
-		NewRunID: taskid.Random, Now: time.Now, Metrics: m, Access: access, People: people, Owned: fenced.Owned, PrivateRefused: privateCode.Refused,
+		RetryHeld: reconciler.RetryHeld,
+		NewRunID:  taskid.Random, Now: time.Now, Metrics: m, Access: access, People: people, Owned: fenced.Owned, PrivateRefused: privateCode.Refused,
 		InstallUnsafe: privateCode.InstallUnsafe,
 		Forges: func(repo string) api.IssueFiler {
 			c, ok := conns.get(repo)

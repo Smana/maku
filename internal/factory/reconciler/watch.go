@@ -487,11 +487,7 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 			t.Status.RetriedBy = v1alpha1.Person(rc.Author)
 			t.Status.NextTrigger = "retry"
 			r.intervention(ctx, cfg, t, "retry")
-			next := v1alpha1.PhaseQueued
-			if t.Status.RoomRef == "" {
-				next = v1alpha1.PhaseTriaged
-			}
-			r.to(t, next, "")
+			r.to(t, retryPhase(t), "")
 			narrateLater(t, narrate.Retrying(t, rc.Author, after))
 			return nil
 		}
@@ -506,10 +502,12 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 	if deeper {
 		return r.stepUpBy(ctx, cfg, t, c.Author, c.ID)
 	}
-	if t.Status.Reason == "budget-task" && !runFits(t) && (cfg.Budgets.EnforceTask || t.Sponsored() != "") {
+	if RetryHeld(cfg, t) {
 		// F-4: Queued would only escalate it again. The command is answered and handled; the
-		// escalation's clock keeps running, and Retries counts only retries that can run.
+		// escalation's clock keeps running, and Retries counts only retries that can run. No run
+		// is next, so no trigger is either: a stale one would read as a retry under way.
 		markHandled(t, c.ID)
+		t.Status.NextTrigger = ""
 		narrateLater(t, narrate.TaskCapHolds(t, c.ID))
 		return nil
 	}
@@ -529,11 +527,7 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 	t.Status.RetriedBy = v1alpha1.Person(c.Author) // D2: the retrier pays for the runs the retry causes
 	t.Status.NextTrigger = "retry"
 	r.intervention(ctx, cfg, t, "retry")
-	next := v1alpha1.PhaseQueued
-	if t.Status.RoomRef == "" { // escalated before it had a room (foreign_room): check the room again
-		next = v1alpha1.PhaseTriaged
-	}
-	r.to(t, next, "")
+	r.to(t, retryPhase(t), "") // escalated before it had a room (foreign_room), or at intake: triage it again
 	narrateLater(t, narrate.Retrying(t, c.Author, after))
 	return nil
 }

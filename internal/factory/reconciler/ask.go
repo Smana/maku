@@ -4,12 +4,16 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/narrate"
+	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/intake"
 )
 
@@ -94,6 +98,14 @@ func (r *Reconciler) askAtIntake(ctx context.Context, cfg *config.Config, t *v1a
 	if statesAcceptance(t.Spec.Text) {
 		r.noteStage(t, "ask", "not_needed")
 		return false, nil
+	}
+	// The question is the room's to answer too (maku answer, maku cancel, the web inbox): the room
+	// is made now, as triaged would make it. One the factory cannot make leaves the GitHub path,
+	// as before: the retry's Triaged pass escalates a foreign room.
+	if _, err := r.ensureRoom(ctx, t); err == nil {
+		t.Status.RoomRef = t.Name
+	} else if !errors.Is(err, rooms.ErrForeignRoom) && !apierrors.IsInvalid(err) {
+		return false, err
 	}
 	n, name := t.Spec.Issue, t.Name
 	record(ctx, func(ctx context.Context) {

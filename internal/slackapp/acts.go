@@ -46,6 +46,7 @@ const (
 	actRetriedLine            = "Retried."
 	actSteppedUpLine          = "Stepped up and queued."
 	actNoDeeperLine           = "This task has no deeper workflow to step up to."
+	actTaskCapHoldsLine       = "The task's cap leaves less than a whole run, so a retry would only stop again: raise the cap on a new task."
 	actDeeperOverCapLine      = "Stepping up costs more than the cost confirmed for this task. To run the deeper workflow, start the task again with it (New task, or `maku start --workflow <name>`), which confirms its higher cost."
 	actStopNotMaintainerLine  = "Only a maintainer of this repository can stop a task."
 	actRetryNotMaintainerLine = "Only a maintainer of this repository can retry a task."
@@ -384,6 +385,8 @@ func actResultLine(action, code, user string) (outcome, line string) {
 		return "refused", actNoDeeperLine
 	case "deeper_over_cap":
 		return "refused", actDeeperOverCapLine
+	case "task_cap_holds":
+		return "refused", actTaskCapHoldsLine
 	case "answered_restarted":
 		return "decided", actAnsweredRestartedLine
 	case "answered":

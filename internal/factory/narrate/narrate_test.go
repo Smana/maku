@@ -88,6 +88,11 @@ func TestEndedExplainsTheReason(t *testing.T) {
 		!strings.Contains(e.Body, "Comment `/factory retry` on this issue to run it again (a maintainer only)") {
 		t.Fatal(e.Body)
 	}
+	// F-4: at the task cap a plain retry is refused, so the ending does not offer it.
+	if c := Ended(tk, v1alpha1.PhaseEscalated, "budget-task"); strings.Contains(c.Body, "to run it again (a maintainer only)") ||
+		!strings.Contains(c.Body, "`/factory retry deeper`") || !strings.Contains(c.Body, "less than a whole run needs") {
+		t.Fatal(c.Body)
+	}
 	if s := Ended(tk, v1alpha1.PhaseClosed, "stale"); !strings.Contains(s.Body,
 		"was closed: the pull request had no maintainer activity (a review, a comment or a push) for 14 days.") {
 		t.Fatal(s.Body)

@@ -116,7 +116,7 @@ func TestTaskTokenCapLeavesRoomForAWholeRun(t *testing.T) {
 				if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "budget-task" {
 					t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 				}
-				if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "no room left for another run") ||
+				if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "less than a whole run needs") ||
 					!strings.Contains(say, "Tokens used so far: "+map[string]string{"revision": "1.5 M", "reviewer": "2.6 M"}[path]) {
 					t.Fatalf("the escalation says why, honestly: %q", say)
 				}

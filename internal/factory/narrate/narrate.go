@@ -970,6 +970,10 @@ func hints() map[string]string {
 	}
 }
 
+// capHeldHint is Escalated's hint at the task cap (F-4), where a plain retry is refused.
+const capHeldHint = "A plain `/factory retry` would stop at the same cap, so it is refused: comment `/factory retry deeper` when a deeper " +
+	"workflow is offered (a maintainer only), or raise the cap on a new task. Without either, it stops when its escalation expires."
+
 // Ended announces the task's end, why, and what a human can do next. Its key carries the phase
 // and the run count, so a task that ends, is retried and ends again narrates both. An Escalated
 // ending mentions the maintainers given: §6.3 puts a named human on every escalation.
@@ -997,6 +1001,9 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 		b.WriteString("\n\n@" + strings.Join(maintainers, " @") + ": this task needs a maintainer.")
 	}
 	if h := hints()[phase]; h != "" && reason != "budget-family" {
+		if phase == v1alpha1.PhaseEscalated && reason == "budget-task" {
+			h = capHeldHint // F-4: a plain retry would stop at the same cap, and is refused
+		}
 		b.WriteString("\n\n" + h)
 	}
 	if v1alpha1.TerminalPhase(phase) {
@@ -1094,7 +1101,7 @@ func ChildIssue(t *v1alpha1.Task, k int32, sc *envelope.Scope, roomsURL string) 
 	s := t.Status.Split
 	title = fmt.Sprintf("Part %d of %d of #%d", k, s.Of, t.Spec.Issue)
 	var b strings.Builder
-	fmt.Fprintf(&b, "Part %d of %d of #%d, opened by agent factory task `%s` once %s approved its split with `/factory split`. "+
+	fmt.Fprintf(&b, "Part %d of %d of #%d, opened by agent factory task `%s` once %s approved its split. "+
 		"Its task runs on branch `agent/%s`, through the merge gate of #%d's class; the next part opens once this one merges.",
 		k, s.Of, t.Spec.Issue, t.Name, strings.TrimPrefix(s.ApprovedBy, "github:"), taskid.Name(taskid.SplitKey(t.Name, int(k))), t.Spec.Issue)
 	if t.Spec.DataClass != "public" {
@@ -1373,7 +1380,7 @@ func stepUpTriggerPhrase(trigger string) string {
 	case "budget-run":
 		return "the run's budget was spent"
 	case "budget-task":
-		return "the task's budget was spent"
+		return "too little of the task's budget was left for a run"
 	case "out_of_budget":
 		return "the run spent its budget"
 	case "not_met":

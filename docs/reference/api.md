@@ -1354,8 +1354,9 @@ when already ended). Plain `/retries` applies `/factory retry` (`Escalated` → 
 the scoper's first assumption when the escalation was a question; a `Queued` task held by a model
 hold answers `not_escalated`). With `deeper: true`, `/retries` applies `/factory retry deeper` on
 `Escalated` or `NoOp`, stepping the task up once within its cap (`stepped_up` with `{workflow,
-ceilingMicroUSD}`, else `no_deeper_workflow` or `deeper_over_cap`). Answers `200 {"result"}` in
-`{stopped, retried, stepped_up, no_deeper_workflow, deeper_over_cap, answered_restarted, answered,
+ceilingMicroUSD}`, else `no_deeper_workflow` or `deeper_over_cap`). A plain retry of a task escalated at its enforced
+task cap, which still leaves less than a whole run, answers `task_cap_holds` and changes nothing. Answers `200 {"result"}` in
+`{stopped, retried, stepped_up, no_deeper_workflow, deeper_over_cap, task_cap_holds, answered_restarted, answered,
 not_linked, not_maintainer, not_allowed, not_running, not_escalated, no_question, unknown_task}`,
 `400 bad_json` / `invalid_draft`, `401` / `403` for caller auth, `409 invalid_decisions`, or `503`
 (`kill_switch`, `link_unverified`, `access_unverified`, `tasks_unavailable`, `forge_unavailable`).
