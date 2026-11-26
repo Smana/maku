@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v3 feature 3, offline proof 4: the harness image under gVisor (runsc), on a network whose only way
-# out is a proxy allowing exactly a check-enabled run's hosts, clones REPO's main and runs its
+# v3 feature 3, offline proof 4: a harness image (OpenHands or OpenCode) under gVisor (runsc), on a
+# network whose only way out is a proxy allowing exactly a check-enabled run's hosts, clones REPO's
+# main and runs its
 # declared checks. Fails on what is the harness's: a refused host (named), an install that leaves a
 # tool missing, a step that times out or never runs for want of budget, a sandbox that is not gVisor.
 # A step that ran and ended fail is the repository's own verdict on its main, not the harness's: it
@@ -52,13 +53,13 @@ chmod 0777 "$out"
 
 # The proxy: the image's own Python, on the default bridge (the way out) and on the internal network.
 docker run -d --name "$name-proxy" --network bridge -e ALLOW="${allow// /,}" -e LOG=/out/proxy.log \
-  -v "$here/proxy.py:/proxy.py:ro" -v "$out:/out" --entrypoint /usr/local/bin/python "$image" /proxy.py 3128 >/dev/null
+  -v "$here/proxy.py:/proxy.py:ro" -v "$out:/out" --entrypoint python3 "$image" /proxy.py 3128 >/dev/null
 docker network connect "$name" "$name-proxy"
 
 # The deny path, before the real run: from the internal network an unlisted host and an allowed host
 # on another port are both refused with 403, and the proxy logged each refusal.
 probe() { # HOST:PORT -> the proxy's status line
-  docker run --rm --network "$name" -e P="$name-proxy" -e T="$1" --entrypoint /usr/local/bin/python "$image" -c '
+  docker run --rm --network "$name" -e P="$name-proxy" -e T="$1" --entrypoint python3 "$image" -c '
 import os, socket, time
 for _ in range(20):
     try:

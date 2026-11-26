@@ -185,7 +185,7 @@ jobs:
   # it reads two other repositories and the network. A repository that declares nothing yet skips.
   # It fails on the harness's faults only; a check that ran and failed on a repository's main is that
   # repository's verdict, a warning here (tests/checks/verdict.py).
-  # Also verifies the OpenCode runner image's readiness, recovery, and full offline parity matrix
+  # Also runs ai-native-ref's checks in the OpenCode image, and verifies its readiness, recovery, and full offline parity matrix
   # under gVisor (runsc) with SKIP_GO=1 (check-test already runs the Go suites).
   # On a pull request, only when it touches images/maku-harness/ or images/maku-opencode/; main's pushes always run it.
   harness-checks:
@@ -229,6 +229,8 @@ jobs:
           load: true
           push: false
           tags: maku-opencode:runsc-contract
+      # The OpenCode image runs the same declared checks: bash steps and the tools mise installs on musl.
+      - run: images/maku-harness/tests/checks/run.sh maku-opencode:runsc-contract Smana/ai-native-ref golang,pypi "$RUNNER_TEMP/token"
       - name: OpenCode gVisor (runsc) contract matrix
         env:
           MAKU_OPENCODE_IMAGE: maku-opencode:runsc-contract

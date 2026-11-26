@@ -106,6 +106,8 @@ COPY --chown=10001:10001 tests /opt/agent/tests
 COPY --chown=10001:10001 requirements.txt checks-requirements.txt /opt/agent/
 # search's grep and glob run only on ripgrep: a base image or a package change that drops it fails here.
 RUN rg --version
+# The harness userland contract, shared with the OpenCode image's test stage.
+RUN sh /opt/agent/tests/userland-contract.sh
 # The git shim must come first on PATH, ahead of the real git it execs.
 RUN [ "$(command -v git)" = /usr/local/bin/git ] && [ -x /usr/bin/git ]
 USER root

@@ -16,8 +16,14 @@ ARG TARGETARCH
 
 USER root
 COPY images/maku-harness/fetch_release.py /tmp/fetch_release.py
+# The harness userland contract (images/maku-harness/tests/userland-contract.sh), which the OpenHands
+# image's Debian base meets: busybox has no bash, and its find, grep and sed lack GNU flags that
+# repositories' checks use. gcompat and libstdc++ run the glibc-linked tools mise installs for
+# agent-checks on musl (hugo extended). py3-yaml: the system python3 the repositories' checks run
+# imports yaml, as the OpenHands image's does.
 RUN set -eux; \
-    apk add --no-cache python3 py3-pip git rsync ripgrep ca-certificates tini; \
+    apk add --no-cache python3 py3-pip git rsync ripgrep ca-certificates tini \
+      bash coreutils findutils grep sed diffutils make tar gzip xz curl jq gcompat libstdc++ py3-yaml; \
     case "${TARGETARCH}" in \
       amd64) sum="${GH_SHA256_AMD64}" msum="${MISE_SHA256_AMD64}" march=x64 ;; \
       arm64) sum="${GH_SHA256_ARM64}" msum="${MISE_SHA256_ARM64}" march=arm64 ;; \
@@ -94,6 +100,9 @@ ENTRYPOINT ["tini", "--", "/usr/local/bin/agent-run"]
 
 FROM harness AS test
 COPY --chown=10001:10001 images/maku-opencode/tests /opt/agent/tests
+# The harness userland contract, shared with the OpenHands image's test stage.
+COPY --chown=10001:10001 images/maku-harness/tests/userland-contract.sh /opt/agent/tests/
+RUN sh /opt/agent/tests/userland-contract.sh
 RUN rg --version \
  && /usr/local/lib/gh-real --version \
  && /opt/agent/bin/mise --version \
