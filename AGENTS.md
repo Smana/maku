@@ -173,6 +173,7 @@ flowchart LR
 | Rooms | `internal/roomctrl` | `Room` reconciler: row, seq 1, finalizer, status projection |
 | Rooms | `internal/suspend` | the suspend trigger: a suspendable run waiting on an approval in an idle attended room is suspended, and resumed once nothing waits, through its claim's annotations |
 | Runs | `internal/runctl` | the run controller: `maku.ogenki.io` AgentRuns reconciled into the pod, ServiceAccount, ConfigMaps and CiliumNetworkPolicy that cloud-native-ref's composition builds, minus the gateway, octo-sts, traces, Kueue and suspend |
+| Runs | `cmd/maku-browser-gate`, `internal/browsergate` | the browser sidecar's loopback MCP gate in front of Playwright MCP: the tool allow-list, the literal-loopback URL check, the screenshot and image caps, and the read-only screenshot keep (`/shots`) the room-bridge relays; its wiring is `app.RunBrowserGate` |
 | API | `internal/bridgeapi` | `:8443`: hello, events, SSE stream, system API, approvals |
 | API | `internal/tlsreload` | a server key pair from two mounted files, TLS 1.3 minimum, re-read when cert-manager renews it: `:8443` and the factory's run-request API serve it; `tlsreload/tlsreloadtest`, its test-only pair writer |
 | API | `internal/mcp` | `:8090` MCP server, the `room_*` tools |
