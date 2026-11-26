@@ -1588,16 +1588,18 @@ func models() []string {
 // (ai-native-ref's agent-gateway moonshot.yaml and mistral.yaml), which a by-model meter prices.
 type providerModel struct{ tier, served string }
 
-// providerModels are the provider aliases (v3 F15, D9). Moonshot processes in China and Mistral
-// in the EU: both serve public data only, so loops models, workflows models and a judge name
-// them, and only a public task is given one.
+// providerModels are the provider aliases (v3 F15, D9). Moonshot processes in China, Mistral in
+// the EU and Gemini on Google's terms: each serves public data only, so loops models, workflows
+// models and a judge name them, and only a public task is given one.
 func providerModels() map[string]providerModel {
-	// The served ids are ai-native-ref's infrastructure/base/agent-gateway/{moonshot,mistral}.yaml
-	// modelAliases, copied: when a backend pins another model, change both together.
+	// The served ids are ai-native-ref's agent-gateway model aliases (moonshot, mistral, and gcp-0's
+	// vertex), copied: when a backend pins another model, change both together.
 	return map[string]providerModel{
 		"kimi-frontier":    {"frontier", "k3.1-pro"},
 		"mistral-standard": {"standard", "mistral-medium-2604"},
 		"mistral-light":    {"light", "mistral-small-2603"},
+		"gemini-standard":  {"standard", "gemini-4-neon"},
+		"gemini-light":     {"light", "gemini-4-hydrogen"},
 	}
 }
 

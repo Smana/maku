@@ -187,7 +187,7 @@ type WriteChecker interface {
 var (
 	roles = []string{"implementer", "reviewer", "tester", "triager"}
 	// C5's names and the provider aliases (v3 F15), which validate refuses an internal run.
-	models = []string{"agent-default", "tier-light", "tier-standard", "tier-frontier", "kimi-frontier", "mistral-standard", "mistral-light"}
+	models = []string{"agent-default", "tier-light", "tier-standard", "tier-frontier", "kimi-frontier", "mistral-standard", "mistral-light", "gemini-standard", "gemini-light"}
 
 	prURL = regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$`)
 )

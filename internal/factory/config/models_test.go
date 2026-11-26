@@ -114,7 +114,7 @@ func TestWorkflowEffortAndModelsValidation(t *testing.T) {
 }
 
 func TestPublicOnly(t *testing.T) {
-	for _, m := range []string{"kimi-frontier", "mistral-standard", "mistral-light"} {
+	for _, m := range []string{"kimi-frontier", "mistral-standard", "mistral-light", "gemini-standard", "gemini-light"} {
 		if !PublicOnly(m) {
 			t.Errorf("%s is a public-only provider alias", m)
 		}

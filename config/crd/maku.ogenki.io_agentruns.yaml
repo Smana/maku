@@ -167,6 +167,7 @@ spec:
                     - tier-standard
                     - tier-frontier
                     - mistral-light
+                    - gemini-light
                     type: string
                   search:
                     description: |-
@@ -203,6 +204,8 @@ spec:
                 - kimi-frontier
                 - mistral-standard
                 - mistral-light
+                - gemini-standard
+                - gemini-light
                 type: string
                 x-kubernetes-validations:
                 - message: model is immutable
@@ -315,7 +318,8 @@ spec:
                 self.__loop__.search == oldSelf.__loop__.search)))
             - message: an internal run never names a provider alias
               rule: self.dataClass == 'public' || !has(self.model) || !(self.model
-                in ['kimi-frontier', 'mistral-standard', 'mistral-light'])
+                in ['kimi-frontier', 'mistral-standard', 'mistral-light', 'gemini-standard',
+                'gemini-light'])
           status:
             description: AgentRunStatus is what runwatch and the factory read (C3),
               as the composition writes it.

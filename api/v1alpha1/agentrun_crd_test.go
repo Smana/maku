@@ -41,17 +41,17 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 		got[r.Rule] = r.Message
 	}
 	for rule, msg := range map[string]string{
-		"self.role != 'reviewer' || (has(self.task.url) && self.task.url.matches('^https://github\\\\.com/[^/]+/[^/]+/pull/[0-9]+$'))": "a reviewer run needs a pull request URL as its task",
-		"!has(self.task.url) || self.task.url.startsWith('https://github.com/' + self.repository + '/')":                               "task.url must point into spec.repository",
-		"self.role == 'reviewer' || !has(self.task.text) || !has(self.task.url)":                                                       "only a reviewer run carries both task.text and task.url",
-		"self.dataClass != 'internal' || !has(self.egress) || !has(self.egress.profiles) || size(self.egress.profiles) == 0":           "an internal run takes no egress profiles",
-		"has(self.branch) == has(oldSelf.branch) && (!has(self.branch) || self.branch == oldSelf.branch)":                              "branch is immutable and cannot be added or removed after creation",
-		"has(self.roomRef) == has(oldSelf.roomRef) && (!has(self.roomRef) || self.roomRef == oldSelf.roomRef)":                         "roomRef is immutable and cannot be added or removed after creation",
-		"has(self.queueName) == has(oldSelf.queueName) && (!has(self.queueName) || self.queueName == oldSelf.queueName)":               "queueName is immutable and cannot be added or removed after creation",
-		"has(self.suspendable) == has(oldSelf.suspendable) && (!has(self.suspendable) || self.suspendable == oldSelf.suspendable)":     "suspendable is immutable and cannot be added or removed after creation",
-		"has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy) || self.meteredBy == oldSelf.meteredBy)":               "meteredBy is immutable and cannot be added or removed after creation",
-		"self.dataClass != 'internal' || !has(self.__loop__) || !has(self.__loop__.checks) || !self.__loop__.checks":                   "an internal run runs no repository checks",
-		"self.dataClass == 'public' || !has(self.model) || !(self.model in ['kimi-frontier', 'mistral-standard', 'mistral-light'])":    "an internal run never names a provider alias",
+		"self.role != 'reviewer' || (has(self.task.url) && self.task.url.matches('^https://github\\\\.com/[^/]+/[^/]+/pull/[0-9]+$'))":                                 "a reviewer run needs a pull request URL as its task",
+		"!has(self.task.url) || self.task.url.startsWith('https://github.com/' + self.repository + '/')":                                                               "task.url must point into spec.repository",
+		"self.role == 'reviewer' || !has(self.task.text) || !has(self.task.url)":                                                                                       "only a reviewer run carries both task.text and task.url",
+		"self.dataClass != 'internal' || !has(self.egress) || !has(self.egress.profiles) || size(self.egress.profiles) == 0":                                           "an internal run takes no egress profiles",
+		"has(self.branch) == has(oldSelf.branch) && (!has(self.branch) || self.branch == oldSelf.branch)":                                                              "branch is immutable and cannot be added or removed after creation",
+		"has(self.roomRef) == has(oldSelf.roomRef) && (!has(self.roomRef) || self.roomRef == oldSelf.roomRef)":                                                         "roomRef is immutable and cannot be added or removed after creation",
+		"has(self.queueName) == has(oldSelf.queueName) && (!has(self.queueName) || self.queueName == oldSelf.queueName)":                                               "queueName is immutable and cannot be added or removed after creation",
+		"has(self.suspendable) == has(oldSelf.suspendable) && (!has(self.suspendable) || self.suspendable == oldSelf.suspendable)":                                     "suspendable is immutable and cannot be added or removed after creation",
+		"has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy) || self.meteredBy == oldSelf.meteredBy)":                                               "meteredBy is immutable and cannot be added or removed after creation",
+		"self.dataClass != 'internal' || !has(self.__loop__) || !has(self.__loop__.checks) || !self.__loop__.checks":                                                   "an internal run runs no repository checks",
+		"self.dataClass == 'public' || !has(self.model) || !(self.model in ['kimi-frontier', 'mistral-standard', 'mistral-light', 'gemini-standard', 'gemini-light'])": "an internal run never names a provider alias",
 		"has(self.__loop__) == has(oldSelf.__loop__) && (!has(self.__loop__) || (has(self.__loop__.checks) == has(oldSelf.__loop__.checks) && (!has(self.__loop__.checks) || self.__loop__.checks == oldSelf.__loop__.checks) && has(self.__loop__.search) == has(oldSelf.__loop__.search) && (!has(self.__loop__.search) || self.__loop__.search == oldSelf.__loop__.search)))": "loop is immutable and cannot be added or removed after creation",
 	} {
 		if m, ok := got[rule]; !ok || m != msg {

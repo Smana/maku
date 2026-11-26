@@ -42,7 +42,7 @@ type AgentRunList struct {
 // +kubebuilder:validation:XValidation:rule="has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy) || self.meteredBy == oldSelf.meteredBy)",message="meteredBy is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="self.dataClass != 'internal' || !has(self.__loop__) || !has(self.__loop__.checks) || !self.__loop__.checks",message="an internal run runs no repository checks"
 // +kubebuilder:validation:XValidation:rule="has(self.__loop__) == has(oldSelf.__loop__) && (!has(self.__loop__) || (has(self.__loop__.checks) == has(oldSelf.__loop__.checks) && (!has(self.__loop__.checks) || self.__loop__.checks == oldSelf.__loop__.checks) && has(self.__loop__.search) == has(oldSelf.__loop__.search) && (!has(self.__loop__.search) || self.__loop__.search == oldSelf.__loop__.search)))",message="loop is immutable and cannot be added or removed after creation"
-// +kubebuilder:validation:XValidation:rule="self.dataClass == 'public' || !has(self.model) || !(self.model in ['kimi-frontier', 'mistral-standard', 'mistral-light'])",message="an internal run never names a provider alias"
+// +kubebuilder:validation:XValidation:rule="self.dataClass == 'public' || !has(self.model) || !(self.model in ['kimi-frontier', 'mistral-standard', 'mistral-light', 'gemini-standard', 'gemini-light'])",message="an internal run never names a provider alias"
 type AgentRunSpec struct {
 	// +kubebuilder:validation:Enum=implementer;reviewer;tester;triager
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="role is immutable"
@@ -68,7 +68,7 @@ type AgentRunSpec struct {
 	// A gateway alias: a C5 tier name, or a provider alias (v3 F15), which the gateway serves public
 	// runs only. The run-controller calls it in model.mode gateway, on the run's data class's listener
 	// with a token for this alias; in model.mode secret it ignores it (3a R7).
-	// +kubebuilder:validation:Enum=agent-default;tier-light;tier-standard;tier-frontier;kimi-frontier;mistral-standard;mistral-light
+	// +kubebuilder:validation:Enum=agent-default;tier-light;tier-standard;tier-frontier;kimi-frontier;mistral-standard;mistral-light;gemini-standard;gemini-light
 	// +kubebuilder:default=agent-default
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model is immutable"
 	// +optional
@@ -144,7 +144,7 @@ type AgentRunLoop struct {
 	// JudgeModel switches the completion judge on; empty: no judge. In the run-controller's model.mode
 	// gateway it is the judge's alias, called with a token of its own; in model.mode secret the judge
 	// calls the run's own model endpoint (JUDGE_BASE_URL and JUDGE_MODEL on the harness).
-	// +kubebuilder:validation:Enum=agent-default;tier-light;tier-standard;tier-frontier;mistral-light
+	// +kubebuilder:validation:Enum=agent-default;tier-light;tier-standard;tier-frontier;mistral-light;gemini-light
 	// +optional
 	JudgeModel string `json:"judgeModel,omitempty"`
 }

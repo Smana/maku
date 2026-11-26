@@ -280,6 +280,8 @@ func TestProviderAliasesArePublicOnly(t *testing.T) {
 		"internal kimi-frontier":    {"internal", "kimi-frontier", "provider_alias_is_public_only"},
 		"internal mistral-standard": {"internal", "mistral-standard", "provider_alias_is_public_only"},
 		"internal mistral-light":    {"internal", "mistral-light", "provider_alias_is_public_only"},
+		"public gemini-standard":    {"public", "gemini-standard", ""},
+		"internal gemini-light":     {"internal", "gemini-light", "provider_alias_is_public_only"},
 		"internal tier-frontier":    {"internal", "tier-frontier", ""},
 		"an unknown model":          {"public", "mistral-large", "bad_model"},
 	} {
