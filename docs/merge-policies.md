@@ -13,6 +13,7 @@ merges**: the repository's file is read, compared, re-decided and simulated, nev
 
 | You want to | Go to |
 |---|---|
+| Know what a decision, a count or a word means | [Holds, agreed, signal-checked](#holds-agreed-signal-checked) |
 | Onboard a repository with zero policy YAML | [Start here](#start-here) |
 | Understand selection, resolution and concepts | [Concepts](#concepts) |
 | Configure `policyManagement.stage` | [Repository-file authority](upgrading.md#repository-file-authority) |
@@ -27,6 +28,93 @@ merges**: the repository's file is read, compared, re-decided and simulated, nev
 
 The merge gate itself (the fixed base, the decision record, adopted classes, the monitor) is in
 [the factory](factory.md#the-merge-gate). This page covers merge policies, bindings and promotion.
+
+## Holds, agreed, signal-checked
+
+A policy decides one thing: whether a pull request **holds**, meaning every row of the gate passes
+on one head and the change stays inside the policy. Holding does not mean the change is right. What
+can check that is a **correctness signal**: something independent of the author that checks what
+the change means. After a merge, the monitor hears only loud trouble: a merge it watched to the end
+with no revert, no regression and no follow-up is **quiet**, not right. Every count on the settings
+pages, in `maku policy` and in the comments names who judged it: a signal, a maintainer, or nobody.
+
+| Word | Means | Does not mean | Wire name, unchanged |
+|---|---|---|---|
+| **holds** | Every row of the gate passes on one head: the change is inside the policy | The change is right | `decision=arm`, `shadow_would_arm` |
+| **correctness signal** | Something independent of the author that checks what the change means, from the closed list below | A green check | `signal=` |
+| **signal-checked** | A decision a correctness signal judged, and passed | Proven correct | `signal=<kind>:ok` |
+| **unchecked** | A decision nothing judged for meaning. Also a policy with no correctness signal | Wrong | `signal=none` |
+| **agreed** | A maintainer merged a shadow decision unchanged, at the judged head | The maintainer read every line | `clean`, `mergedUnchanged` |
+| **quiet** | The monitor's window ended with no revert, no regression, no follow-up | Right | `verdict=healthy` |
+| **regression** | A monitor signal turned bad inside the window | Every bad merge | `verdict=regression` |
+| **wrong call** | A merge under a policy later found wrong | A drill | `bad` |
+
+"Verified" is never shown alone: `merged_verified` reads "main stayed green", and the monitor's
+`verified` reads "RunLore: resolved".
+
+```mermaid
+flowchart TD
+  PR["Pull request, head reported"] --> BASE{"Fixed base<br/>CI, fence"}
+  BASE -- red --> H["Waits for a maintainer"]
+  BASE -- ok --> HOLDS{"A policy holds?<br/>files, caps, reviewer, holdouts"}
+  HOLDS -- no --> H
+  HOLDS -- yes --> SIG{"Correctness signal?"}
+  SIG -- "shape, oracle<br/>or contract: ok" --> CHK["signal-checked"]
+  SIG -- none --> UNC["unchecked"]
+  CHK --> MODE{"Mode"}
+  UNC --> MODE
+  MODE -- shadow --> REC["Would-merge record"]
+  MODE -- live --> MERGE["Merged by the policy"]
+  REC --> HUM{"Maintainer merges it unchanged?"}
+  HUM -- yes --> AGREED["agreed"]
+  MERGE --> MON{"Monitor window"}
+  MON -- "revert, regression, follow-up" --> WRONG["wrong call"]
+  MON -- nothing --> QUIET["quiet"]
+  AGREED --> EV["Evidence"]
+  QUIET --> EV
+  WRONG --> EV
+  WRONG --> BRK["Breaker: the policy goes back to a maintainer"]
+  EV --> PROMO["Promotion, by a maintainer's merge"]
+```
+
+The [correctness-signals design](superpowers/specs/2026-11-26-merge-policy-correctness-signals-design.md)
+also describes rules this page does not: an unchecked policy kept in shadow, an audit of live prose,
+the `factory/wrong` label and sensitive kinds. The gate does not enforce them yet, and no page or
+comment promises them.
+
+### What checks the meaning
+
+The signal comes from fields the policy already has. Nobody declares it twice.
+
+| Signal | Derived from | Establishes | Leaves open |
+|---|---|---|---|
+| Determining shape | `diffShape: links-only`, `semver-patch`, `semver-minor` (and `docs-links`' built-in shape) | Every changed line has one mechanical meaning | The target: the new page's words, the upstream release |
+| Oracle | `oracle` | A detector outside the pull request named the defect, and the diff removes exactly that | The detector's own errors |
+| Contract | `requires` holds both `plan` and `tests`, and the task ran under a [test contract](factory.md#the-tester-stage) | A test written before the change, from a plan a maintainer approved, is red at the base and green at the head | Behaviour the plan did not name |
+
+These are bounds or supporting evidence, never a signal:
+
+| What | Why not |
+|---|---|
+| `allowedFiles`, caps, `modifyOnly`, `protectedFiles` | They say where and how much, not what |
+| `diffShape: added-entry` | Structure only: the entry's words are free |
+| `holdoutChecks`, required CI | They say something still works, and can pass without reading the changed lines |
+| A reviewer's verdict | A veto, not an approval |
+| Monitor: main's CI, Flux, RunLore's `resolved` | Loud breakage only; a silenced alert also resolves |
+
+A policy whose every `allowedFiles` pattern ends in `\.md$`, `\.mdx?$`, `\.rst$`, `\.txt$` or
+`\.adoc$` is **prose**: nothing checks its meaning, and the pages say so.
+
+Each decision that holds records its signal: `signal=links-only:ok`, `signal=contract:ok`, or
+`signal=none`. A refusal records none. The same one sentence about a policy, built by one function,
+appears on its settings page, in `maku policy explain`, in the promotion pull request and in the
+decision comments. For `docs-links` bound live with a holdout, under the repository's default
+`verifyFor` and `revertWindow`:
+
+> **Merges without you when** an agent changes only link targets in Markdown, at most 20 lines, and
+> `Check the documentation links 🔗` passes. **Meaning checked by** the `links-only` shape: every
+> changed line is a link target on the same host. **Not checked:** what the new page says. **After
+> the merge** Maku watches main for 30 minutes and opens a revert on red. **Undo:** `factory/revert` within 7 days.
 
 ## Start here
 
@@ -44,7 +132,7 @@ manifest and no `.policy.yml` rule is needed (`maku/merge-gate` is the gate stat
    `factory/drill`, and you review and merge it. (The `factory/revert` label reverts only a pull
    request the factory merged, so it cannot drill a shadow pull request a maintainer merged.) That
    single drill covers the repository: evidence now accumulates only from maintainer
-   merges at the exact judged head. Once a policy reaches its clean minimum (`5` for `evidence: low`,
+   merges at the exact judged head. Once a policy reaches its minimum of agreed decisions (`5` for `evidence: low`,
    `20` for `standard`), [promote it](#promotion-shadow-to-live) with a one-line `mode: live` binding.
 
 A binding overrides the catalog default for that policy: `mode: live` promotes it,
@@ -112,6 +200,45 @@ well as the policy's. A platform that keeps its own object of a catalog name lis
 `mergePolicies.catalog.exclude`; an unlabelled `MergePolicy` of a catalog name fails the install,
 naming it, until it is listed there or deleted.
 
+#### The catalog, worked
+
+Each example uses the repository's defaults: `verifyFor` 30 minutes, `revertWindow` 7 days,
+`autoRevert` off. A merge found wrong is reported by reverting it with `factory/revert` inside
+the window, or by a follow-up fix the monitor reads: either is a wrong call against the policy.
+
+**`docs-links`.** A pull request that changes `[guide](https://example.com/old)` to
+`[guide](https://example.com/new)` in `docs/setup.md` holds. One that also rewords the link text
+does not: `class_mismatch` (not a links-only diff).
+
+> **Merges without you when** an agent changes only link targets in Markdown, at most 20 lines.
+> **Meaning checked by** the `links-only` shape: every changed line is a link target on the same
+> host. **Not checked:** what the new page says. **After the merge** Maku watches main for 30
+> minutes and opens a revert on red. **Undo:** `factory/revert` within 7 days.
+
+The record reads `class=docs-links decision=arm:armed files=1/0 lines=2/20 shape=ok … signal=links-only:ok`.
+The monitor then reads main's CI on the merge commit: green for 30 minutes is quiet.
+
+**`deps-patch`.** Renovate's `renovate/foo-1.x` branch moving `version: 1.4.2` to `1.4.3` in one
+file holds once `renovate/stability-days` passes. A move to `1.5.0` does not: `class_mismatch`.
+
+> **Would merge without you when** `renovate[bot]` moves only a patch version, at most 3 files and
+> 10 lines, 2 a day, and `renovate/stability-days` passes. **Meaning checked by** the
+> `semver-patch` shape: only a patch version moves. **Not checked:** the release itself; Maku waits
+> for its release age. **After the merge** Maku watches main for 30 minutes and opens a revert on
+> red. **Undo:** `factory/revert` within 7 days.
+
+In shadow the record reads `decision=shadow:shadow_would_arm … signal=semver-patch:ok`. A maintainer
+who merges it unchanged makes it an agreed decision: 5 promote the policy.
+
+**`docs`.** An agent's rewording of two paragraphs in `README.md` (18 lines) holds once a reviewer
+approves. Six changed files do not: `patch_too_large`, "6 files changed, limit 5".
+
+> **Would merge without you when** an agent changes Markdown files, at most 5 files and 100 lines,
+> 2 a day, and a reviewer approves. **Meaning checked by** nothing: this is prose.
+
+The record reads `… signal=none`: nothing judged the meaning. Twenty agreed decisions promote it,
+and every merge of it is unchecked.
+
 ### Required workflow stages (`spec.requires`)
 
 A `MergePolicy` may declare `requires: [plan, tests, judge, review]` (at most 4 items) to require
@@ -162,7 +289,7 @@ inherits the guardrail's daily cap.
 | Zero-binding `Repository` | Evaluates all three catalog policies in `shadow` |
 | Selection | Strictest `live` policy whose conditions hold on the diff |
 | Guardrails when unset | `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`; `10` files, `300` lines, `5` per day |
-| Promotion minimum | `5` clean shadow merges (`evidence: low`) or `20` (`standard`), plus one drill per repository |
+| Promotion minimum | `5` agreed decisions (`evidence: low`) or `20` (`standard`), plus one drill per repository |
 | Unreviewed prose (MR12) | A policy with no `diffShape` and no `oracle` requires a reviewer's `approve` |
 | Everything else | `no_policy_matched`: a human merges |
 
@@ -388,7 +515,7 @@ rules](#policies-and-bindings) allow. An empty value is refused rather than read
 | `maxPerDay` | Automatic merges per UTC day, integer ≥ 0 | Guardrail default 5, also an unset repository `merge.maxPerDay`; policy or binding may lower | `auto_merge_cap` | `2` |
 | `merge.paused` | Operator pause for all automatic policy decisions: `{reason}` | Unset; `Repository.spec.merge` or central merge defaults. A maintainer's approve-to-merge still works | `paused`; alerts after 24 hours | `{reason: Incident freeze}` |
 | `merge.autoRevert` | Merge the factory's green revert only at the head GitHub created | `false`; `Repository.spec.merge` or central merge defaults. No `revert` policy needed | Revert waits for a maintainer on a missing or moved head | `true` |
-| `evidence` | Clean decisions before promotion: `low` 5, `standard` 20 | `standard`; policy only, `low` needs `diffShape` or `oracle` | Admission: `evidence: low needs diffShape or oracle` | `standard` |
+| `evidence` | Agreed decisions before promotion: `low` 5, `standard` 20 | `standard`; policy only, `low` needs `diffShape` or `oracle` | Admission: `evidence: low needs diffShape or oracle` | `standard` |
 | `description` | Plain sentence for settings and `kubectl get`, ≤ 280 characters | Empty; policy only, never read by the gate | None | `Fixes broken links in docs` |
 | `diffShape` | Mechanical diff shape: `links-only`, `semver-patch`, `semver-minor`, `added-entry` | Unset; policy only (`docs-links` is `links-only` built in) | `class_mismatch`; `Unsupported value` at admission | `links-only` |
 | `modifyOnly` | Forbid add/delete/rename/copy/mode change | `false`; policy only | `file_added_or_deleted` | `true` |
@@ -478,20 +605,23 @@ mergePolicies:
 
 The binding's `allowedFiles` is a second filter: a path must match the policy's list and the
 binding's, so a binding can only narrow (MR3). *Shadow shows:*
-`class=docs decision=shadow:shadow_would_arm files=2/5 lines=31/60`. *Promotion:* at 20 clean
+`class=docs decision=shadow:shadow_would_arm files=2/5 lines=31/60`. *Promotion:* at 20 agreed
 decisions the Evidence page proposes the one-line change `mode: live`; a maintainer merges it.
 
-**2. Create `alert-rules`.** *Need:* threshold tweaks in alert YAML, verified after the merge.
+**2. Create `alert-rules` around a test contract.** *Need:* threshold tweaks in alert YAML, with
+something that checks what each tweak means. Nothing in the diff says whether a new threshold is
+the intended one, so a shape cannot; a test written from an approved plan can.
 
 ```yaml
 kind: MergePolicy
 metadata: {name: alert-rules}
 spec:
-  description: Alert rule changes, verified after the merge.
+  description: Alert rule changes whose intent a test states.
   allowedFiles: ['^observability/.+\.ya?ml$']
   modifyOnly: true
   maxPatchFiles: 3
   maxModifiedLines: 40
+  requires: [plan, tests]          # a plan you approve, then tests written before the change
   monitor: {verification: {within: 2h}, followUpWindow: 2h}
 ---
 # Repository cloud-native-ref
@@ -499,9 +629,25 @@ mergePolicies:
   - {name: alert-rules, mode: shadow}
 ```
 
-*Shadow shows* which alert pull requests would have merged and, in `considered=`, why the others
-did not (`alert-rules:file_added_or_deleted`). No shape checks this diff, so it merges only with a
-reviewer's verdict (MR12). *Promotion:* `standard`, 20 decisions.
+*The plan* says "fire `HighErrorRate` above 5 % for 10 minutes", and a maintainer approves it. *The
+tester* writes that as a rule test (`promtool test rules` over the `VMRule`'s groups) before any
+change: red at the base, since the rule still says 10 %. *The implementer* changes the threshold;
+the [contract check](factory.md#the-tester-stage) proves the test red at the base and green at the
+head, and the implementer cannot touch it. A change that raises the threshold out of reach fails
+the test. The record reads `class=alert-rules decision=shadow:shadow_would_arm … signal=contract:ok`.
+
+> **Would merge after you approve the plan, without a review of the diff, when** an agent changes
+> YAML under `observability/`, at most 3 files and 40 lines, and a reviewer approves. **Meaning
+> checked by** the test contract: red before the change, green after. **Not checked:** behaviour
+> the plan did not name. **After the merge** Maku watches main for 30 minutes and opens a revert on
+> red; waits 2 hours for RunLore's verdict; reads follow-up fixes for 2 hours. **Undo:**
+> `factory/revert` within 7 days.
+
+With `requires: [plan]` alone, the same pull request records `signal=none` and the page says
+"Meaning checked by nothing". A task that ran without a contract records `signal=none` too, and in
+`considered=` the others show why they did not hold (`alert-rules:file_added_or_deleted`).
+*Promotion:* `standard`, 20 agreed decisions. RunLore's verdict stays as supporting evidence: an
+alert silenced by a raised threshold also resolves, so `resolved` is never a signal.
 
 **3. Create `dead-links` with an oracle.** *Need:* a daily scan lists dead links; the fix must
 remove exactly those and touch nothing else.
@@ -846,10 +992,10 @@ A policy is eligible when all three hold (`evidence.Evaluate`):
 | `bad_outcome` | No mature, conclusive merge of the policy was reverted (other than a drill), followed up or regressed |
 | `no_drill` | A `factory/drill` revert of one of the repository's pull requests merged: the drill is per repository, so one clears it for every policy |
 
-Shadow evidence is keyed by `class=<policy>` in the gate's decision marker, so clean shadow merges
+Shadow evidence is keyed by `class=<policy>` in the gate's decision marker, so agreed decisions
 recorded under earlier label-chosen decisions and under diff-chosen decisions count together with no
 migration. Only a served `shadow` policy is promotable. The factory re-reads the GitOps file and
-changes only its `mode: shadow` line to `mode: live`; the pull request body carries the clean, bad
+changes only its `mode: shadow` line to `mode: live`; the pull request body carries the agreed, wrong-call
 and drill counts and the supporting pull requests. `Factory.spec.gitops` names the repository, path
 and base branch. A `requested` record resumes after a failed open; a second request is refused once
 the PR is open. There are no **Merged** or **Abandon** buttons: served live closes the record
@@ -920,7 +1066,7 @@ from a cache; a failed lookup authorizes nothing. The decision record names the 
 
 Definitions are in [operations](operations/factory.md#factory-metrics); this is what to watch per stage.
 
-| `stage` | Query | Healthy |
+| `stage` | Query | Expected |
 |---|---|---|
 | `read`, `simulate`, `manage` | `max by (repository) (maku_factory_policy_central_divergence)` | `0` |
 | `read`, `simulate`, `manage` | `sum by (repository, reason) (increase(maku_factory_policy_load_errors_total[1h]))` | No series |

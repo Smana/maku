@@ -309,7 +309,7 @@ reverted merge exists, as on a rebuilt factory, at the next process start, since
 once per process. While the merge's Task exists it still records the revert as counted, and the
 class stays paused: label the pull request `factory/drill` before `factory/revert`.
 
-A drill-reverted merge counts as a clean merge: it refills the window and, once mature, counts
+A drill-reverted merge counts as a quiet merge: it refills the window and, once mature, counts
 towards `recoverAfter`. The merge was fine and the revert was planned.
 
 The breaker and the daily cap read their merges from the Tasks and from GitHub, so a rebuild that
@@ -740,9 +740,13 @@ Without it every read is refused and the signal ends `inconclusive`. `merge.brea
 
 **The signals.**
 
-| Signal | Reads | Regression | Healthy |
+A merge whose window ended with no revert, no regression and no follow-up is **quiet**: the wire
+value is `healthy`. Quiet does not mean the change was right, only that nothing loud followed
+([the vocabulary](merge-policies.md#holds-agreed-signal-checked)).
+
+| Signal | Reads | Regression | Quiet (wire value `healthy`) |
 |---|---|---|---|
-| Main's CI | The `merge.verifyChecks` on the merge commit. An auto-merge that ended `merged_verified` was already watched by the task, so it counts healthy; one that ended `merged_unverified` is read like any other merge | Red | Green once `verifyFor` has passed. Still pending after twice that: `inconclusive` |
+| Main's CI | The `merge.verifyChecks` on the merge commit. An auto-merge that ended `merged_verified` was already watched by the task, so it counts as quiet; one that ended `merged_unverified` is read like any other merge | Red | Green once `verifyFor` has passed. Still pending after twice that: `inconclusive` |
 | Detector (oracle) | Each scheduled run of the class's oracle workflow after the merge, oldest first, through the probe's readers | A run reports gone a target this merge wrote | `oracleRuns` clean runs. A run that failed or whose findings are refused: `inconclusive` |
 | Flux | The `source` GitRepository (`get`), and the Kustomizations and HelmReleases of that source (`list`), on the factory's cluster | A Kustomization or HelmRelease of the source turned not Ready from the blame start (the source's fetch of the merge commit, or the merge's own time when the source was first seen already at a later commit) until `within` after the source was first seen holding it | The source holds the merge, `within` has passed since it applied it, nothing turned not Ready in the window. A source that never holds the merge within `within`, or is suspended: `inconclusive` |
 | RunLore's verification | `status.monitor.verification`, recorded by [`POST /v1/tasks/{task}/verification`](reference/api.md#post-v1taskstaskverification). Only for a merge whose `spec.origin` names a task of an internal principal with `verification: true` | `persisting` | `resolved`. No verdict `within` after the merge: `inconclusive` |
@@ -867,7 +871,7 @@ Each class's evidence:
 | reviewers | Per reviewer model, merged unchanged against changed |
 | drill | `passed` when a `factory/drill` revert of one of the class's pull requests merged; `open`; `none` |
 
-A class is eligible with at least `mergeGuardrails.minPromotionEvidence` clean decisions (20), no
+A class is eligible with at least `mergeGuardrails.minPromotionEvidence` agreed decisions (20, the `clean` count), no
 bad mature outcome, and a passed drill. **Promote to live** reads the evidence again server side,
 records the request in `policy_promotions` with that evidence, its threshold and the requester,
 and answers the binding's `mode: shadow` changed to `mode: live`: in the repository's
