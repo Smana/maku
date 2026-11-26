@@ -753,6 +753,16 @@ func TestBuildWritesTheRuntime(t *testing.T) {
 	if got, _, _ := unstructured.NestedString(u.Object, "spec", "image"); got != s.Image {
 		t.Errorf("image %q", got)
 	}
+	s.Services = []string{"postgres"}
+	u = Build(runwatch.DefaultKind, s)
+	if got, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "services"); len(got) != 1 || got[0] != "postgres" {
+		t.Errorf("services %v", got)
+	}
+	s.Services = []string{"mysql"}
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "service") {
+		t.Errorf("an unknown service: %v", err)
+	}
+	s.Services = nil
 	s.Size = "huge"
 	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "size") {
 		t.Errorf("a size the claim refuses: %v", err)

@@ -71,12 +71,12 @@ func TestChecksJoinTheLoopPolicyInOneSpecLoop(t *testing.T) {
 func TestTheRepositorysRuntimeReachesItsRuns(t *testing.T) {
 	g := newRig(t)
 	image := "ghcr.io/acme/maku-harness-jvm@sha256:" + strings.Repeat("d", 64)
-	g.r.Cfg.Current().Repositories[0].Runtime = config.Runtime{Image: image, Size: "large"}
+	g.r.Cfg.Current().Repositories[0].Runtime = config.Runtime{Image: image, Size: "large", Services: []config.Service{"postgres"}}
 	tk := issueTask("3buqdlot", 7, "fix")
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
 	cfg := g.r.Cfg.Current()
 	for _, s := range []runs.Spec{g.r.implementerSpec(cfg, tk, "brief"), g.r.testerSpec(cfg, tk, "brief"), g.r.verifierSpec(cfg, tk, "reviewer")} {
-		if s.Image != image || s.Size != "large" {
+		if s.Image != image || s.Size != "large" || len(s.Services) != 1 || s.Services[0] != "postgres" {
 			t.Errorf("%s: %q %q", s.Role, s.Image, s.Size)
 		}
 	}

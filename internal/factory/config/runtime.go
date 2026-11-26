@@ -27,6 +27,12 @@ type Runtime struct {
 	// +kubebuilder:validation:Enum=small;medium;large
 	// +optional
 	Size string `json:"size,omitempty"`
+	// Services are loopback-only sidecars the runs' tests reach on 127.0.0.1: postgres on 5432,
+	// redis on 6379. Each is empty at every run's start; it holds no secret and reaches nothing.
+	// +kubebuilder:validation:MaxItems=2
+	// +listType=set
+	// +optional
+	Services []Service `json:"services,omitempty"`
 }
 
 func (rt Runtime) validate(bad func(f string, a ...any)) {
@@ -35,5 +41,27 @@ func (rt Runtime) validate(bad func(f string, a ...any)) {
 	}
 	if rt.Size != "" && !slices.Contains(RunSizes, rt.Size) {
 		bad("runtime.size %q is not one of %v", rt.Size, RunSizes)
+	}
+	validateServices(rt.Services, func(f string, a ...any) { bad("runtime."+f, a...) })
+}
+
+// Service names a loopback service sidecar a repository's runs may take (developer review gap 3,
+// owner decision D3).
+// +kubebuilder:validation:Enum=postgres;redis
+type Service string
+
+// Services are the service sidecars there are.
+var Services = []Service{"postgres", "redis"}
+
+func validateServices(svcs []Service, bad func(f string, a ...any)) {
+	if len(svcs) > len(Services) {
+		bad("services: at most %d", len(Services))
+	}
+	seen := map[Service]bool{}
+	for _, s := range svcs {
+		if !slices.Contains(Services, s) || seen[s] {
+			bad("services: %q is not one of %v, or is listed twice", s, Services)
+		}
+		seen[s] = true
 	}
 }

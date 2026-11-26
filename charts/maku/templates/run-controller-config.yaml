@@ -91,6 +91,12 @@ data:
       {{- if and $c.images.browser $c.images.browser.tag }}
       browser: {{ include "ap.image" (dict "root" . "image" $c.images.browser) | quote }}
       {{- end }}
+      {{- if and $c.images.postgres $c.images.postgres.tag }}
+      postgres: {{ include "ap.image" (dict "root" . "image" $c.images.postgres) | quote }}
+      {{- end }}
+      {{- if and $c.images.redis $c.images.redis.tag }}
+      redis: {{ include "ap.image" (dict "root" . "image" $c.images.redis) | quote }}
+      {{- end }}
       {{- if eq $mode "kubernetes" }}
       # The preflight's netprobe pod: this controller's own image.
       probe: {{ include "ap.image" (dict "root" . "image" $c.image) | quote }}
@@ -99,6 +105,12 @@ data:
     # The opt-in browser sidecar's resources (v5 Q16): its own budget, beside the harness's.
     browser:
       resources: {{- toYaml $c.browser.resources | nindent 8 }}
+    {{- end }}
+    {{- $pg := $c.images.postgres | default dict }}{{- $rd := $c.images.redis | default dict }}
+    {{- if and $c.services (or $pg.tag $rd.tag) }}
+    # The loopback service sidecars' resources (developer review gap 3): each sidecar's own budget.
+    services:
+      resources: {{- toYaml $c.services.resources | nindent 8 }}
     {{- end }}
     {{- with ($c.runtime | default dict).allowedImages }}
     # The image prefixes a Repository's spec.runtime.image may start with (developer review gap 2).

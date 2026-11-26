@@ -359,6 +359,14 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			om.Annotations[runwatch.VisionAnnotation] = "true"
 		}
 	}
+	// Developer review gap 3: the opt-in loopback services, after the browser. The harness's checks
+	// find them in DATABASE_URL and REDIS_URL; NO_PROXY already bypasses 127.0.0.1.
+	if len(r.Spec.Services) > 0 {
+		ctrs, vs, env := serviceSidecars(r, c)
+		inits = append(inits, ctrs...)
+		vols = append(vols, vs...)
+		harness.Env = append(harness.Env, env...)
+	}
 	// kubernetes mode (plan PR6): the harness alone goes through the egress proxy, which reads the
 	// pod's allow-list from its annotation; the bridge talks in-cluster only.
 	if c.NetworkPolicy == NetworkPolicyKubernetes {

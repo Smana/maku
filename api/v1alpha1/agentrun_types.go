@@ -133,7 +133,18 @@ type AgentRunSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="image is immutable"
 	// +optional
 	Image string `json:"image,omitempty"`
+	// Services are loopback-only service sidecars the run's tests reach on 127.0.0.1 (developer
+	// review gap 3): postgres on 5432, redis on 6379. Set at creation.
+	// +kubebuilder:validation:MaxItems=2
+	// +listType=set
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="services is immutable"
+	// +optional
+	Services []AgentRunService `json:"services,omitempty"`
 }
+
+// AgentRunService is one loopback service sidecar.
+// +kubebuilder:validation:Enum=postgres;redis
+type AgentRunService string
 
 // AgentRunScreenshots is a run's browser opt-in and its screenshot cap (v5 Q16).
 type AgentRunScreenshots struct {

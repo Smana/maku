@@ -79,6 +79,8 @@ type Config struct {
 	Browser BrowserConfig `json:"browser,omitzero"`
 	// Runtime is what a run's spec.image may name (developer review gap 2).
 	Runtime RuntimeConfig `json:"runtime,omitzero"`
+	// Services are the loopback service sidecars' resources (developer review gap 3).
+	Services ServicesConfig `json:"services,omitzero"`
 }
 
 // RuntimeConfig is the platform's list of image prefixes a repository's runtime image must start
@@ -397,6 +399,9 @@ type Images struct {
 	Probe string `json:"probe,omitempty"`
 	// Browser is the maku-browser sidecar image (v5 Q16), required when a run sets spec.screenshots.
 	Browser string `json:"browser,omitempty"`
+	// Postgres and Redis are the service sidecar images, each required when a run asks for it.
+	Postgres string `json:"postgres,omitempty"`
+	Redis    string `json:"redis,omitempty"`
 }
 
 // InstallEgress is the install set and its window. In networkPolicy kubernetes the egress proxy allows
@@ -487,6 +492,7 @@ func LoadConfig(path string) (Config, error) {
 	}
 	c.Model.Mode = cmp.Or(c.Model.Mode, ModelModeSecret)
 	c.Browser.applyDefaults()
+	c.Services.applyDefaults()
 	if c.Gateway() {
 		g := &c.Model.Gateway
 		g.Ports.Public, g.Ports.Internal = cmp.Or(g.Ports.Public, 8080), cmp.Or(g.Ports.Internal, 8081)
@@ -674,6 +680,10 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return "spec.screenshots is for an implementer or tester run only (v5 Q16, VS5)"
 	case screenshotsOn(r) && c.Images.Browser == "":
 		return "spec.screenshots needs images.browser configured"
+	case slices.Contains(r.Spec.Services, "postgres") && c.Images.Postgres == "":
+		return "spec.services postgres needs images.postgres configured"
+	case slices.Contains(r.Spec.Services, "redis") && c.Images.Redis == "":
+		return "spec.services redis needs images.redis configured"
 	case r.Spec.Image != "" && r.Spec.Harness == "opencode":
 		return "spec.image replaces the OpenHands harness image: a run with spec.harness opencode takes none"
 	case r.Spec.Image != "" && !slices.ContainsFunc(c.Runtime.AllowedImages, func(p string) bool { return p != "" && strings.HasPrefix(r.Spec.Image, p) }):

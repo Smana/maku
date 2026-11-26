@@ -483,6 +483,21 @@ spec:
                     maxLength: 512
                     pattern: ^[a-z0-9][a-z0-9._/:-]*@sha256:[a-f0-9]{64}$
                     type: string
+                  services:
+                    description: |-
+                      Services are loopback-only sidecars the runs' tests reach on 127.0.0.1: postgres on 5432,
+                      redis on 6379. Each is empty at every run's start; it holds no secret and reaches nothing.
+                    items:
+                      description: |-
+                        Service names a loopback service sidecar a repository's runs may take (developer review gap 3,
+                        owner decision D3).
+                      enum:
+                      - postgres
+                      - redis
+                      type: string
+                    maxItems: 2
+                    type: array
+                    x-kubernetes-list-type: set
                   size:
                     description: Size is small (the default), medium or large.
                     enum:

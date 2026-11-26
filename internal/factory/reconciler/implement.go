@@ -259,6 +259,10 @@ func (r *Reconciler) withRuntime(cfg *config.Config, s *runs.Spec, t *v1alpha1.T
 	}
 	rt := r.repo(cfg, t).Runtime
 	s.Image, s.Size = rt.Image, rt.Size
+	s.Services = nil
+	for _, v := range rt.Services {
+		s.Services = append(s.Services, string(v))
+	}
 }
 
 // withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a
