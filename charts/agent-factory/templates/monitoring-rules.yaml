@@ -24,7 +24,12 @@ groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, ne
 {{- if not $r.kubeStateMetrics }}{{ $drop = append $drop "AgentSandboxPodPending" }}{{ end -}}
 {{- end -}}
 {{- end -}}
-{{- if (index .Values "maku-factory").enabled }}{{ $on = append $on "factory" }}{{ end -}}
+{{- if (index .Values "maku-factory").enabled -}}
+{{- $on = append $on "factory" -}}
+{{- /* The Repository condition rules read the condition gauge the host's kube-state-metrics must be
+configured to emit (docs/observability.md#repository-conditions): without it they never fire. */ -}}
+{{- if not $r.kubeStateMetrics }}{{ $drop = concat $drop (list "AgentFactoryBindingRefused" "AgentFactoryPolicyPausedLong") }}{{ end -}}
+{{- end -}}
 {{- if (.Values.slack | default dict).enabled }}{{ $on = append $on "slack" }}{{ end -}}
 {{- $gw := index .Values "maku-gateway" | default dict -}}
 {{- if $gw.enabled -}}

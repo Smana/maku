@@ -89,7 +89,36 @@ are substituted into it, so the schema refuses a double quote or a backslash in 
 [Operations](operations/failures.md#alerts) lists each alert and the values that shape the rule.
 `AgentFactoryBindingRefused` fires after `BindingsValid` stays false for 15 minutes; the Repository's
 message names the binding and fix. `AgentFactoryPolicyPausedLong` fires after `spec.merge.paused`
-stays set for 24 hours; read its reason and resume by removing the block.
+stays set for 24 hours; read its reason and resume by removing the block. Both render with
+`monitoring.prometheusRule.kubeStateMetrics` and need the condition gauge below.
+
+### Repository conditions
+
+The Repository condition alerts read `kube_customresource_status_condition`, which kube-state-metrics
+emits only when its `customResourceState` config names the Repository kind. The chart does not
+configure kube-state-metrics; add this resource to the host's config, and let its ServiceAccount
+`list` and `watch` `repositories` in `maku.ogenki.io`:
+
+```yaml
+- groupVersionKind: {group: maku.ogenki.io, version: v1alpha1, kind: Repository}
+  labelsFromPath:
+    namespace: [metadata, namespace]
+    name: [metadata, name]
+  metrics:
+    - name: status_condition
+      help: "A Repository condition: 1 when True, 0 when False or Unknown"
+      each:
+        type: Gauge
+        gauge:
+          path: [status, conditions]
+          labelsFromPath:
+            type: [type]
+          valueFrom: [status]
+```
+
+Leave `metricNamePrefix` unset: the default prefix gives `kube_customresource_status_condition`. The
+condition's status is the value, not a label: kube-state-metrics turns `True` into 1 and `False` or
+`Unknown` into 0, so `BindingsValid` refused is `== 0` and `Paused` set is `== 1`.
 
 ## Dashboards
 

@@ -45,8 +45,12 @@ rules:
       description: "The breaker holds the class. Three clean mature merges lift it (recoverAfter); factory/drill lifts it only if added before factory/revert. Read the window: scripts/shadow-merge-tally.sh --repo {{ $labels.repository }} --class {{ $labels.class }} --outcomes --since <date> in Smana/maku. The gauge keeps its last value, so a class with no monitor can stay at 1 after it recovered, and a shadow or unarmed class's pause is inert: check the class's mode and recent PRs before acting."
       runbook_url: "__DOCS__/operations/failures.md#factory-alerts"
       dashboard: "/d/agent-factory"
+  # The Repository condition gauge kube-state-metrics' customResourceState emits from
+  # status.conditions (valueFrom status): no status label, 1 for True and 0 for False or Unknown.
+  # Rendered with monitoring.prometheusRule.kubeStateMetrics; the KSM config is in
+  # docs/observability.md#repository-conditions.
   - alert: AgentFactoryBindingRefused
-    expr: max by (namespace, name) (kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", type="BindingsValid", status="false"}) == 1
+    expr: max by (namespace, name) (kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", type="BindingsValid"}) == 0
     for: 15m
     labels:
       severity: warning
@@ -56,7 +60,7 @@ rules:
       runbook_url: "__DOCS__/operations/failures.md#factory-alerts"
       dashboard: "/d/agent-factory"
   - alert: AgentFactoryPolicyPausedLong
-    expr: max by (namespace, name) (kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", type="Paused", status="true"}) == 1
+    expr: max by (namespace, name) (kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", type="Paused"}) == 1
     for: 24h
     labels:
       severity: warning

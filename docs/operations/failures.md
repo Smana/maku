@@ -42,7 +42,7 @@ annotations: `runbook_url`, this page's section for its group, and `dashboard`, 
 | `monitoring.prometheusRule.enabled` | `false` | Renders the rule |
 | `monitoring.prometheusRule.labels` | `{}` | Added to the rule, for a Prometheus whose `ruleSelector` wants them |
 | `monitoring.prometheusRule.disabled` | `[]` | Alert names left out, for an install that keeps its own variant. A name no group holds fails the render |
-| `monitoring.prometheusRule.kubeStateMetrics` | `false` | Renders the rules that read kube-state-metrics (`AgentSandboxPodPending`) |
+| `monitoring.prometheusRule.kubeStateMetrics` | `false` | Renders the rules on kube-state-metrics: `AgentSandboxPodPending`, the [Repository conditions](../observability.md#repository-conditions) |
 | `monitoring.prometheusRule.docsURL` | the release's `docs/` on GitHub | The base of each `runbook_url` |
 
 ### Room alerts

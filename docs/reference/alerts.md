@@ -35,6 +35,8 @@ ai-native-ref's `vmrule-agent-factory.yaml`, which comes with ai-native-ref's PR
 | `AgentFactoryAutoMergeReverted` | A merged agent pull request was reverted | — | Its class is paused by the breaker; read why on the Task (`Reverted`) |
 | `AgentFactoryMergeRegression` | The post-merge monitor found a regression, by class and repository | — | The class is demoted at its next decision; the pull request's monitor comment names the signal |
 | `AgentFactoryClassPausedLong` | A class (any but the empty one) has been paused 7 days | 7 days | The [breaker](../factory.md#the-merge-gate). A shadow or unarmed class's pause is inert: leave the rule out with `disabled` to keep a live-classes-only variant |
+| `AgentFactoryBindingRefused` | A Repository's `BindingsValid` condition has been false 15 min; rendered with `kubeStateMetrics` | 15 min | The condition's message names the binding and the fix; the last good policy may keep serving |
+| `AgentFactoryPolicyPausedLong` | A Repository's merge policies (`spec.merge.paused`) have been paused 24 h; rendered with `kubeStateMetrics` | 24 h | Read the reason in the `Paused` condition; resume by removing the block |
 | `AgentFactoryDailyBudgetHigh` | A principal spent over 80 % of today's USD cap | 5 min | [Budget signals](../operations/failures.md#budget-signals) |
 | `AgentPersonCapShadowRefusal` | A run was admitted that `enforcePrincipal` would refuse (info) | — | [Budget signals](../operations/failures.md#budget-signals) |
 | `AgentFactoryTaskStuck` | A task has been in a working phase over 2 h | 5 min | `kubectl get task <task> -o yaml`; the logs carry `task.id` |
