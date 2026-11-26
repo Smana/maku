@@ -1344,7 +1344,10 @@ fields refused):
 - `/answers`: `{onBehalfOf?, text}`. Requires an open scoper question (`Escalated` with
   `needs_author`, else `no_question`); when the resolved login is a maintainer with write or the
   issue's author (`not_allowed` for anyone else), the factory appends a decision record to
-  `## Decisions` in the issue body on GitHub and, for a maintainer, supersedes and restarts the task
+  `## Decisions` in the issue body on GitHub and, for a maintainer, supersedes and restarts the task.
+  An answer to the intake acceptance question (the scoper never ran and the issue states no
+  acceptance) is first written as the issue's `## Acceptance check` section, and its record reads
+  `D<n>: Acceptance check: <answer>`, so the restarted task does not ask again
   (`answered_restarted`), while for a non-maintainer issue author it leaves the task waiting
   (`answered`).
 

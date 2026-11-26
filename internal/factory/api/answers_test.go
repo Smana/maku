@@ -226,3 +226,61 @@ func TestAnswerFailsClosedWithoutRedactorAndSanitizesPublic(t *testing.T) {
 		t.Fatalf("unsanitized markdown reached GitHub issue: %q", iss.Body)
 	}
 }
+
+// TestAnswerAcceptanceQuestionDoesNotAskAgain: the intake guard asks for the acceptance check, a
+// maintainer answers through the broker's answer route, and the restarted task's guard reads the
+// answered issue as stating its acceptance instead of asking the identical question again.
+func TestAnswerAcceptanceQuestionDoesNotAskAgain(t *testing.T) {
+	const body = "## What is wrong\nx\n\n## What it should be\ny" +
+		"\n\n---\nFiled by the agent factory, from a confirmed handoff."
+	tk := makeActTask("6buqdlot", "", "")
+	tk.Spec.Text = "# Fix the link\n\n" + body
+	tk.Spec.IssueAuthor = "contributor"
+	tk.Status = factoryv1.TaskStatus{}
+	env := newActEnv(t, tk)
+	env.forge.SetIssue(forge.Issue{Number: 7, Title: "Fix the link", Body: body, State: "OPEN", Author: "contributor"})
+
+	asked := reconcileTask(t, env.rec, "6buqdlot", 3)
+	if asked.Status.Phase != factoryv1.PhaseEscalated || asked.Status.Reason != "needs_author" || asked.Status.Scope != nil {
+		t.Fatalf("first task = %s (%s), scope %v: want the intake guard's needs_author", asked.Status.Phase, asked.Status.Reason, asked.Status.Scope)
+	}
+
+	rec := postAct(t, env.srv, "slack", "/v1/tasks/6buqdlot/answers",
+		`{"onBehalfOf":"slack:T01ABC/UMAINT","text":"Acceptance: go test ./... passes"}`)
+	if got := actResult(t, rec); got != api.AnswerRestarted {
+		t.Fatalf("result = %q, want %q", got, api.AnswerRestarted)
+	}
+	iss, err := env.forge.Issue(t.Context(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "## What is wrong\nx\n\n## What it should be\ny" +
+		"\n\n## Acceptance check\n\nAcceptance: go test ./... passes (@Smana)" +
+		"\n\n## Decisions\n\nD1: Acceptance check: Acceptance: go test ./... passes (@Smana)" +
+		"\n\n---\nFiled by the agent factory, from a confirmed handoff."
+	if iss.Body != want {
+		t.Fatalf("issue body = %q\nwant %q", iss.Body, want)
+	}
+
+	reconcileTask(t, env.rec, "6buqdlot", 2)
+	var list factoryv1.TaskList
+	if err := env.client.List(t.Context(), &list); err != nil {
+		t.Fatal(err)
+	}
+	var restarted *factoryv1.Task
+	for i := range list.Items {
+		if list.Items[i].Name != "6buqdlot" {
+			restarted = &list.Items[i]
+		}
+	}
+	if restarted == nil {
+		t.Fatal("expected a new Task for the answered issue")
+	}
+	restarted = reconcileTask(t, env.rec, restarted.Name, 3)
+	if restarted.Status.Phase == factoryv1.PhaseEscalated {
+		t.Fatalf("restarted task = %s (%s): the guard asked the answered acceptance question again", restarted.Status.Phase, restarted.Status.Reason)
+	}
+	if restarted.Status.Phase != factoryv1.PhaseImplementing || len(env.runs.specs) != 1 {
+		t.Fatalf("restarted task = %s, runs = %d, want Implementing with 1 scoper run", restarted.Status.Phase, len(env.runs.specs))
+	}
+}
