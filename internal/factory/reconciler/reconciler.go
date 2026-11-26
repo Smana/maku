@@ -915,6 +915,7 @@ func target(t *v1alpha1.Task) int {
 // task.final line the moment the task first ends. The reservations no claim holds any more are
 // released here (#55): every ending path, and every replay of one, passes through it.
 func (r *Reconciler) end(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, phase, reason string) error {
+	r.closeRuns(ctx, t, goneRunPhase(phase), reason) // before a step-up appends the next run
 	if phase == v1alpha1.PhaseEscalated {
 		if stepped, err := r.stepUp(ctx, cfg, t, reason); stepped || err != nil {
 			return err
@@ -932,6 +933,7 @@ func (r *Reconciler) ended(ctx context.Context, cfg *config.Config, t *v1alpha1.
 // finish is the ending every task shares: its unheld reservations released, the move, a terminal
 // approved parent's parts counted (SL14), the narration and the outcome.
 func (r *Reconciler) finish(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, phase, reason string, e narrate.Event) {
+	r.closeRuns(ctx, t, goneRunPhase(phase), reason)
 	r.releaseUnheld(ctx, t)
 	r.to(t, phase, reason)
 	if v1alpha1.TerminalPhase(phase) {
@@ -939,6 +941,15 @@ func (r *Reconciler) finish(ctx context.Context, cfg *config.Config, t *v1alpha1
 	}
 	narrateLater(t, e)
 	r.outcome(ctx, cfg, t)
+}
+
+// goneRunPhase is the phase closeRuns records for a run whose claim went without a terminal phase:
+// a stop revoked it, any other ending lost it.
+func goneRunPhase(taskPhase string) string {
+	if taskPhase == v1alpha1.PhaseStopped {
+		return "Revoked"
+	}
+	return "Failed"
 }
 
 // settleWindow bounds how long an ended task keeps refreshing its usage before the total is
