@@ -39,6 +39,17 @@ var (
 // magic bytes and decoded by that format's own package, never through image.Decode's registry, so
 // a format another import registers (GIF, WebP) is still refused.
 func Normalize(b []byte, maxW, maxH, limit int) (out []byte, mime string, w, h int, err error) {
+	return normalize(b, maxW, maxH, 0, limit)
+}
+
+// Fit is Normalize for an image that may be larger than it should be kept, such as a picture
+// attached to an issue: b may be up to maxW×maxH (checked from its header, as Normalize does), and
+// once decoded it is scaled down, keeping its aspect, until its longer side is at most maxSide.
+func Fit(b []byte, maxW, maxH, maxSide, limit int) (out []byte, mime string, w, h int, err error) {
+	return normalize(b, maxW, maxH, maxSide, limit)
+}
+
+func normalize(b []byte, maxW, maxH, maxSide, limit int) (out []byte, mime string, w, h int, err error) {
 	var (
 		decodeConfig func([]byte) (image.Config, error)
 		decode       func([]byte) (image.Image, error)
@@ -64,6 +75,9 @@ func Normalize(b []byte, maxW, maxH, limit int) (out []byte, mime string, w, h i
 	if err != nil {
 		return nil, "", 0, 0, fmt.Errorf("%w: %w", ErrNotAnImage, err)
 	}
+	if maxSide > 0 {
+		img = scaleDown(img, maxSide)
+	}
 	w, h = img.Bounds().Dx(), img.Bounds().Dy()
 	var buf bytes.Buffer
 	if bytes.HasPrefix(b, pngMagic) {
@@ -82,4 +96,36 @@ func Normalize(b []byte, maxW, maxH, limit int) (out []byte, mime string, w, h i
 		return nil, "", 0, 0, fmt.Errorf("%w: %d bytes as JPEG, at most %d", ErrTooLarge, buf.Len(), limit)
 	}
 	return buf.Bytes(), "image/jpeg", w, h, nil
+}
+
+// scaleDown is img with its longer side at most maxSide, by averaging each output pixel's source
+// box (an area filter: no aliasing on text, and no dependency).
+func scaleDown(img image.Image, maxSide int) image.Image {
+	b := img.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	if sw <= maxSide && sh <= maxSide {
+		return img
+	}
+	dw, dh := maxSide, sh*maxSide/sw
+	if sh > sw {
+		dw, dh = sw*maxSide/sh, maxSide
+	}
+	dw, dh = max(dw, 1), max(dh, 1)
+	out := image.NewRGBA(image.Rect(0, 0, dw, dh))
+	for y := range dh {
+		y0, y1 := b.Min.Y+y*sh/dh, b.Min.Y+max((y+1)*sh/dh, y*sh/dh+1)
+		for x := range dw {
+			x0, x1 := b.Min.X+x*sw/dw, b.Min.X+max((x+1)*sw/dw, x*sw/dw+1)
+			var r, g, bl, a, n uint64
+			for sy := y0; sy < y1; sy++ {
+				for sx := x0; sx < x1; sx++ {
+					cr, cg, cb, ca := img.At(sx, sy).RGBA()
+					r, g, bl, a, n = r+uint64(cr), g+uint64(cg), bl+uint64(cb), a+uint64(ca), n+1
+				}
+			}
+			i := out.PixOffset(x, y)
+			out.Pix[i], out.Pix[i+1], out.Pix[i+2], out.Pix[i+3] = uint8(r/n>>8), uint8(g/n>>8), uint8(bl/n>>8), uint8(a/n>>8) //nolint:gosec // G115: a 16-bit channel's mean, shifted to 8 bits
+		}
+	}
+	return out
 }

@@ -6,9 +6,14 @@ run's W3C traceparent, forwards strictly to MCP_URL, bounds request/response
 sizes, and refuses redirects so credentials never leave the configured upstream.
 """
 import http.server
+import json
 import threading
 import urllib.error
 import urllib.request
+
+# Tools whose answer is an image (v5 Q16 B3): OpenCode forwards a tool's image to any model
+# (screenshots ledger L4), so a run whose model cannot see images never calls them.
+IMAGE_TOOLS = ("room_image",)
 
 MAX_REQUEST_BYTES = 4 << 20
 MAX_RESPONSE_BYTES = 4 << 20
@@ -34,6 +39,20 @@ def _read_token(path: str | None) -> str | None:
         return None
 
 
+def _image_call(body: bytes | None):
+    """The JSON-RPC id of a tools/call naming an image tool, or None for anything else."""
+    if not body:
+        return None
+    try:
+        msg = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(msg, dict) or msg.get("method") != "tools/call":
+        return None
+    name = str((msg.get("params") or {}).get("name") or "")
+    return msg.get("id") if any(name == t or name.endswith("_" + t) for t in IMAGE_TOOLS) else None
+
+
 class MCPCredentialProxy:
     """Loopback HTTP proxy that injects rotating MCP bearer tokens per request."""
 
@@ -43,7 +62,9 @@ class MCPCredentialProxy:
         token_file: str | None = None,
         traceparent: str | None = None,
         timeout: float = UPSTREAM_TIMEOUT_S,
+        vision: bool = False,
     ):
+        self.vision = vision
         self.upstream_url = upstream_url
         self.token_file = token_file
         self.traceparent = traceparent
@@ -68,6 +89,16 @@ class MCPCredentialProxy:
                     self.send_error(413, "request body too large")
                     return
                 body = self.rfile.read(length) if length > 0 else None
+                refused = None if proxy.vision else _image_call(body)
+                if refused is not None:
+                    raw = json.dumps({"jsonrpc": "2.0", "id": refused, "result": {"isError": True, "content": [
+                        {"type": "text", "text": "not_available: this run's model cannot see images; read the request's text instead"}]}}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
                 headers = {}
                 for k in ("Content-Type", "Accept", "Mcp-Session-Id", "Last-Event-ID"):
                     if v := self.headers.get(k):

@@ -270,7 +270,8 @@ networkPolicies:
     # selectors). Empty: the intake port is closed.
     intakeFrom: []
     # A GHES (kubernetes: peers; cilium: whole peers such as {toFQDNs: [{matchName: ghes.example.com}]}).
-    # Empty: public addresses minus maku's privateCIDRs (kubernetes), github.com and api.github.com (cilium).
+    # Empty: public addresses minus maku's privateCIDRs (kubernetes); github.com, api.github.com and the issue
+    # attachment hosts private-user-images and user-images.githubusercontent.com (cilium).
     github: {to: []}
     # Every URL maku-factory.config names opens its own egress: an external host by name (cilium
     # toFQDNs) or as public addresses (kubernetes); an in-cluster one needs its pods here, or the render

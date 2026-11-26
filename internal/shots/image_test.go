@@ -136,3 +136,18 @@ func TestNormalizeFallsBackToJPEG(t *testing.T) {
 		t.Fatalf("still over the limit as JPEG: %v, want ErrTooLarge", err)
 	}
 }
+
+func TestFitScalesALargeImageDown(t *testing.T) {
+	big := encodePNG(t, pic(3000, 1500, false))
+	out, mime, w, h, err := Fit(big, 8192, 8192, 1568, 1<<20)
+	if err != nil || w != 1568 || h != 784 || mime != "image/png" || len(out) == 0 {
+		t.Fatalf("got %dx%d %s %d bytes, %v; want 1568x784 png", w, h, mime, len(out), err)
+	}
+	small := encodePNG(t, pic(200, 100, false))
+	if _, _, w, h, err := Fit(small, 8192, 8192, 1568, 1<<20); err != nil || w != 200 || h != 100 {
+		t.Fatalf("a small image keeps its size: %dx%d %v", w, h, err)
+	}
+	if _, _, _, _, err := Fit(encodePNG(t, pic(9000, 10, false)), 8192, 8192, 1568, 1<<20); !errors.Is(err, ErrDimensions) {
+		t.Fatalf("the header bound still holds before decoding: %v", err)
+	}
+}

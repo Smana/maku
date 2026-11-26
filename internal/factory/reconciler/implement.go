@@ -326,9 +326,10 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	}
 	s.Harness = harnessFor(t, s)
 	stampScreenshots(t, &s)
-	r.plantCanary(cfg, t, &s)     // hardening audit or enforce only (HR7)
-	r.markSafeOutputs(cfg, t, &s) // the repository's enforceOutputs only (HR14)
-	r.markForgeAPI(cfg, t, &s)    // mode enforce only (HR36)
+	r.attachRequestImages(ctx, t, &s) // v5 Q16 B3: screenshots runs of an issue task only
+	r.plantCanary(cfg, t, &s)         // hardening audit or enforce only (HR7)
+	r.markSafeOutputs(cfg, t, &s)     // the repository's enforceOutputs only (HR14)
+	r.markForgeAPI(cfg, t, &s)        // mode enforce only (HR36)
 	err = r.Runs.Create(ctx, s)
 	unbriefed := false
 	if refusedSchema(err) && s.Role == "reviewer" && s.TaskText != "" && s.TaskURL != "" {

@@ -51,6 +51,8 @@ type broker struct {
 	// bundle is what GET …/bundles/{digest} answers, and bundleQuery the last read's query.
 	bundle      []byte
 	bundleQuery string
+	// images is every POST …/images body by its query, with its content type.
+	images map[string]string
 }
 
 func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
@@ -202,6 +204,20 @@ func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(wire.Error{Reason: wire.ReasonNoHandoffStart})
 		}
+	})
+	mux.HandleFunc("POST /v1/rooms/{id}/images", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		b.mu.Lock()
+		if b.images == nil {
+			b.images = map[string]string{}
+		}
+		b.images[r.URL.RawQuery] = r.Header.Get("Content-Type") + " " + string(body)
+		b.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"n":1}`))
 	})
 	mux.HandleFunc("GET /v1/rooms/{id}/bundles/{digest}", func(w http.ResponseWriter, r *http.Request) {
 		if b.refuse(w, r) {
@@ -766,6 +782,25 @@ func TestClientOutput(t *testing.T) {
 	delete(r.b.fail, "/v1/rooms/3buqdlot/outputs")
 	if err := r.c.Output(t.Context(), "3buqdlot", "cf4ato2x", envelope.KindOutputWaiting, waiting); err != nil {
 		t.Fatalf("waiting: %v", err)
+	}
+}
+
+// v5 Q16 B3: the factory sends an issue image as its raw bytes, numbered 1 to MaxRequestImages.
+func TestClientPutRequestImage(t *testing.T) {
+	r := newRig(t, 0)
+	if err := r.c.PutRequestImage(t.Context(), "3buqdlot", 2, []byte("PNGBYTES")); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.b.images["n=2"]; got != "application/octet-stream PNGBYTES" {
+		t.Fatalf("got %q", got)
+	}
+	for _, n := range []int{0, MaxRequestImages + 1} {
+		if err := r.c.PutRequestImage(t.Context(), "3buqdlot", n, []byte("x")); err == nil {
+			t.Errorf("image %d was sent", n)
+		}
+	}
+	if err := r.c.PutRequestImage(t.Context(), "BAD", 1, []byte("x")); err == nil {
+		t.Error("a bad room was sent")
 	}
 }
 

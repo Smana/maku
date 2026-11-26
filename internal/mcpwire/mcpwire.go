@@ -8,6 +8,7 @@ package mcpwire
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -120,6 +121,18 @@ func ToolResult(out any) (map[string]any, error) {
 	}
 	return map[string]any{"content": []map[string]string{{"type": "text", "text": string(bytes.TrimSuffix(text.Bytes(), []byte("\n")))}},
 		"structuredContent": out}, nil
+}
+
+// Content is a tools/call result a tool builds itself, sent as is: an image part, which ToolResult's
+// JSON text cannot carry.
+type Content map[string]any
+
+// ImageResult is a tools/call result of one text part and one image part (MCP image content).
+func ImageResult(text, mimeType string, data []byte) Content {
+	return Content{"content": []map[string]string{
+		{"type": "text", "text": text},
+		{"type": "image", "mimeType": mimeType, "data": base64.StdEncoding.EncodeToString(data)},
+	}}
 }
 
 // ToolResultText is a tools/call result whose text is a view for the human to read, and whose

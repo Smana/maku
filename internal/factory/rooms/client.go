@@ -343,6 +343,29 @@ func (c *Client) Bundle(ctx context.Context, room, runID, digest string) ([]byte
 	return b, nil
 }
 
+// rawBody is a request body sent as is (application/octet-stream), not as JSON.
+type rawBody []byte
+
+const requestImagesRoute = "/v1/rooms/{id}/images"
+
+// MaxRequestImages is how many of an issue's images a room keeps (the broker's bound).
+const MaxRequestImages = 4
+
+// PutRequestImage stores one image of the room's issue as its request image n (v5 Q16 B3). The
+// broker scales it down and re-encodes it; a repeat of the same image is a no-op.
+func (c *Client) PutRequestImage(ctx context.Context, room string, n int, b []byte) error {
+	switch {
+	case !envelope.ValidID(room):
+		return fmt.Errorf("rooms: %q is not a C2 room id", room)
+	case n < 1 || n > MaxRequestImages:
+		return fmt.Errorf("rooms: request image %d is not 1 to %d", n, MaxRequestImages)
+	}
+	var out struct {
+		N int `json:"n"`
+	}
+	return c.do(ctx, http.MethodPost, requestImagesRoute, room, "?n="+strconv.Itoa(n), rawBody(b), maxReplyOverhead, &out)
+}
+
 // The digest-bound approval routes (hardening HR28).
 const (
 	approvalsRoute = "/v1/rooms/{id}/approvals"
@@ -672,7 +695,11 @@ func (c *Client) call(ctx context.Context, method, route, path, room, query stri
 		return errors.New("rooms: the token file is empty")
 	}
 	var body []byte
-	if in != nil {
+	raw, isRaw := in.(rawBody)
+	switch {
+	case isRaw:
+		body = raw
+	case in != nil:
 		if body, err = json.Marshal(in); err != nil {
 			return fmt.Errorf("rooms: encode: %w", err)
 		}
@@ -683,7 +710,10 @@ func (c *Client) call(ctx context.Context, method, route, path, room, query stri
 		return fmt.Errorf("rooms: request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+bearer)
-	if in != nil {
+	switch {
+	case isRaw:
+		req.Header.Set("Content-Type", "application/octet-stream")
+	case in != nil:
 		req.Header.Set("Content-Type", "application/json")
 	}
 	propagation.TraceContext{}.Inject(ctx, propagation.HeaderCarrier(req.Header))
@@ -694,20 +724,20 @@ func (c *Client) call(ctx context.Context, method, route, path, room, query stri
 	defer func() { _ = resp.Body.Close() }()
 	status := resp.StatusCode
 	span.SetAttributes(attribute.Int("http.response.status_code", status))
-	raw, err := httpx.ReadBody(resp.Body, maxReply)
+	reply, err := httpx.ReadBody(resp.Body, maxReply)
 	if err != nil {
 		return fmt.Errorf("rooms: %s %s: %w", method, route, err)
 	}
 	if status < 200 || status > 299 {
 		var e wire.Error
-		_ = json.Unmarshal(raw, &e)
+		_ = json.Unmarshal(reply, &e)
 		return &APIError{Status: status, Reason: e.Reason}
 	}
 	if b, ok := out.(*[]byte); ok { // a raw reply, such as a bundle
-		*b = raw
+		*b = reply
 		return nil
 	}
-	if err := json.Unmarshal(raw, out); err != nil {
+	if err := json.Unmarshal(reply, out); err != nil {
 		return fmt.Errorf("rooms: %s %s: the reply is not JSON", method, route)
 	}
 	return nil
