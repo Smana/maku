@@ -106,9 +106,17 @@ func TestOpenPromotesOneLineWithItsEvidence(t *testing.T) {
 		!strings.Contains(string(git.updated), "name: docs\n      mode: live") || git.createBase != "main" || git.draft {
 		t.Fatalf("unexpected manifest or PR: %s %+v", git.updated, git)
 	}
-	for _, want := range []string{"20 clean decisions (minimum 20)", "0 bad outcomes", "rollback drill passed", "/pull/42", "/pull/43", "never merges it"} {
+	// Correctness signals CS7: the body says what the policy will merge and what checks it, and
+	// names the judge of every count.
+	for _, want := range []string{"Once merged: **Merges without you when**", "**Meaning checked by**", "20 agreed decisions (minimum 20)",
+		"0 wrong calls", "rollback drill done", "Agreed decisions:", "/pull/42", "/pull/43", "never merges it"} {
 		if !strings.Contains(git.createBody, want) {
 			t.Errorf("body lacks %q:\n%s", want, git.createBody)
+		}
+	}
+	for _, old := range []string{"clean", "bad outcome"} {
+		if strings.Contains(git.createBody, old) {
+			t.Errorf("body says %q:\n%s", old, git.createBody)
 		}
 	}
 }
@@ -126,7 +134,7 @@ func TestOpenWithoutGitOpsPrintsTheCommand(t *testing.T) {
 	s, _ := promotionRig("shadow")
 	s.Cfg = config.NewLive(&config.Config{})
 	got, err := s.Open(t.Context(), "Smana/ai-native-ref", "docs", 0)
-	if err != nil || !strings.Contains(got.Command, "gh pr create") || !strings.Contains(got.Command, "20 clean decisions") {
+	if err != nil || !strings.Contains(got.Command, "gh pr create") || !strings.Contains(got.Command, "20 agreed decisions") {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
