@@ -928,5 +928,12 @@ ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") 
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/rc-browser.yaml"
 go run ./tests/loadconfig run-controller-gateway "$tmp/rc-browser.yaml" || fail=1
 bad 'image.tag is <version>@sha256:<digest>, never a bare tag' --set runController.images.browser.tag=v1
+# Per-alias prices (Gemini plan A6): rendered as given, and loaded against the served aliases.
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" \
+  --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["agent-default","tier-light","gemini-standard"],"internal":["tier-light"]}' \
+  --set-json 'runController.model.gateway.prices={"gemini-standard":{"input":"3.30","output":"16.50"}}')"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.gateway.prices."gemini-standard" | .input + "/" + .output) == "3.30/16.50"' 'per-alias prices reach run-controller config'
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/rc-prices.yaml"
+go run ./tests/loadconfig run-controller-gateway "$tmp/rc-prices.yaml" || fail=1
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"

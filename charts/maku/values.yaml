@@ -324,6 +324,10 @@ runController:
       # implementer's child. Every non-empty listener must serve it; the run-controller refuses its
       # config at load otherwise. Empty: the controller's tier-light default.
       lightAlias: ""
+      # An alias's USD per million tokens, its served model's meter.prices row, as strings:
+      # {<alias>: {input: "3.30", output: "16.50"}}. A run on a priced alias tells its harness, so
+      # OpenHands' own cost counter prices that model and not GLM. Each must be a served alias.
+      prices: {}
   # A run's git token (v4 D10): each run mounts its own Secret, <run name>-git, which the factory
   # mints for that run's repository and role (maku-factory's runTokens.perRun). The controller then
   # reads Secrets in the runs namespace without resourceNames: it already creates pods that mount

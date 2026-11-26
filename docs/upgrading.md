@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Run aliases and per-alias prices](#run-aliases-and-per-alias-prices)
 - [Gemini: the gemini and vertex presets](#gemini-the-gemini-and-vertex-presets)
 - [The OpenCode image runs repository checks](#the-opencode-image-runs-repository-checks)
 - [Early commands are held, refused input is answered](#early-commands-are-held-refused-input-is-answered)
@@ -50,6 +51,13 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## Run aliases and per-alias prices
+
+No value changes. A gateway run's pod gets `MAKU_ALIASES`, the aliases its listener serves, which the
+OpenCode image now lists as its models instead of a built-in list. `runController.model.gateway.prices`
+(`{<alias>: {input, output}}`, USD per million tokens as strings, each a served alias) is new and
+optional: it gives OpenHands its alias's rates ([the gateway](gateway.md)).
 
 ## Gemini: the gemini and vertex presets
 

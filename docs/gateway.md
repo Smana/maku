@@ -308,6 +308,11 @@ In `gateway` mode, for each run:
   run that can use the alias always holds a live `LIGHT_BASE_URL`, `LIGHT_MODEL` and
   `LIGHT_API_KEY_FILE` (the judge's token, when the judge already runs on the light alias). A run
   that cannot (a public run without search) gets none of it.
+- **The aliases and the alias's prices.** `MAKU_ALIASES` lists the aliases the run's listener
+  serves, which OpenCode offers as its models, so a new alias needs no image release. When
+  `model.gateway.prices` names the run's alias, `LLM_INPUT_USD_PER_MTOK` and
+  `LLM_OUTPUT_USD_PER_MTOK` carry its rates, so OpenHands' own cost counter prices that model; an
+  alias without a row keeps the harness's GLM defaults. The meter, not these, settles the run.
 - **The judge has its own token.** With `spec.loop.judgeModel`, the pod gets a second token for that
   alias, and `JUDGE_BASE_URL`, `JUDGE_MODEL` and `JUDGE_API_KEY_FILE=/run/agent/model/judge-token`.
 - **The token lives the pod's deadline plus 10 minutes.** The harness reads it once, and gVisor raises no

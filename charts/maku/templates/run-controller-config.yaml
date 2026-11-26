@@ -59,6 +59,10 @@ data:
           internal: {{ $gw.vision.internal | toJson }}
         {{- end }}
         lightAlias: {{ default "" $gw.lightAlias | quote }}
+        {{- with $gw.prices }}
+        # An alias's USD per million tokens, for the harness's own counter (Gemini plan A6).
+        prices: {{ toJson . }}
+        {{- end }}
     {{- else }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
     {{- end }}

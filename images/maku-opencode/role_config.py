@@ -131,7 +131,10 @@ def role_config(
     data_class = (env.get("DATA_CLASS") or "public").strip().lower()
     always_ask = env.get("OPENCODE_ALWAYS_ASK") == "1"
 
-    aliases = list(DEFAULT_ALIASES)
+    # The run-controller's MAKU_ALIASES are the aliases the run's listener serves (Gemini plan A5);
+    # an older run-controller sets none, and the image's list stands in.
+    given = [a.strip() for a in (env.get("MAKU_ALIASES") or "").split(",") if a.strip()]
+    aliases = given or list(DEFAULT_ALIASES)
     for extra in (model, (env.get("LIGHT_MODEL") or "").strip()):
         if extra and extra not in aliases:
             aliases.append(extra)
