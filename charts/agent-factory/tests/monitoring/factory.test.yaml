@@ -175,17 +175,23 @@ tests:
       - {eval_time: 3m, alertname: AgentMeterInputExcludesCache, exp_alerts: [{exp_labels: {severity: warning, model: m}}]}
       - {eval_time: 70m, alertname: AgentMeterInputExcludesCache, exp_alerts: []}
 
-  # AgentFactoryBindingRefused: BindingsValid false for 15 minutes; not 14.
+  # AgentFactoryBindingRefused: BindingsValid false for 15 minutes; not 14. The series is what KSM
+  # v2.20's customResourceState emits for status.conditions with valueFrom [status]: no status label,
+  # 0 for False. A valid Repository (1) never fires.
   - interval: 1m
     input_series:
-      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", namespace="agent-system", name="cloud-native-ref", type="BindingsValid", status="false"}', values: '1x20'}
+      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", customresource_version="v1alpha1", namespace="agent-system", name="cloud-native-ref", type="BindingsValid"}', values: '0x20'}
+      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", customresource_version="v1alpha1", namespace="agent-system", name="runlore", type="BindingsValid"}', values: '1x20'}
+      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", customresource_version="v1alpha1", namespace="agent-system", name="runlore", type="Paused"}', values: '0x20'}
     alert_rule_test:
       - {eval_time: 14m, alertname: AgentFactoryBindingRefused, exp_alerts: []}
       - {eval_time: 16m, alertname: AgentFactoryBindingRefused, exp_alerts: [{exp_labels: {severity: warning, namespace: agent-system, name: cloud-native-ref}}]}
-  # AgentFactoryPolicyPausedLong: an operator pause for 24 hours; not 23.
+  # AgentFactoryPolicyPausedLong: an operator pause (Paused True, 1) for 24 hours; not 23. An
+  # unpaused Repository (0) never fires.
   - interval: 1m
     input_series:
-      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", namespace="agent-system", name="cloud-native-ref", type="Paused", status="true"}', values: '1x1441'}
+      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", customresource_version="v1alpha1", namespace="agent-system", name="cloud-native-ref", type="Paused"}', values: '1x1441'}
+      - {series: 'kube_customresource_status_condition{customresource_group="maku.ogenki.io", customresource_kind="Repository", customresource_version="v1alpha1", namespace="agent-system", name="runlore", type="Paused"}', values: '0x1441'}
     alert_rule_test:
       - {eval_time: 23h, alertname: AgentFactoryPolicyPausedLong, exp_alerts: []}
       - {eval_time: 24h1m, alertname: AgentFactoryPolicyPausedLong, exp_alerts: [{exp_labels: {severity: warning, namespace: agent-system, name: cloud-native-ref}}]}

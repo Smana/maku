@@ -149,7 +149,8 @@ monitoring:
     # Alert names to leave out, e.g. one an install keeps its own variant of. A name no group holds
     # fails the render.
     disabled: []
-    # The rules that read kube-state-metrics' kube_* series (AgentSandboxPodPending).
+    # The rules that read kube-state-metrics' kube_* series (AgentSandboxPodPending; the Repository
+    # condition alerts, which need the customResourceState config in docs/observability.md).
     kubeStateMetrics: false
     # Each alert's runbook_url base. Empty: https://github.com/Smana/maku/blob/v<appVersion>/docs.
     docsURL: ""
