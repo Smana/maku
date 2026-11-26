@@ -129,6 +129,83 @@ func (s *Server) screenshot(w http.ResponseWriter, r *http.Request) {
 	reply(w, code, meta)
 }
 
+// MaxRequestImages is how many images of an issue the factory may store as a room's request
+// images (v5 Q16 B3), and requestImageSide their longer side once scaled down (a vision model's
+// useful size). requestImageMax bounds an issue image's header before decoding.
+const (
+	MaxRequestImages = 4
+	requestImageSide = 1568
+	requestImageMax  = 8192
+	maxRequestBody   = 5 << 20
+)
+
+// requestImage is POST /v1/rooms/{id}/images?n=<1..MaxRequestImages>, OutputClient only: one image
+// of the issue the room's task came from, which the factory fetched from GitHub's own image hosts.
+// The broker scales it down, re-encodes it (shots.Fit) and stores it as source request, with no
+// run. No event is appended: a run reads it with room_image, and the room lists it. 201 is a new
+// image, 200 a repeat.
+func (s *Server) requestImage(w http.ResponseWriter, r *http.Request) {
+	_, release, ok := s.outputCaller(w, r, s.Screenshots != nil)
+	if !ok {
+		return
+	}
+	defer release()
+	id := r.PathValue("id")
+	if !envelope.ValidID(id) {
+		fail(w, http.StatusBadRequest, wire.ReasonBadRoom)
+		return
+	}
+	n, err := strconv.Atoi(r.URL.Query().Get("n"))
+	if err != nil || n < 1 || n > MaxRequestImages {
+		fail(w, http.StatusBadRequest, wire.ReasonBadScreenshot)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+			fail(w, http.StatusRequestEntityTooLarge, wire.ReasonScreenshotTooLarge)
+			return
+		}
+		fail(w, http.StatusBadRequest, wire.ReasonBadScreenshot)
+		return
+	}
+	img, mime, width, height, err := shots.Fit(body, requestImageMax, requestImageMax, requestImageSide, store.MaxScreenshot)
+	switch {
+	case errors.Is(err, shots.ErrDimensions):
+		fail(w, http.StatusUnprocessableEntity, wire.ReasonDimensions)
+		return
+	case errors.Is(err, shots.ErrTooLarge):
+		fail(w, http.StatusUnprocessableEntity, wire.ReasonScreenshotTooLarge)
+		return
+	case err != nil:
+		fail(w, http.StatusUnprocessableEntity, wire.ReasonNotAnImage)
+		return
+	}
+	sh := store.Screenshot{ScreenshotMeta: store.ScreenshotMeta{N: n, Mime: mime, Width: width, Height: height,
+		Source: store.SourceRequest}, Bytes: img}
+	m, created, err := s.Screenshots.PutScreenshot(r.Context(), id, sh)
+	switch {
+	case errors.Is(err, store.ErrScreenshotQuota):
+		fail(w, http.StatusTooManyRequests, wire.ReasonScreenshotQuota)
+		return
+	case errors.Is(err, store.ErrScreenshotConflict):
+		fail(w, http.StatusConflict, wire.ReasonScreenshotConflict)
+		return
+	case errors.Is(err, store.ErrBadScreenshot):
+		fail(w, http.StatusUnprocessableEntity, wire.ReasonNotAnImage)
+		return
+	case err != nil:
+		s.logFailure(w, err, "store a request image", "room", id)
+		return
+	}
+	code := http.StatusOK
+	if created {
+		code = http.StatusCreated
+	}
+	reply(w, code, envelope.ScreenshotPayload{N: m.N, Digest: m.Digest, Mime: m.Mime, Width: m.Width, Height: m.Height,
+		Bytes: m.Size, Source: m.Source})
+}
+
 // pageURL is the page a screenshot showed, kept only as a loopback http URL's origin and path
 // (envelope.PageURL), and dropped whole if the redactor finds a secret in it.
 func (s *Server) pageURL(ctx context.Context, raw string) string {

@@ -136,6 +136,7 @@ class OpenCodeDriver(HarnessDriver):
                     upstream_url=self.env["MCP_URL"],
                     token_file=self.env.get("MCP_TOKEN_FILE"),
                     traceparent=self.env.get("TRACEPARENT"),
+                    vision=self.env.get("SCREENSHOTS_VISION") == "1",
                 )
                 self.mcp_proxy.start()
             except ImportError:

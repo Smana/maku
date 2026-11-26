@@ -178,6 +178,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/rooms/{id}/task", s.bounded(maxMessageBytes, s.roomTask))
 	mux.HandleFunc("POST /v1/rooms/{id}/outputs", s.bounded(maxMessageBytes, s.roomOutputs))
 	mux.HandleFunc("GET /v1/rooms/{id}/bundles/{digest}", s.bounded(0, s.roomBundle))
+	mux.HandleFunc("POST /v1/rooms/{id}/images", s.bounded(maxRequestBody, s.requestImage))
 	mux.HandleFunc("POST /v1/rooms/{id}/approvals", s.bounded(maxOutputApprovalBytes, s.requestOutputApproval))
 	mux.HandleFunc("POST /v1/approvals/{id}/supersede", s.bounded(0, s.supersedeOutputApproval))
 	mux.HandleFunc("GET /v1/approvals/{id}", s.bounded(0, s.outputApproval))

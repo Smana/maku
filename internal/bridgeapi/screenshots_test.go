@@ -213,3 +213,50 @@ func TestTheScreenshotRouteNeedsAStore(t *testing.T) {
 }
 
 func digest(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
+
+// The factory, and only the factory, stores an issue's images as the room's request images (v5
+// Q16 B3): scaled down, re-encoded, numbered 1 to MaxRequestImages, with no run.
+func TestRoomRequestImage(t *testing.T) {
+	s, _, _ := outputServer(t)
+	shots := &memShots{shots: map[string]store.Screenshot{}}
+	s.Screenshots = shots
+	h := s.Routes()
+	img := func(w, ht int) []byte {
+		var b bytes.Buffer
+		_ = png.Encode(&b, image.NewRGBA(image.Rect(0, 0, w, ht)))
+		return b.Bytes()
+	}
+	path := func(room, n string) string { return "/v1/rooms/" + room + "/images?n=" + n }
+	rec := call(t, h, http.MethodPost, path(room, "1"), "sys:"+factory, img(3136, 1000))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	got := shots.shots[room+"//1"]
+	if got.Source != store.SourceRequest || got.RunID != "" || got.Width != 1568 || got.Height != 500 {
+		t.Fatalf("stored %+v", got.ScreenshotMeta)
+	}
+	if rec := call(t, h, http.MethodPost, path(room, "1"), "sys:"+factory, img(3136, 1000)); rec.Code != http.StatusOK {
+		t.Fatalf("a repeat is 200: %d %s", rec.Code, rec.Body)
+	}
+	for name, c := range map[string]struct {
+		path, token string
+		body        []byte
+		code        int
+		reason      string
+	}{
+		"a run token":     {path(room, "2"), "run:" + runA, img(10, 10), http.StatusUnauthorized, wire.ReasonUnauthenticated},
+		"another system":  {path(room, "2"), "sys:system:triage", img(10, 10), http.StatusForbidden, wire.ReasonNotPermitted},
+		"n out of range":  {path(room, "5"), "sys:" + factory, img(10, 10), http.StatusBadRequest, wire.ReasonBadScreenshot},
+		"no n":            {"/v1/rooms/" + room + "/images", "sys:" + factory, img(10, 10), http.StatusBadRequest, wire.ReasonBadScreenshot},
+		"a bad room":      {path("NOPE", "2"), "sys:" + factory, img(10, 10), http.StatusBadRequest, wire.ReasonBadRoom},
+		"not an image":    {path(room, "2"), "sys:" + factory, []byte("<svg/>"), http.StatusUnprocessableEntity, wire.ReasonNotAnImage},
+		"a bomb's header": {path(room, "2"), "sys:" + factory, img(9000, 10), http.StatusUnprocessableEntity, wire.ReasonDimensions},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, h, http.MethodPost, c.path, c.token, c.body)
+			if rec.Code != c.code || reason(t, rec) != c.reason {
+				t.Fatalf("%d %s, want %d %s", rec.Code, rec.Body, c.code, c.reason)
+			}
+		})
+	}
+}

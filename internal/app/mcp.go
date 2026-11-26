@@ -69,7 +69,11 @@ func roomTools(roomLog mcp.Log, red mcp.Redactor, push []string) []mcp.Tool {
 	if a, ok := roomLog.(mcp.OutputAnswers); ok {
 		out.Answers = a
 	}
-	return append(mcp.RoomTools(roomLog, red, time.Now), mcp.OutputTools(roomLog, red, time.Now, out)...)
+	tools := append(mcp.RoomTools(roomLog, red, time.Now), mcp.OutputTools(roomLog, red, time.Now, out)...)
+	if im, ok := roomLog.(mcp.RequestImages); ok { // the request's images (v5 Q16 B3)
+		tools = append(tools, mcp.ImageTools(im)...)
+	}
+	return tools
 }
 
 // roomToolsServer is :8090's handler under roomTools.auth. key (the default) is the router's injected

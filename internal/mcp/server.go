@@ -386,6 +386,10 @@ func (s *Server) call(ctx context.Context, w http.ResponseWriter, req mcpwire.Re
 		mcpwire.Write(w, req.ID, mcpwire.ToolError(s.failure(ctx, t.Name, run, err)), nil)
 		return
 	}
+	if c, ok := out.(mcpwire.Content); ok { // a result the tool built: an image part (room_image)
+		mcpwire.Write(w, req.ID, c, nil)
+		return
+	}
 	res, err := mcpwire.ToolResult(out)
 	if err != nil {
 		mcpwire.Write(w, req.ID, mcpwire.ToolError(s.failure(ctx, t.Name, run, err)), nil)

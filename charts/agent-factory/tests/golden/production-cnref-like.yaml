@@ -3402,10 +3402,13 @@ spec:
             app.kubernetes.io/name: room-broker
       toPorts:
         - ports: [{port: "8443", protocol: TCP}]
-    # GitHub (or networkPolicies.factory.github.to: whole Cilium peers).
+    # GitHub, and the hosts of its issue attachments, which a screenshots run's request images
+    # come from (v5 Q16 B3); or networkPolicies.factory.github.to: whole Cilium peers.
     - toFQDNs:
         - matchName: github.com
         - matchName: api.github.com
+        - matchName: private-user-images.githubusercontent.com
+        - matchName: user-images.githubusercontent.com
       toPorts:
         - ports: [{port: "443", protocol: TCP}]
     # maku-factory.config.api.humanIssuer: its host, by name.

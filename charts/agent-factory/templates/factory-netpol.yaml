@@ -154,8 +154,9 @@ spec:
             app.kubernetes.io/name: room-broker
       toPorts:
         - ports: [{port: "8443", protocol: TCP}]
-    {{- range (dig "github" "to" list $f | default (list (dict "toFQDNs" (list (dict "matchName" "github.com") (dict "matchName" "api.github.com"))))) }}
-    # GitHub (or networkPolicies.factory.github.to: whole Cilium peers).
+    {{- range (dig "github" "to" list $f | default (list (dict "toFQDNs" (list (dict "matchName" "github.com") (dict "matchName" "api.github.com") (dict "matchName" "private-user-images.githubusercontent.com") (dict "matchName" "user-images.githubusercontent.com"))))) }}
+    # GitHub, and the hosts of its issue attachments, which a screenshots run's request images
+    # come from (v5 Q16 B3); or networkPolicies.factory.github.to: whole Cilium peers.
     - {{- toYaml . | nindent 6 }}
       toPorts:
         - ports: [{port: "443", protocol: TCP}]
