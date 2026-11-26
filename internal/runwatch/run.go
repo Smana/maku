@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,12 @@ const (
 	// the factory quoted it, at most MaxReviewChecks bytes, written at CREATE. room_verdict carries
 	// it on an approve with no summary, so the verdict's comment says what the approval covers.
 	ReviewChecksAnnotation = "agents.ogenki.io/review-checks"
+	// ScreenshotsAnnotation is a browser run's screenshot cap, 1 to MaxScreenshots, written by the
+	// run-controller on the claim of a run whose browser sidecar keeps screenshots (harness
+	// screenshots Task 15). The broker takes uploads for such a run only, numbered 1 to the cap.
+	ScreenshotsAnnotation = "agents.ogenki.io/screenshots"
+	// MaxScreenshots is the hard ceiling of ScreenshotsAnnotation (phase A).
+	MaxScreenshots = 25
 	// MaxReviewChecks bounds ReviewChecksAnnotation.
 	MaxReviewChecks = 2 << 10
 	// OperatingModeAnnotation asks a suspendable run's Sandbox to be Suspended or Running
@@ -95,6 +102,8 @@ type Run struct {
 	Head string
 	// ReviewChecks is ReviewChecksAnnotation, "" past MaxReviewChecks bytes.
 	ReviewChecks string
+	// Screenshots is ScreenshotsAnnotation, 0 when absent or not a number from 1 to MaxScreenshots.
+	Screenshots int
 }
 
 // ServesOutput reports whether the run requests typ through the broker's output tool.
@@ -155,6 +164,9 @@ func (k Kind) FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
 	}
 	if c := ann[ReviewChecksAnnotation]; len(c) <= MaxReviewChecks {
 		r.ReviewChecks = c
+	}
+	if n, err := strconv.Atoi(ann[ScreenshotsAnnotation]); err == nil && n >= 1 && n <= MaxScreenshots {
+		r.Screenshots = n
 	}
 	return r, true
 }

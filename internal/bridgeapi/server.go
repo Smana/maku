@@ -148,6 +148,9 @@ type Server struct {
 	// Drills serves the drill report routes to OutputClient alone (hardening HR38); unset refuses
 	// them.
 	Drills Drills
+	// Screenshots stores the images a run's bridge relays from its browser gate (harness
+	// screenshots phase B); unset answers the upload route 501.
+	Screenshots Screenshots
 	// Now is the limits' clock; nil means time.Now. Deadlines handed to the
 	// runtime (a context's, a connection's) stay on its own clock: a fake one
 	// there would expire a request before it starts, or never.
@@ -169,6 +172,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/bridge/events", s.bounded(maxBatchBytes, s.events))
 	mux.HandleFunc("GET /v1/bridge/stream", s.stream)
 	mux.HandleFunc("POST /v1/bridge/approvals", s.bounded(maxApprovalBytes, s.approval))
+	mux.HandleFunc("POST /v1/bridge/screenshots", s.bounded(store.MaxScreenshot, s.screenshot))
 	mux.HandleFunc("GET /v1/rooms/{id}/events", s.bounded(0, s.roomEvents))
 	mux.HandleFunc("POST /v1/rooms/{id}/messages", s.bounded(maxMessageBytes, s.roomMessage))
 	mux.HandleFunc("POST /v1/rooms/{id}/task", s.bounded(maxMessageBytes, s.roomTask))

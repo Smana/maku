@@ -679,6 +679,20 @@ func TestFromUnstructuredHeadAndChecks(t *testing.T) {
 	}
 }
 
+// TestFromUnstructuredScreenshots: the broker takes a run's screenshots only when the run-controller
+// marked it with its cap, a number from 1 to MaxScreenshots.
+func TestFromUnstructuredScreenshots(t *testing.T) {
+	for v, want := range map[string]int{"": 0, "10": 10, "25": 25, "26": 0, "0": 0, "-1": 0, "ten": 0, " 5": 0} {
+		u := claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")
+		if v != "" {
+			u.SetAnnotations(map[string]string{ScreenshotsAnnotation: v})
+		}
+		if r, ok := DefaultKind.FromUnstructured(u); !ok || r.Screenshots != want {
+			t.Errorf("%q: ok %v, screenshots %d, want %d", v, ok, r.Screenshots, want)
+		}
+	}
+}
+
 func TestObserveRecordsAnUnsandboxedRun(t *testing.T) {
 	for _, tc := range []struct {
 		unsandboxed bool

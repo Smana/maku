@@ -144,8 +144,8 @@ func TestScreenshotGrants(t *testing.T) {
 		t.Fatalf("the broker could not publish: %v", err)
 	}
 	for name, sql := range map[string]string{
-		"a DELETE":         `DELETE FROM run_screenshots`,
-		"a bytes UPDATE":   `UPDATE run_screenshots SET bytes = 'x', size = 1`,
+		"a DELETE":          `DELETE FROM run_screenshots`,
+		"a bytes UPDATE":    `UPDATE run_screenshots SET bytes = 'x', size = 1`,
 		"a page_url UPDATE": `UPDATE run_screenshots SET page_url = 'http://evil/'`,
 	} {
 		if err := run(ctx, broker, sql); err == nil {
