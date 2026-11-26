@@ -186,8 +186,8 @@ describe("The room list", () => {
     expect(n).toMatch(/width:\s*1%/);
     expect(n).toMatch(/white-space:\s*nowrap/);
   });
-  it("pushes New room to the end of the filters row", () => {
-    expect(rule(".list-tools [data-act=\"new-room\"]")).toMatch(/margin-left:\s*auto/);
+  it("pushes More and New task to the end of the filters row", () => {
+    expect(rule(".list-tools .more-menu")).toMatch(/margin-left:\s*auto/);
   });
   it("spaces the CLI setup fold and sets its summary like the room page's folds", () => {
     expect(rule(".cli-setup")).toMatch(/margin-top:\s*16px/);

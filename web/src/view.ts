@@ -77,24 +77,123 @@ function rowNeedType(row: RoomRow): string {
   return row.need.type || needType(row.need.kind);
 }
 
-// sortRooms puts the rooms that need a human first (in the five-type inbox urgency order when a
+// needsFirst puts the rooms that need a human first (in the five-type inbox urgency order when a
 // need is present: question, plan, review, blocked, failed), then the most recent activity, then id.
-export function sortRooms(rows: RoomRow[]): RoomRow[] {
-  return [...rows].sort((a, b) => {
-    const an = a.needsYou ?? 0;
-    const bn = b.needsYou ?? 0;
-    if ((an > 0) !== (bn > 0)) return bn > 0 ? 1 : -1;
-    if (an > 0 && bn > 0) {
-      const at = rowNeedType(a);
-      const bt = rowNeedType(b);
-      if (at || bt) {
-        const diff = needTypeRank(at) - needTypeRank(bt);
-        if (diff !== 0) return diff;
-      }
-      if (bn !== an) return bn - an;
+function needsFirst(a: RoomRow, b: RoomRow): number {
+  const an = a.needsYou ?? 0;
+  const bn = b.needsYou ?? 0;
+  if ((an > 0) !== (bn > 0)) return bn > 0 ? 1 : -1;
+  if (an > 0 && bn > 0) {
+    const at = rowNeedType(a);
+    const bt = rowNeedType(b);
+    if (at || bt) {
+      const diff = needTypeRank(at) - needTypeRank(bt);
+      if (diff !== 0) return diff;
     }
-    return lastMs(b) - lastMs(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    if (bn !== an) return bn - an;
+  }
+  return lastMs(b) - lastMs(a) || byId(a, b);
+}
+
+function byId(a: RoomRow, b: RoomRow): number {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+// The room list's sortable columns, and the order each takes on its first click: activity and
+// numbers newest first, a repository A to Z, a status most severe first.
+export type SortKey = "last" | "task" | "repo" | "status" | "pr";
+export type SortDir = "asc" | "desc";
+export interface RoomSort { key: SortKey; dir: SortDir }
+export const SORT_COLUMNS: { key: SortKey; label: string; first: SortDir }[] = [
+  { key: "task", label: "Task", first: "desc" },
+  { key: "repo", label: "Repository", first: "asc" },
+  { key: "status", label: "Status", first: "asc" },
+  { key: "pr", label: "PR", first: "desc" },
+  { key: "last", label: "Last activity", first: "desc" },
+];
+export const DEFAULT_SORT: RoomSort = { key: "last", dir: "desc" };
+export const SORT_STORAGE_KEY = "maku:rooms-sort";
+
+// STATUS_SEVERITY ranks the broker's status kinds (internal/summary runstatus.go) most severe
+// first: what failed or waits on a person (failed, waiting for you, escalated or a question on
+// the issue) together on top, then a PR to review, another approver, the live and queued runs,
+// and the ended ones. A kind this page predates, or no status, sorts last.
+export const STATUS_SEVERITY = ["failed", "waiting-you", "waiting", "waiting-pr", "waiting-other", "running", "queued", "stopped", "done"];
+
+function statusRank(row: RoomRow): number {
+  const i = STATUS_SEVERITY.indexOf(row.status?.kind ?? "");
+  return i >= 0 ? i : STATUS_SEVERITY.length;
+}
+
+// isDefaultSort: the one order that pins the rooms that need you on top.
+export function isDefaultSort(s: RoomSort): boolean {
+  return s.key === DEFAULT_SORT.key && s.dir === DEFAULT_SORT.dir;
+}
+
+// nextSort is the order a click on a column's header asks for: the same column reverses, another
+// starts in its natural order.
+export function nextSort(cur: RoomSort, key: SortKey): RoomSort {
+  if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
+  return { key, dir: SORT_COLUMNS.find((c) => c.key === key)?.first ?? "asc" };
+}
+
+// readSort is the stored order, or the default when unset, unreadable or the storage throws (a
+// private window); storeSort keeps a choice, and a refused write only loses it on reload.
+export function readSort(store?: Storage): RoomSort {
+  try {
+    const v = JSON.parse((store ?? localStorage).getItem(SORT_STORAGE_KEY) ?? "null") as Partial<RoomSort> | null;
+    if (v && SORT_COLUMNS.some((c) => c.key === v.key) && (v.dir === "asc" || v.dir === "desc")) return { key: v.key!, dir: v.dir };
+  } catch { /* the default */ }
+  return { ...DEFAULT_SORT };
+}
+
+export function storeSort(s: RoomSort, store?: Storage): void {
+  try {
+    (store ?? localStorage).setItem(SORT_STORAGE_KEY, JSON.stringify(s));
+  } catch { /* holds for this page */ }
+}
+
+// sortValue is a row's value under a column, undefined when it has none: those sort last whichever
+// way the column runs.
+function sortValue(row: RoomRow, key: SortKey): number | string | undefined {
+  switch (key) {
+    case "last": return lastMs(row) || undefined;
+    case "task": return row.issue || undefined;
+    case "pr": return row.pr || undefined;
+    case "repo": return row.repository?.toLowerCase() || undefined;
+    case "status": return statusRank(row);
+  }
+}
+
+// sortRooms orders the loaded rows by the chosen column. The default (last activity, newest
+// first) keeps the rooms that need you pinned on top; any other drops the pin. Ties fall to the
+// issue number, newest first, then the room id: fields a refresh does not change, so an
+// unchanged list keeps its order and rows do not jump.
+export function sortRooms(rows: RoomRow[], sort: RoomSort = DEFAULT_SORT): RoomRow[] {
+  if (isDefaultSort(sort)) return [...rows].sort(needsFirst);
+  const sign = sort.dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = sortValue(a, sort.key);
+    const bv = sortValue(b, sort.key);
+    if (av !== bv) {
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      return (av < bv ? -1 : 1) * sign;
+    }
+    return (b.issue ?? 0) - (a.issue ?? 0) || byId(a, b);
   });
+}
+
+// matchesQuery is the search box's filter over the loaded rows, case-insensitive: a number, with
+// or without its #, matches an issue or a PR by that exact number (#57 is not #579); any text
+// matches the title, repository or room id.
+export function matchesQuery(row: RoomRow, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const n = /^#(\d+)$/.exec(q) ?? /^(\d+)$/.exec(q);
+  if (n && (row.issue === Number(n[1]) || row.pr === Number(n[1]))) return true;
+  if (q.startsWith("#") && n) return false;
+  return [row.title, row.repository, row.id].some((f) => !!f && f.toLowerCase().includes(q));
 }
 
 // rowCells is a room's table cells as text: the task it works on when it has one, else the room alone (#50).
@@ -320,25 +419,28 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     form.hidden = true;
     taskForm.hidden = !taskForm.hidden;
   };
-  const add = document.createElement("button");
-  add.type = "button";
-  // The advanced path, secondary beside New task: a room tied to no issue, driven by you.
-  add.dataset.act = "new-room";
-  add.textContent = "Open a live session";
-  add.title = "An agent session you drive yourself, not tied to an issue";
-  add.setAttribute("aria-description", add.title);
-  add.onclick = () => {
+  // The advanced path, behind More beside New task: a room tied to no issue, driven by you.
+  const more = moreMenu(() => {
     taskForm.hidden = true;
-    form.hidden = !form.hidden;
-  };
+    form.hidden = false;
+    form.querySelector("select")?.focus();
+  });
   const tools = document.createElement("div");
   tools.className = "list-tools";
   const notice = document.createElement("span");
   notice.className = "notice";
   notice.setAttribute("role", "status");
-  // The filters on the left, then the refresh control, Open a live session, and New task, the
+  // The search box filters the loaded rows, as the need type does: no refetch, the closed view too.
+  const search = document.createElement("input");
+  search.type = "search";
+  search.name = "q";
+  search.className = "room-search";
+  search.placeholder = "Search #issue, title, repository, room";
+  search.setAttribute("aria-label", "Search rooms");
+  search.autocomplete = "off";
+  // The filters on the left, then the search, the refresh control, More, and New task, the
   // page's one primary act, at the row's end.
-  tools.append(mine.label, needsMe.label, needTypeFilter, closed.label, repo, notice);
+  tools.append(mine.label, needsMe.label, needTypeFilter, closed.label, repo, search, notice);
 
   // The closed hint: rooms that ended are not gone, they are on the closed view.
   const hint = document.createElement("p");
@@ -359,8 +461,43 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   const table = document.createElement("table");
   table.className = "rooms";
   table.setAttribute("aria-label", "Rooms");
+  // Each sortable column's header holds a button: a click sorts by it, a second reverses, and the
+  // order is remembered in this browser (the auto-refresh's store, for tests).
+  const store = refresh.store;
+  let sort = readSort(store);
   const head = document.createElement("tr");
-  head.append(...["Needs you", "Task", "Repository", "Status", "PR", "Last activity", "Room"].map((h) => cell("th", h)));
+  const sortHeads = new Map<SortKey, { th: HTMLElement; arrow: HTMLElement }>();
+  for (const h of ["Needs you", "Task", "Repository", "Status", "PR", "Last activity", "Room"]) {
+    const col = SORT_COLUMNS.find((c) => c.label === h);
+    if (!col) {
+      head.append(cell("th", h));
+      continue;
+    }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sort";
+    b.dataset.sort = col.key;
+    const arrow = document.createElement("span");
+    arrow.className = "sort-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    b.append(h, arrow);
+    b.onclick = () => {
+      sort = nextSort(sort, col.key);
+      storeSort(sort, store);
+      fill(latestRows);
+    };
+    const th = cell("th", b);
+    sortHeads.set(col.key, { th, arrow });
+    head.append(th);
+  }
+  const showSort = () => {
+    for (const [key, { th, arrow }] of sortHeads) {
+      const on = key === sort.key;
+      if (on) th.setAttribute("aria-sort", sort.dir === "asc" ? "ascending" : "descending");
+      else th.removeAttribute("aria-sort");
+      arrow.textContent = on ? (sort.dir === "asc" ? "↑" : "↓") : "";
+    }
+  };
   const thead = document.createElement("thead");
   thead.append(head);
   const tbody = document.createElement("tbody");
@@ -378,20 +515,23 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     const now = new Date();
     const chosenType = !needTypeFilter.hidden ? needTypeFilter.value : "";
     const visible = chosenType ? rows.filter((r) => rowNeedType(r) === chosenType) : rows;
-    const sorted = sortRooms(visible);
+    const query = search.value.trim();
+    const sorted = sortRooms(visible.filter((r) => matchesQuery(r, query)), sort);
     const filtered = mine.input.checked || needsMe.input.checked || !!chosenType || !!repo.value;
-    const key = JSON.stringify([filtered, closed.input.checked, chosenType, closedN, sorted.map((r) => [rowCells(r, now), r.status, rowNeedType(r)])]);
+    showSort();
+    const key = JSON.stringify([filtered, closed.input.checked, chosenType, closedN, query, sort, sorted.map((r) => [rowCells(r, now), r.status, rowNeedType(r)])]);
     if (key === shown) return;
     shown = key;
     const focused = document.activeElement instanceof HTMLAnchorElement && tbody.contains(document.activeElement)
       ? document.activeElement.getAttribute("href") : null;
-    if (visible.length > 0) {
+    if (sorted.length > 0) {
       tbody.replaceChildren(...sorted.map((r) => roomRow(r, now)));
       if (focused) [...tbody.querySelectorAll("a")].find((l) => l.getAttribute("href") === focused)?.focus();
       return;
     }
     // An empty table says why: a filter that leaves nothing, or no room at all.
-    const td = cell("td", closed.input.checked ? `No room closed in the last ${closedDays} days`
+    const td = cell("td", visible.length > 0 && query ? `No rooms match "${query}"`
+      : closed.input.checked ? `No room closed in the last ${closedDays} days`
       : filtered ? "No rooms match" : closedN > 0 ? `No open rooms: ${ended(closedN)}, on the closed view` : "No rooms you can read yet");
     td.setAttribute("colspan", String(head.childElementCount));
     const tr = document.createElement("tr");
@@ -419,18 +559,85 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     return !!rows;
   };
   mountAutoRefresh(tools, refetch, refresh);
-  tools.append(add, addTask);
+  tools.append(more, addTask);
   // click, not change: a checkbox's change event needs a connected element; click fires either way.
   mine.input.addEventListener("click", () => void refetch());
   needsMe.input.addEventListener("click", () => { setAside(); void refetch(); });
   needTypeFilter.addEventListener("change", () => fill(latestRows));
   closed.input.addEventListener("click", () => { setAside(); void refetch(); });
   repo.addEventListener("change", () => void refetch());
+  let typing: ReturnType<typeof setTimeout> | undefined;
+  search.addEventListener("input", () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => fill(latestRows), searchDebounce);
+  });
+  search.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !search.value) return;
+    e.preventDefault();
+    clearTimeout(typing);
+    search.value = "";
+    fill(latestRows);
+  });
 
   app.replaceChildren(header, tools, taskForm, form, hint, table, cliSetup(get));
 }
 
 export const roomId = /^[a-z2-7]{8}$/;
+
+// searchDebounce is how long the search box waits after a keystroke before it filters the rows.
+export const searchDebounce = 150;
+
+// moreMenu is the filters row's secondary actions behind a "More" button, beside New task: for
+// now one, Investigate with an agent, which opens the live-session form (open). The menu closes
+// on a choice, Escape (focus back on the button) or a click elsewhere.
+export function moreMenu(open: () => void): HTMLElement {
+  const box = document.createElement("span");
+  box.className = "more-menu";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.dataset.act = "more";
+  btn.setAttribute("aria-haspopup", "menu");
+  btn.setAttribute("aria-expanded", "false");
+  btn.setAttribute("aria-label", "More actions");
+  const dots = document.createElement("span");
+  dots.setAttribute("aria-hidden", "true");
+  dots.textContent = "⋯";
+  btn.append(dots, " More");
+  const menu = document.createElement("div");
+  menu.className = "more-items";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  const item = document.createElement("button");
+  item.type = "button";
+  item.setAttribute("role", "menuitem");
+  item.dataset.act = "new-room";
+  item.textContent = "Investigate with an agent";
+  item.title = "A room you drive live in the sandbox, tied to no issue";
+  item.setAttribute("aria-description", item.title);
+  menu.append(item);
+  const away = (e: Event) => { if (!box.contains(e.target as Node)) show(false); };
+  const show = (on: boolean) => {
+    menu.hidden = !on;
+    btn.setAttribute("aria-expanded", String(on));
+    if (on) {
+      document.addEventListener("click", away);
+      item.focus();
+    } else document.removeEventListener("click", away);
+  };
+  btn.onclick = () => show(menu.hidden);
+  item.onclick = () => {
+    show(false);
+    open();
+  };
+  box.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || menu.hidden) return;
+    e.preventDefault();
+    show(false);
+    btn.focus();
+  });
+  box.append(btn, menu);
+  return box;
+}
 
 // installMaku downloads the maku release for this machine, checks it against the release's
 // checksums and installs it: the broker's own release, or the latest when the broker is not a
@@ -620,12 +827,17 @@ export function newRoomForm(get: typeof fetch = fetch): HTMLFormElement {
   const hint = document.createElement("small");
   hint.className = "hint";
   hint.id = "data-class-hint";
-  hint.textContent = "A live session is an agent session you drive yourself, not tied to an issue: to ask the factory for work, use New task. " +
-    "The data class cannot change once the room exists. It sets the model route, the tools and the egress " +
+  hint.textContent = "The data class cannot change once the room exists. It sets the model route, the tools and the egress " +
     "its runs get; it does not change who can read the room. The repository does: anyone who can read it on GitHub can.";
   dataClass.setAttribute("aria-describedby", hint.id);
   repository.setAttribute("aria-describedby", hint.id);
-  form.append(dataClass, repository, submit, notice, hint);
+  // What this room is for, first: New task stays the way to ask the factory for work.
+  const lead = document.createElement("p");
+  lead.className = "new-room-lead";
+  lead.textContent = "Investigate with an agent: a room you drive live in the sandbox, tied to no issue. " +
+    "Explore or investigate with cluster tools before filing a task.";
+  form.setAttribute("aria-label", "Investigate with an agent");
+  form.append(lead, dataClass, repository, submit, notice, hint);
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (!dataClass.value) { // required stops a click; this stops any other submit

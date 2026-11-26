@@ -319,19 +319,25 @@ describe("the room list's layout", () => {
     expect(tds[2].className).toBe("repo");
     expect(tds[6].className).toBe("room-id");
   });
-  it("makes New task the one primary action, after Open a live session, and says what each does", async () => {
+  it("makes New task the one primary action, with Investigate with an agent behind More, and says what each does", async () => {
     const tools = (await mount()).querySelector(".list-tools")!;
+    const more = tools.querySelector('button[data-act="more"]') as HTMLButtonElement;
     const addRoom = tools.querySelector('button[data-act="new-room"]') as HTMLButtonElement;
     const addTask = tools.lastElementChild as HTMLButtonElement;
-    expect(addRoom.textContent).toBe("Open a live session");
+    expect(addRoom.textContent).toBe("Investigate with an agent");
+    expect(addRoom.getAttribute("role")).toBe("menuitem");
+    expect(addRoom.closest("[role=menu]")?.hasAttribute("hidden")).toBe(true);
     expect(addRoom.classList.contains("primary")).toBe(false);
-    expect(addRoom.getAttribute("aria-description")).toMatch(/session you drive yourself, not tied to an issue/);
+    expect(addRoom.getAttribute("aria-description")).toMatch(/drive live in the sandbox, tied to no issue/);
+    expect(more.textContent).toBe("⋯ More");
+    expect(more.classList.contains("primary")).toBe(false);
     expect(addTask.dataset.act).toBe("new-task");
     expect(addTask.textContent).toBe("New task");
     expect(addTask.classList.contains("primary")).toBe(true);
     expect(addTask.getAttribute("aria-description")).toMatch(/GitHub issue the factory works on/);
     expect(tools.querySelectorAll("button.primary")).toHaveLength(1);
-    expect(addRoom.nextElementSibling).toBe(addTask);
+    expect(more.parentElement?.nextElementSibling).toBe(addTask);
+    expect(tools.textContent).not.toContain("Open a live session");
   });
 });
 
@@ -388,11 +394,11 @@ describe("the room list's auto-refresh", () => {
   };
   afterEach(() => { document.body.replaceChildren(); localStorage.clear(); });
 
-  it("mounts the refresh control between the filters and New room", async () => {
+  it("mounts the refresh control between the filters and More", async () => {
     const { root } = await mount([[a]]);
     const tools = root.querySelector(".list-tools")!;
     const ctl = tools.querySelector(".refresh")!;
-    expect(ctl.nextElementSibling?.getAttribute("data-act")).toBe("new-room");
+    expect(ctl.nextElementSibling?.classList.contains("more-menu")).toBe(true);
     expect((ctl.querySelector("select") as HTMLSelectElement).value).toBe("10");
   });
   it("refreshes with the filters the page shows", async () => {

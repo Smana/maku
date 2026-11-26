@@ -266,7 +266,7 @@ func (c *card) facts(s summary.Summary) {
 			Profile: p,
 		}
 		if s.Flow != nil {
-			tf.Plan = s.Flow.Plan
+			tf.Plan, tf.Runs = s.Flow.Plan, RunsOf(s.Flow)
 		}
 		wc := CardOf(tf, "")
 		wfVal := c.text(wc.Workflow, c.md())
@@ -274,12 +274,8 @@ func (c *card) facts(s summary.Summary) {
 			wfVal += " · " + c.text(wc.Reason, c.md())
 		}
 		rows = append(rows, [2]string{"Workflow", wfVal})
-		if len(wc.Path) > 0 {
-			parts := make([]string, len(wc.Path))
-			for i, step := range wc.Path {
-				parts[i] = c.text(step, c.md())
-			}
-			rows = append(rows, [2]string{"Will run", strings.Join(parts, " → ")})
+		if line := PathLine(wc, func(st string) string { return c.text(st, c.md()) }); line != "" {
+			rows = append(rows, [2]string{"Will run", line})
 		}
 		if cost := CostLine(wc); cost != "" {
 			rows = append(rows, [2]string{"Cost", cost})
@@ -840,4 +836,18 @@ func (c *card) lit(s string) string {
 		return "`" + s + "`"
 	}
 	return s
+}
+
+// RunsOf is a flow's runs as the facts CardOf reads, oldest first: what Progress needs to mark
+// the stages that already ran on the Will run row.
+func RunsOf(f *summary.Flow) []envelope.RunFact {
+	if f == nil {
+		return nil
+	}
+	out := make([]envelope.RunFact, 0, len(f.Nodes))
+	for _, n := range f.Nodes {
+		out = append(out, envelope.RunFact{ID: n.Run, Role: n.Role, Persona: n.Persona,
+			StartedAt: n.StartedAt, EndedAt: n.EndedAt, Outcome: n.Outcome, Verdict: n.Verdict})
+	}
+	return out
 }

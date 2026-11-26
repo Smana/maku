@@ -20,24 +20,24 @@ Sources: `docs/api.md` (the `:8080` checks), `internal/policy/policy.go` (`Group
 
 ## The room list
 
-Rooms you can read appear in one table: rooms that need you first, then most recently active, then by id. If an install uses demo-only or unsafe settings, an alert banner above the list names each code ([install banner unsafe codes](reference/web-ui-settings.md#install-banner-unsafe-codes)).
+Rooms you can read appear in one table, by default rooms that need you first, then the most recently active. If an install uses demo-only or unsafe settings, an alert banner above the list names each code ([install banner unsafe codes](reference/web-ui-settings.md#install-banner-unsafe-codes)).
 
 <img alt="The room list: factory rooms from two repositories, the ones that need you first, each with its repository, status line, PR, last activity and room id" src="assets/web-ui/rooms-light.png" width="800">
 
-Each row shows `Needs you`, `Task`, `Repository`, `Status` (computed with the same broker function as the room page), `PR`, `Last activity` and `Room` ([room list columns](reference/web-ui-settings.md#room-list-columns)), and clicking anywhere on the row opens the room.
+Each row shows `Needs you`, `Task`, `Repository`, `Status` (computed with the same broker function as the room page), `PR`, `Last activity` and `Room` ([room list columns](reference/web-ui-settings.md#room-list-columns)). Click a row to open it, a header to sort; **Search** filters the rows ([sorting and search](reference/web-ui-settings.md#sorting-and-searching-the-room-list)).
 
-The list refreshes every 10 s by default (`Off`, `5 s`, `10 s`, `30 s`, `1 min` before **Open a live session**, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
+The list refreshes every 10 s by default (`Off` to `1 min`, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
 
-Above the table, filters refetch the list from the API: **mine** (issues you filed or labelled, or PRs you authored or review), **needs me** (waiting on you, sorted and filterable by `question`, `plan`, `review`, `blocked`, `failed`), and a repository picker ([API](reference/api.md#8080--human-api)). An ended task's room leaves the default list for **closed** (`closed=1`, the last 30 days, disabling **mine** and **needs me**), which the `N rooms ended … — show closed` line opens; `/r/<id>` works until retention purges the log. Empty results explain why (`No rooms match` or `No rooms you can read yet`).
+Above the table, filters refetch the list from the API: **mine** (issues you filed or labelled, or PRs you authored or review), **needs me** (waiting on you, sorted and filterable by `question`, `plan`, `review`, `blocked`, `failed`), and a repository picker ([API](reference/api.md#8080--human-api)). An ended task's room leaves the default list for **closed** (`closed=1`, the last 30 days, disabling **mine** and **needs me**), which the `N rooms ended … — show closed` line opens; `/r/<id>` works until retention purges the log. An empty table says why.
 
-### New task and Open a live session
+### New task and Investigate with an agent
 
-**New task** (primary) and **Open a live session**, at the right end of the filters row, open forms above the list.
+**New task** (primary) and **⋯ More** › **Investigate with an agent**, at the right end of the filters row, open forms above the list.
 
 - **New task** plans through `/api/handoffs`: enter what should change, pick a repository (or leave it on Auto), and click **Plan**. It shows the workflow card (`Outcome`, `Workflow`, `Will run`, `Cost`), the planner's question if any, and the drafted issue. Maintainers can pick a described workflow, and any member can toggle **Plan first**. Only maintainers get **Start**; unlinked viewers get a `/link/github` link.
 
   The factory App files and labels the issue; the factory starts it, as your task, only from the broker's record of your start ([broker-confirmed handoffs](security.md#authorization)).
-- **Open a live session** creates a room you own and drive, tied to no issue, then opens it.
+- **Investigate with an agent** creates a room you drive live, tied to no issue: explore with cluster tools before filing a task.
 
 | Field | Rule |
 |---|---|

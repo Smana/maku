@@ -343,7 +343,7 @@ func renderTaskText(in taskTextIn) string {
 			Profile: p,
 		}
 		if in.Sum.Flow != nil {
-			f.Plan = in.Sum.Flow.Plan
+			f.Plan, f.Runs = in.Sum.Flow.Plan, roomview.RunsOf(in.Sum.Flow)
 		}
 		card := roomview.CardOf(&f, "")
 		wf := taskClean(card.Workflow)
@@ -351,8 +351,8 @@ func renderTaskText(in taskTextIn) string {
 			wf += " · " + taskClean(card.Reason)
 		}
 		row("Workflow", wf)
-		if len(card.Path) > 0 {
-			row("Will run", strings.Join(card.Path, " → "))
+		if line := roomview.PathLine(card, taskClean); line != "" {
+			row("Will run", line)
 		}
 		if cost := roomview.CostLine(card); cost != "" {
 			row("Cost", cost)

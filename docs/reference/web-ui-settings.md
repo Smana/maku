@@ -152,6 +152,21 @@ banner.
 | Last activity | How long ago the room's log last moved (`lastEventAt`), the exact time on hover; `—` for a room with no events |
 | Room | The room id |
 
+### Sorting and searching the room list
+
+A click on a sortable header sorts the loaded rows (no refetch); a second click reverses it. An arrow and `aria-sort` mark the active column, and the choice is kept in the browser's local storage (the default when storage is unavailable).
+
+| Column | First click | Order |
+|---|---|---|
+| `Last activity` (default) | Newest first | Rooms that need you stay pinned on top in this order only; reversing it or picking another column drops the pin |
+| `Task`, `PR` | Highest number first | Rows with no issue or PR come last in either direction |
+| `Repository` | A to Z | Case-insensitive |
+| `Status` | Most severe first | `failed`, waiting for you, escalated or a question on the issue, then a PR to review, another approver, running, queued, stopped, done (the broker's status kinds) |
+
+Ties fall to the issue number, then the room id: fields a refresh does not change, so the order holds across the auto-refresh.
+
+The **Search** box filters the loaded rows after a short pause in typing, on the closed view too. `#579` or `579` matches that issue or PR number exactly; other text matches the title, repository or room id, ignoring case. **Esc** clears it. When nothing matches, the table says `No rooms match "<query>"`.
+
 ## Room page components
 
 From the top:
