@@ -286,6 +286,16 @@ for r in global:aiplatform.googleapis.com us:aiplatform.us.rep.googleapis.com eu
 done
 out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium)"
 yeq "[select(.kind == \"CiliumNetworkPolicy\") | .spec.egress[] | select(.toCIDR)] | length" 0 'no gcp provider: no metadata server'
+# A Flux postBuild variable may stand for the project: the release renders it as written, and Flux
+# substitutes the rendered objects (a GitOps install renders before substitution). Never for the
+# region: the chart derives the host and the network policy from it at render time.
+out="$(render "${minimal[@]}" "${gal[@]}" "${vtx[@]}" --set-string 'providers.vertex.projectId=${project_id}')"
+yeq "$(be vertex-gemini-standard) | .spec.ai.provider.vertexai.projectId" '${project_id}' \
+  'vertex: a ${variable} projectId renders as written, for Flux to substitute'
+rejects 'a projectId that is neither a project nor a ${variable}' 'projectId' "${minimal[@]}" "${gal[@]}" "${vtx[@]}" \
+  --set-string 'providers.vertex.projectId=${project id}'
+rejects 'a ${variable} region (the host is derived from it at render time)' 'region' "${minimal[@]}" "${gal[@]}" "${vtx[@]}" \
+  --set-string 'providers.vertex.region=${region}'
 
 [[ $fail == 0 ]] || exit 1
 echo "maku-gateway chart render checks passed"
