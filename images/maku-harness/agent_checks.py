@@ -284,7 +284,11 @@ def install_hooks(tools: dict[str, str | None], missing: list[str], say) -> bool
         return True
     say("installing the pre-commit hook environments")
     with open(os.path.join(STATE, "install.log"), "a") as log:
-        proc = subprocess.Popen(["pre-commit", "install-hooks"], cwd=REPO, env=step_env(tools, missing),
+        # pre-commit's zipapp unpacks its Python under $HOME/.cache and execs it, and a run's HOME is a
+        # noexec tmpfs: HOME is the toolchain's, whose cache the steps share (XDG_CACHE_HOME).
+        env = step_env(tools, missing)
+        env["HOME"] = os.path.dirname(env["XDG_CACHE_HOME"])
+        proc = subprocess.Popen(["pre-commit", "install-hooks"], cwd=REPO, env=env,
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         if wait(proc, INSTALL_S, lambda s: say("installing the hook environments, %ds" % s)) == "timeout":
             say("the hook install stopped after %ds" % INSTALL_S)

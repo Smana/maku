@@ -43,7 +43,7 @@ if cmd == "install":
         os.makedirs(b, exist_ok=True)
         tool = os.path.join(b, s.split("@")[0])
         with open(tool, "w") as f:
-            f.write("#!/bin/sh\necho \"%s $*\" >> %s\n%s\necho %s\n" % (s, os.path.join(here, "tools.log"), knobs.get("tool_exit", ""), s))
+            f.write("#!/bin/sh\necho \"%s $* HOME=$HOME\" >> %s\n%s\necho %s\n" % (s, os.path.join(here, "tools.log"), knobs.get("tool_exit", ""), s))
         os.chmod(tool, 0o755)
     sys.exit(0)
 if cmd == "env":
@@ -403,6 +403,7 @@ class ToolchainTest(Rig):
         self.assertEqual(code, 0, self.text(lines))
         self.assertIn("pre-commit@4.0.0 install-hooks", self.tools_log())
         self.assertIn("agent-checks: toolchain ready", self.text(lines))
+        self.assertIn("HOME=%s" % agent_checks.TOOLCHAIN, self.tools_log(), "the zipapp unpacks under an executable HOME")
 
     def test_hook_environments_that_fail_to_build_leave_the_toolchain_incomplete(self):
         self.declare_pre_commit()

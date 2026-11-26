@@ -110,13 +110,13 @@ grep -qi gvisor "$out/kernel" 2>/dev/null || { echo "FAIL ${repo}: the container
 if grep '^refuse' "$out/proxy.log" | sort -u | grep .; then
   echo "FAIL ${repo}: the checks reached hosts beyond the run's egress (above)"; fail=1
 fi
-[ "$(cat "$out/install.exit" 2>/dev/null || echo missing)" = 0 ] || { echo "FAIL ${repo}: the install left a tool missing"; cat "$out/install.out" 2>/dev/null || true; fail=1; }
+[ "$(cat "$out/install.exit" 2>/dev/null || echo missing)" = 0 ] || { echo "FAIL ${repo}: the install left a tool missing"; cat "$out/install.out" 2>/dev/null || true; tail -40 "$out/install.log" 2>/dev/null || true; fail=1; }
 cat "$out/checks.out" 2>/dev/null || true
 [ "$rc" = 0 ] || exit 1
 python3 - "$out" "$repo" "$here" <<'EOF' || fail=1
 import glob, json, os, re, sys
 out, repo, here = sys.argv[1:4]
-res = [json.load(open(p)) for p in glob.glob(os.path.join(out, "*.json")) if ".step-" not in p]
+res = [json.load(open(p)) for p in glob.glob(os.path.join(out, "*.json")) if ".step-" not in p and os.path.basename(p) != "install.json"]
 assert len(res) == 1, "want one result, got %d" % len(res)
 steps = res[0]["steps"]
 sys.path.insert(0, here)
