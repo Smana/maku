@@ -44,7 +44,10 @@ type Catalogue struct {
 	Evaluation     Evaluation  `json:"evaluation"`
 	ApproveToMerge bool        `json:"approveToMerge"`
 	Maintainer     bool        `json:"maintainer"`
-	Classes        []Class     `json:"classes"`
+	// Starter is whether the caller may start a task here: a maintainer, or anyone with write
+	// access where access.start: write is in effect (developer review gap 1). The factory sets it.
+	Starter bool    `json:"starter,omitempty"`
+	Classes []Class `json:"classes"`
 	// DefaultWorkflow is the workflow a task runs when no label names one: the repository's
 	// workflow.default (WF3).
 	DefaultWorkflow string `json:"defaultWorkflow"`

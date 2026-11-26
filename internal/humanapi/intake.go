@@ -571,6 +571,9 @@ type planChecked struct {
 	// Maintainer is the caller's flag from the plan repository's catalogue (P5): start skips a
 	// class: label the factory would not count. Absent when the broker read no catalogue.
 	Maintainer *bool `json:"maintainer,omitempty"`
+	// Starter is the catalogue's word that the caller may start a task on the repository: a
+	// maintainer, or a writer where access.start: write is in effect. Absent with no catalogue.
+	Starter *bool `json:"starter,omitempty"`
 }
 
 // planCheckRefused counts a closed refusal during final plan validation under its own reason on the

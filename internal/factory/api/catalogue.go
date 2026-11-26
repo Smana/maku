@@ -127,6 +127,7 @@ func (s *Server) catalogue(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusNotFound, "not_found")
 		return
 	}
+	c.Starter = login != "" && rc.MayStart(login, cfg.Budgets)
 	if s.StagesCache != nil {
 		for i := range c.Classes {
 			if usd, of, ok := s.StagesCache.Typical(asked, c.Classes[i].Name); ok {
