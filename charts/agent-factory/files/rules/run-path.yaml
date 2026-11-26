@@ -1,8 +1,8 @@
 # The run path's alerts (group maku-run-path): the run-controller and, in networkPolicies.mode
 # kubernetes, the egress proxy. New in Maku; AgentSandboxPodPending generalizes ai-native-ref's
 # vmrule.yaml at 1529b3b to the runs namespace. The `up` series carry the job the chart's PodMonitors
-# set (templates/monitoring-scrape.yaml). EgressProxyDown is left out outside mode kubernetes, and
-# AgentSandboxPodPending without monitoring.prometheusRule.kubeStateMetrics.
+# set (templates/monitoring-scrape.yaml). EgressProxyDown and MakuEgressInstallClosedRefusal are left
+# out outside mode kubernetes, and AgentSandboxPodPending without monitoring.prometheusRule.kubeStateMetrics.
 name: maku-run-path
 rules:
   - alert: RunControllerPreflightFailing
@@ -33,6 +33,17 @@ rules:
     annotations:
       summary: "No egress proxy replica is up"
       description: "Runs reach GitHub and their model only through the proxy in networkPolicies.mode kubernetes: their HTTPS fails and the preflight holds new runs. kubectl get pods -n __NAMESPACE__ -l app.kubernetes.io/name=egress-proxy"
+      runbook_url: "__DOCS__/operations/failures.md#run-path-alerts"
+      dashboard: "/d/agent-fleet"
+  # A run reached a host of its install set (GitHub's release hosts) after the set closed: the agent,
+  # not the toolchain install, tried to download a release asset (GitHub egress tightening, 2026-11-26).
+  - alert: MakuEgressInstallClosedRefusal
+    expr: sum(increase(maku_egress_proxy_refusals_total{reason="install_closed"}[10m])) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "A run tried to download from a GitHub release host after its toolchain install"
+      description: "The egress proxy refused it; nothing was downloaded. A prompt-injected or improvising agent fetches a binary this way. Find the run and read its steps: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=egress-proxy | grep install_closed"
       runbook_url: "__DOCS__/operations/failures.md#run-path-alerts"
       dashboard: "/d/agent-fleet"
   - alert: AgentSandboxPodPending

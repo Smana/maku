@@ -227,6 +227,14 @@ namespace). Its guarantees:
   controller writes at create: GitHub, the run's egress allow-lists and the model, the set the CNP
   opens in `cilium` mode. The run-pod policy refuses any change to it after create. The proxy allows
   a `host:port` only on an exact match.
+- **The install set closes before the agent starts.** A check-enabled run's pod also carries
+  `maku.ogenki.io/egress-install` (GitHub's release hosts) and a deadline,
+  `maku.ogenki.io/egress-install-until`. The proxy allows those hosts until the deadline, or until
+  the pod's own harness sends `POST /v1/close-install` with its pod UID, whichever comes first. The
+  proxy records the close on the pod as `maku.ogenki.io/egress-install-closed: "true"`, so every
+  replica keeps it, across restarts. A pod can close only its own set, and nothing reopens one: the
+  run-pod policy refuses a change to the set or its deadline after create, refuses removing the
+  closed annotation, and lets the proxy's ServiceAccount change that annotation and nothing else.
 - **No private address.** It refuses an IP literal, and a name that resolves to any loopback,
   private, link-local, CGNAT, NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`), IPv4-compatible (`::/96`)
   or `privateCIDRs` address. It dials the address it checked, never the name again. Its own
@@ -235,7 +243,10 @@ namespace). Its guarantees:
   `maxTunnelsPerClient` (64) from one run pod; a CONNECT over either gets 429. A tunnel that moves no
   byte for 5 minutes is closed.
 - **Every decision is logged**, `allow run=<id> <host:port>` or `refuse run=<id|-> <host:port>`,
-  and counted in `maku_egress_proxy_connections_total{decision}`.
+  with `phase=install|agent` (install while the run's install set is open) and, on a refusal, a
+  `reason`. It is counted in `maku_egress_proxy_connections_total{decision}`, and each refusal in
+  `maku_egress_proxy_refusals_total{reason}`; `install_closed` raises
+  `MakuEgressInstallClosedRefusal`.
 - **Its trust root is the run-pod policy**, which alone lets the run controller write the
   annotation: `networkPolicies.mode kubernetes` with `runPodPolicy.enabled: false` fails the render.
 

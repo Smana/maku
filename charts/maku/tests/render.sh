@@ -586,7 +586,7 @@ ykind Deployment 'select(.metadata.name=="egress-proxy") | .spec.replicas == 2' 
 ykind Deployment 'select(.metadata.name=="egress-proxy") | (.spec.template.spec.containers[0].env | map(select(.name | test("^MAX_TUNNELS"))) | map(.name + "=" + .value) | join(",")) == "MAX_TUNNELS=1024,MAX_TUNNELS_PER_CLIENT=64"' 'the proxy caps its tunnels, in all and per client'
 ykind PodDisruptionBudget 'select(.metadata.name=="egress-proxy") | .spec.minAvailable == 1' 'the proxy PDB'
 ykind Service 'select(.metadata.name=="egress-proxy") | (.spec.ports | map(.port) | join(",")) == "3128"' 'the proxy Service on 3128'
-ykind Role 'select(.metadata.name=="egress-proxy") | (.metadata.namespace == "agents" and (.rules | length) == 1 and (.rules[0].resources | join(",")) == "pods" and (.rules[0].verbs | sort | join(",")) == "get,list,watch")' 'the proxy watches pods in the runs namespace, nothing else'
+ykind Role 'select(.metadata.name=="egress-proxy") | (.metadata.namespace == "agents" and (.rules | length) == 1 and (.rules[0].resources | join(",")) == "pods" and (.rules[0].verbs | sort | join(",")) == "get,list,patch,watch")' 'the proxy watches pods in the runs namespace and patches them (the closed install set: the run-pod policy holds it to that annotation), nothing else'
 for r in "$q" "$nonp"; do
   out="$r"
   ynone 'select(.metadata.name=="egress-proxy" or .kind=="NetworkPolicy" or .kind=="PodDisruptionBudget")' 'modes cilium and none: no proxy, no NetworkPolicy'

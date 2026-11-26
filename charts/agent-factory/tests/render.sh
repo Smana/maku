@@ -678,7 +678,7 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomStalled") |
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .expr == "absent(up{job=\"room-broker\", namespace=\"maku\"} == 1)"' 'RoomBrokerDown reads the release namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | (.annotations.runbook_url | test("^https://github.com/Smana/maku/blob/v[^/]+/docs/operations/failures.md#room-alerts$"))' 'runbook_url defaults to the release docs'
 all="$(alerts)"
-for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending RoomKnowledgeFailing AgentFactoryBindingRefused AgentFactoryPolicyPausedLong; do
+for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown MakuEgressInstallClosedRefusal AgentSandboxPodPending RoomKnowledgeFailing AgentFactoryBindingRefused AgentFactoryPolicyPausedLong; do
   grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics, no knowledge endpoint)" >&2; fail=1; }
 done
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set-json 'monitoring.prometheusRule.disabled=["AgentFactoryClassPausedLong"]')"
@@ -691,6 +691,7 @@ out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.hu
   { echo "FAIL: the rule with an issuer, mode kubernetes and kube-state-metrics does not render" >&2; fail=1; out=''; }
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | (.expr | test("issuer=\"https://idp.example.test\""))' 'the human issuer reaches its rule'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "EgressProxyDown") | .expr == "absent(up{job=\"egress-proxy\", namespace=\"maku\"} == 1)"' 'mode kubernetes: EgressProxyDown'
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "MakuEgressInstallClosedRefusal") | (.expr | test("reason=\"install_closed\""))' 'mode kubernetes: MakuEgressInstallClosedRefusal'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "AgentSandboxPodPending") | (.expr | test("namespace=\"agents\""))' 'kubeStateMetrics: AgentSandboxPodPending on the runs namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "AgentFactoryBindingRefused") | (.expr | test("type=\"BindingsValid\"}\\) == 0$"))' 'kubeStateMetrics: AgentFactoryBindingRefused on the condition gauge'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .annotations.runbook_url == "https://docs.example.test/maku/operations/failures.md#room-alerts"' 'docsURL replaces the docs base'

@@ -20,7 +20,7 @@ groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, ne
 {{- if not (dig "broker" "roomTools" "knowledge" "url" "" $maku) }}{{ $drop = append $drop "RoomKnowledgeFailing" }}{{ end -}}
 {{- if $maku.runController.enabled -}}
 {{- $on = append $on "run-path" -}}
-{{- if ne (dig "networkPolicies" "mode" "" $maku) "kubernetes" }}{{ $drop = append $drop "EgressProxyDown" }}{{ end -}}
+{{- if ne (dig "networkPolicies" "mode" "" $maku) "kubernetes" }}{{ $drop = concat $drop (list "EgressProxyDown" "MakuEgressInstallClosedRefusal") }}{{ end -}}
 {{- if not $r.kubeStateMetrics }}{{ $drop = append $drop "AgentSandboxPodPending" }}{{ end -}}
 {{- end -}}
 {{- end -}}

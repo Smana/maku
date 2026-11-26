@@ -20,6 +20,16 @@ import (
 // and refuses any change to it after create.
 const EgressAnnotation = "maku.ogenki.io/egress"
 
+// The install set (GitHub egress tightening, 2026-11-26): hosts a check-enabled run reaches only while
+// its toolchain installs, before the agent starts. The run-controller writes the set and its deadline
+// at create; the egress proxy writes EgressInstallClosedAnnotation ("true") when the harness closes
+// the set, and the run-pod policy lets none of the three change afterwards.
+const (
+	EgressInstallAnnotation       = "maku.ogenki.io/egress-install"
+	EgressInstallUntilAnnotation  = "maku.ogenki.io/egress-install-until"
+	EgressInstallClosedAnnotation = "maku.ogenki.io/egress-install-closed"
+)
+
 // nsSelector selects a namespace by its immutable name label.
 func nsSelector(ns string) *metav1.LabelSelector {
 	return &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns}}

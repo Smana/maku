@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,12 +19,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	toolscache "k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Smana/maku/internal/egressproxy"
 	"github.com/Smana/maku/internal/metrics"
@@ -50,7 +54,8 @@ func EgressProxy(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	// Only the run-controller's pods in the runs namespace: the label is the selector the run-pod
 	// policy guarantees, since only the run-controller creates pods there.
 	sel := labels.SelectorFromSet(labels.Set{runctl.LabelManagedBy: "run-controller"})
-	c, err := cache.New(ctrl.GetConfigOrDie(), cache.Options{Scheme: s,
+	restCfg := ctrl.GetConfigOrDie()
+	c, err := cache.New(restCfg, cache.Options{Scheme: s,
 		DefaultNamespaces: map[string]cache.Config{cfg.Namespace: {}}, DefaultLabelSelector: sel})
 	if err != nil {
 		return fmt.Errorf("egress-proxy: cache: %w", err)
@@ -65,9 +70,13 @@ func EgressProxy(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	}
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	count, bytes, err := metrics.NewEgressProxyMetrics(reg)
+	count, bytes, refused, err := metrics.NewEgressProxyMetrics(reg, egressproxy.Reasons)
 	if err != nil {
 		return err
+	}
+	kc, err := client.New(restCfg, client.Options{Scheme: s})
+	if err != nil {
+		return fmt.Errorf("egress-proxy: client: %w", err)
 	}
 	d := &egressproxy.Dialer{Resolver: net.DefaultResolver, Deny: egressproxy.MustCIDRs(cfg.EgressProxy.DenyCIDRs...),
 		Dial: (&net.Dialer{}).DialContext}
@@ -75,8 +84,8 @@ func EgressProxy(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return err
 	}
-	p := &egressproxy.Proxy{Index: x, Dial: d.DialContext, Log: log, Count: count, Bytes: bytes,
-		MaxTunnels: maxAll, MaxTunnelsPerClient: maxClient}
+	p := &egressproxy.Proxy{Index: x, Dial: d.DialContext, Log: log, Count: count, Bytes: bytes, Refused: refused,
+		Closer: podCloser{kc}, MaxTunnels: maxAll, MaxTunnelsPerClient: maxClient}
 	var synced atomic.Bool
 	probes := http.NewServeMux()
 	probes.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
@@ -126,6 +135,24 @@ func EgressProxy(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	})
 	log.Info("egress-proxy starting", "namespace", cfg.Namespace)
 	return g.Wait()
+}
+
+// podCloser writes a closed install set on its pod, where every proxy replica's watch reads it. The
+// UID in the patch is a precondition: a pod recreated under the same name is refused, not closed.
+// The run-pod policy lets the proxy change this one annotation and nothing else.
+type podCloser struct{ c client.Client }
+
+func (k podCloser) CloseInstall(ctx context.Context, namespace, name, uid string) error {
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": uid,
+		"annotations": map[string]string{runctl.EgressInstallClosedAnnotation: "true"}}})
+	if err != nil {
+		return err
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}
+	if err := k.c.Patch(ctx, pod, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return fmt.Errorf("close the install set of %s/%s: %w", namespace, name, err)
+	}
+	return nil
 }
 
 // The tunnel caps' defaults, when the chart sets none (egressProxy.maxTunnels, maxTunnelsPerClient).

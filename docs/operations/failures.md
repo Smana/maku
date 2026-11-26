@@ -6,7 +6,7 @@ Start from the symptom or the firing alert below to jump to the matching check, 
 | Symptom | Alert | Section |
 |---|---|---|
 | Broker unreachable, append errors, stalled room, stale JWKS or unposted verdicts | `RoomBrokerDown`, `RoomLogAppendErrors`, `RoomStalled`, `RoomAuthnJWKSStale`, `RoomVerdictsNotReachingGitHub` | [Room alerts](#room-alerts), [Common failures](#common-failures) |
-| Runs stay `Pending` (`PreflightPending`) or fail `PreflightFailed`, run-controller or egress proxy down | `RunControllerPreflightFailing`, `RunControllerDown`, `EgressProxyDown`, `AgentSandboxPodPending` | [The run controller's preflight](#the-run-controllers-preflight), [Run path alerts](#run-path-alerts) |
+| Runs stay `Pending` (`PreflightPending`) or fail `PreflightFailed`, run-controller or egress proxy down | `RunControllerPreflightFailing`, `RunControllerDown`, `EgressProxyDown`, `MakuEgressInstallClosedRefusal`, `AgentSandboxPodPending` | [The run controller's preflight](#the-run-controllers-preflight), [Run path alerts](#run-path-alerts) |
 | Intake stops, GitHub unreachable, missing merger or intake Secret, refused `BindingsValid` | `AgentFactoryIntakeErrors`, `FactoryGitHubUnreachable`, `AgentFactoryRepositoryNotOwned` | [Factory alerts](#factory-alerts), [Factory failures](#factory-failures) |
 | Merged PR reverted, regression detected, agent bypassed gate, ruleset missing `maku/merge-gate` | `AgentFactoryAutoMergeReverted`, `AgentFactoryMergeRegression`, `FactoryAgentMerged`, `FactoryMergeGateNotRequired` | [Factory alerts](#factory-alerts), [Escalated tasks and the kill switch](#escalated-tasks-and-the-kill-switch) |
 | Daily cap high, meter blind, unpriced model, ledger/gateway cost mismatch | `AgentFactoryDailyBudgetHigh`, `AgentFactoryMeterBlind`, `AgentModelUnpriced`, `AgentCostCrossCheckMismatch` | [Budget signals](#budget-signals), [Gateway alerts](#gateway-alerts) |
@@ -162,7 +162,8 @@ result; one that may cure itself right after install is retried from 10 s, doubl
 - **The probe pod** is deleted after each verdict, and leftovers from an earlier process before the
   next. The egress proxy logs its CONNECT as `allow run=preflight github.com:443`.
 - **The egress proxy's metrics** on its `:9090`: `maku_egress_proxy_connections_total{decision}`
-  (`allow`, `refuse`, `error`) and `maku_egress_proxy_bytes_total`.
+  (`allow`, `refuse`, `error`), `maku_egress_proxy_refusals_total{reason}` and
+  `maku_egress_proxy_bytes_total`.
 
 
 ## Factory failures

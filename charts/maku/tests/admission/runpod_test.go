@@ -27,13 +27,18 @@ import (
 )
 
 const (
-	controllerUser = "system:serviceaccount:" + release + ":run-controller"
-	egressKey      = "maku.ogenki.io/egress"
+	controllerUser  = "system:serviceaccount:" + release + ":run-controller"
+	proxyUser       = "system:serviceaccount:" + release + ":egress-proxy"
+	egressKey       = "maku.ogenki.io/egress"
+	installKey      = "maku.ogenki.io/egress-install"
+	installUntilKey = "maku.ogenki.io/egress-install-until"
+	closedKey       = "maku.ogenki.io/egress-install-closed"
 )
 
-// podEnv is an API server enforcing the chart's run-pod policy, with an admin and the run-controller.
+// podEnv is an API server enforcing the chart's run-pod policy, with an admin, the run-controller and
+// the egress proxy.
 type podEnv struct {
-	admin, ctl client.Client
+	admin, ctl, proxy client.Client
 }
 
 func startPodEnv(t *testing.T, sets ...string) podEnv {
@@ -64,6 +69,14 @@ func startPodEnv(t *testing.T, sets ...string) podEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pu, err := e.AddUser(envtest.User{Name: proxyUser, Groups: []string{"system:masters"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := client.New(pu.Config(), client.Options{Scheme: s})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := t.Context()
 	for _, o := range []client.Object{
 		// Pod Security comes before the policy in the admission chain: TestRunPodPolicyUnderPodSecurity
@@ -82,7 +95,7 @@ func startPodEnv(t *testing.T, sets ...string) podEnv {
 			t.Fatal(err)
 		}
 	}
-	pe := podEnv{admin: admin, ctl: ctl}
+	pe := podEnv{admin: admin, ctl: ctl, proxy: proxy}
 	pe.waitEnforced(t)
 	return pe
 }
@@ -260,6 +273,8 @@ func TestRunPodPolicy(t *testing.T) {
 	// A real pod: its egress annotation is fixed at create, and no ephemeral container is added.
 	p := runPod(t, true, true)
 	p.Annotations[egressKey] = "github.com:443"
+	p.Annotations[installKey] = "release-assets.githubusercontent.com:443"
+	p.Annotations[installUntilKey] = "2026-11-26T12:15:00Z"
 	if err := pe.ctl.Create(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -283,6 +298,50 @@ func TestRunPodPolicy(t *testing.T) {
 		if !deniedByPolicy(err) || !strings.Contains(err.Error(), "never changes") {
 			t.Fatalf("want the policy's refusal, got %v", err)
 		}
+	})
+	annotate := func(as client.Client, k string, v any) error {
+		return mergePatch(as, map[string]any{"metadata": map[string]any{"annotations": map[string]any{k: v}}})
+	}
+	refused := func(t *testing.T, err error, want string) {
+		t.Helper()
+		if !deniedByPolicy(err) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("want the policy's refusal naming %q, got %v", want, err)
+		}
+	}
+	t.Run("the install set and its deadline never change", func(t *testing.T) {
+		refused(t, annotate(pe.ctl, installKey, "example.com:443"), "never change")
+		refused(t, annotate(pe.admin, installUntilKey, "2030-01-01T00:00:00Z"), "never change")
+		refused(t, annotate(pe.admin, installKey, nil), "never change")
+	})
+	t.Run("the egress proxy changes nothing but the closed annotation", func(t *testing.T) {
+		refused(t, annotate(pe.proxy, "example.com/x", "y"), "nothing else")
+		refused(t, mergePatch(pe.proxy, map[string]any{"metadata": map[string]any{"labels": map[string]any{"example.com/proxy": "set"}}}), "nothing else")
+		refused(t, mergePatch(pe.proxy, map[string]any{"metadata": map[string]any{"finalizers": []string{"example.com/hold"}}}), "nothing else")
+		refused(t, mergePatch(pe.proxy, map[string]any{"metadata": map[string]any{"annotations": map[string]any{closedKey: "true", "example.com/x": "y"}}}), "nothing else")
+	})
+	t.Run("only true closes", func(t *testing.T) {
+		refused(t, annotate(pe.proxy, closedKey, "false"), "never reopens")
+	})
+	t.Run("the egress proxy closes the set, under the pod's UID", func(t *testing.T) {
+		got := &corev1.Pod{}
+		if err := pe.admin.Get(ctx, client.ObjectKeyFromObject(p), got); err != nil {
+			t.Fatal(err)
+		}
+		err := mergePatch(pe.proxy, map[string]any{"metadata": map[string]any{"uid": "not-the-pod", "annotations": map[string]any{closedKey: "true"}}})
+		if err == nil || deniedByPolicy(err) {
+			t.Fatalf("another UID is the API server's conflict, before the policy: %v", err)
+		}
+		if err := mergePatch(pe.proxy, map[string]any{"metadata": map[string]any{"uid": string(got.UID), "annotations": map[string]any{closedKey: "true"}}}); err != nil {
+			t.Fatalf("refused: %v", err)
+		}
+		if err := annotate(pe.proxy, closedKey, "true"); err != nil {
+			t.Fatalf("closing twice: %v", err)
+		}
+	})
+	t.Run("a closed set never reopens", func(t *testing.T) {
+		refused(t, annotate(pe.admin, closedKey, nil), "never reopens")
+		refused(t, annotate(pe.proxy, closedKey, nil), "never reopens")
+		refused(t, annotate(pe.admin, closedKey, "false"), "never reopens")
 	})
 	t.Run("a pods/ephemeralcontainers update", func(t *testing.T) {
 		got := &corev1.Pod{}
