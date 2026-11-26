@@ -424,7 +424,7 @@ export function mountRail(h: RailHandlers): Rail {
         li.dataset.part = String(p.index);
         const head = el("div", { className: "rail-part-head" });
         const stateText = p.label ?? p.state;
-        head.append(roomLink(p.room, `#${p.issue ?? "?"} ${stateText}`));
+        head.append(roomLink(p.room, `${p.issue ? `#${p.issue}` : `part ${p.index}`} ${stateText}`)); // a part has no issue until it opens
         if (p.cost) head.append(el("span", { className: "rail-part-cost", textContent: p.cost }));
         li.append(head);
         if (p.runs?.length) {

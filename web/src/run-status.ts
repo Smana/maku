@@ -23,7 +23,7 @@ export interface StatusIn {
 
 // FAILURES is why a task failed, in words, by the factory's reason code.
 const FAILURES: Record<string, string> = {
-  "budget-task": "budget reached", resume_budget: "budget reached", ci_red: "CI stayed red",
+  "budget-task": "too little task budget left for a run", resume_budget: "too little task budget left to resume", ci_red: "CI stayed red",
   ci_cancelled: "a check was cancelled", deadline: "time limit reached", agent_error: "the agent stopped on an error",
   agent_stuck: "the agent was stuck", stuck: "no activity", stalled: "no progress",
   not_met: "the acceptance checks are unmet", judge_impossible: "cannot be done as asked", pod_lost: "the sandbox was lost",

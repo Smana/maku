@@ -281,6 +281,9 @@ type TaskFacts struct {
 	Profile *ProfileFact `json:"profile,omitempty"`
 	// Outcome is what the task produces (phase F): empty or change for a pull request.
 	Outcome string `json:"outcome,omitempty"`
+	// RetryHeld: the task escalated at its task cap and a plain retry would be refused (F-4), so
+	// no view offers one; a deeper retry, when offered, is decided on its own ceiling.
+	RetryHeld bool `json:"retryHeld,omitempty"`
 }
 
 // MaxPlan bounds TaskFacts.Plan.

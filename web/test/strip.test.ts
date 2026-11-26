@@ -85,7 +85,7 @@ describe("the run status line", () => {
     strip.update(input({ summary: state({ state: "done", phase: "Done" }) }));
     expect(text()).toBe(" Done — merged");
     strip.update(input({ summary: state({ state: "failed", phase: "Rejected", reasonCode: "budget-task" }) }));
-    expect(text()).toBe(" Failed — budget reached"); // the code, not the prose reason
+    expect(text()).toBe(" Failed — too little task budget left for a run"); // the code, not the prose reason
     strip.update(input({ summary: state({ state: "failed", phase: "Rejected", reasonCode: "ci_red" }) }));
     expect(text()).toBe(" Failed — CI stayed red");
     strip.update(input({ summary: state({ state: "waiting_for_human", phase: "Escalated", reason: "budget-task" }) }));
@@ -126,6 +126,13 @@ describe("the title strip", () => {
     strip.update(input({ summary: undefined }));
     expect(h.querySelector(".now-hint")?.textContent).toBe("Start one under Session › Run");
     strip.update(input({ summary: undefined, snap: { ...snap, you: { ...snap.you, role: "collaborator", driver: false } } }));
+    expect(h.querySelector(".now-hint")).toBeNull();
+  });
+  it("hints at Run in no room whose task ended or that is sealed", () => {
+    const { h, strip } = mount();
+    strip.update(input({ summary: summary({ run: null, reason: undefined, next: undefined, state: "stopped", phase: "Stopped" }) }));
+    expect(h.querySelector(".now-hint")).toBeNull();
+    strip.update(input({ summary: undefined, sealed: true }));
     expect(h.querySelector(".now-hint")).toBeNull();
   });
   // The room already says what comes next (a /factory retry, a PR to merge): a second, other
@@ -588,6 +595,10 @@ describe("the title strip", () => {
       strip.update(input({ running: false, ran: true, now: handed, summary: { ...base, status: { ...base.status, reasonCode: "plan_review" } } }));
       expect(h.querySelector(".now")?.textContent).toBe("No run · last: The scoper proposed a plan; it waits for approval · just now");
       expect(h.querySelector(".now")?.textContent).not.toContain("handed off");
+      strip.update(input({ running: false, ran: true, now: handed, summary: { ...base, status: { ...base.status, reasonCode: "plan_review" } } }));
+      expect(h.querySelector(".now")?.textContent).not.toContain("handed off"); // the same input again: the tick keeps the words
+      strip.update(input({ running: false, ran: true, now: handed, summary: { ...base, status: { ...base.status, reasonCode: "split_proposed" } } }));
+      expect(h.querySelector(".now")?.textContent).toBe("No run · last: The scoper proposed a split; it waits for a decision · just now");
     });
     it("links the last activity to its row", () => {
       const h = document.createElement("header");

@@ -307,6 +307,7 @@ func (r *Reconciler) factsForCtx(ctx context.Context, cfg *config.Config, t *v1a
 	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(cfg, t, t.Status.Reason)
 	f.SpendFinal = r.spendIsFinal(cfg, t)
 	f.Policy = policyOf(cfg, r.repo(cfg, t), t)
+	f.RetryHeld = RetryHeld(cfg, t)
 	if f.Profile != nil {
 		if wf, ok := cfg.Workflow(f.Profile.Name); ok {
 			if wf.Description != "" {

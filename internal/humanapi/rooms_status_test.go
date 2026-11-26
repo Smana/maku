@@ -165,8 +165,8 @@ func TestRoomRowStatusIsTheSummarysStatus(t *testing.T) {
 		want      string
 	}{
 		{name: "rejected for ci_red", phase: "Rejected", evs: []envelope.Event{fact(1, "Rejected", "ci_red")}, h: admin("boss"), want: "Failed — CI stayed red"},
-		{name: "rejected on the budget", phase: "Rejected", evs: []envelope.Event{fact(1, "Rejected", "budget-task")}, h: admin("boss"), want: "Failed — budget reached"},
-		{name: "escalated for budget-task", phase: "Escalated", evs: []envelope.Event{fact(1, "Escalated", "budget-task")}, h: admin("boss"), want: "Escalated — budget reached"},
+		{name: "rejected on the budget", phase: "Rejected", evs: []envelope.Event{fact(1, "Rejected", "budget-task")}, h: admin("boss"), want: "Failed — too little task budget left for a run"},
+		{name: "escalated for budget-task", phase: "Escalated", evs: []envelope.Event{fact(1, "Escalated", "budget-task")}, h: admin("boss"), want: "Escalated — too little task budget left for a run"},
 		{name: "reverted", phase: "Reverted", evs: []envelope.Event{fact(1, "Reverted", "")}, h: admin("boss"), want: "Failed — the merge was reverted"},
 		{name: "an approval the viewer may decide", phase: "Implementing", evs: []envelope.Event{fact(1, "Implementing", ""), ask},
 			approvals: []store.Approval{approval}, h: admin("boss"), want: "Waiting for you — approve a pending action"},

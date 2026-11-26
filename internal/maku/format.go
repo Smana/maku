@@ -121,6 +121,7 @@ var reasons = map[string]string{
 	"forge_unavailable":      "GitHub could not be reached right now; retry",
 	"no_deeper_workflow":     "this task has no deeper workflow to step up to (or has already stepped up once)",
 	"deeper_over_cap":        "stepping up costs more than the cost confirmed for this task: to run the deeper workflow, start the task again with it (New task, or maku start --workflow <name>), which confirms its higher cost",
+	"task_cap_holds":         "the task's cap leaves less than a whole run, so a retry would only stop again: raise the cap on a new task",
 	"unknown_task":           "the factory has no task of that id",
 }
 

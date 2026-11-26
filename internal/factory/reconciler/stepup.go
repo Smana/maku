@@ -190,6 +190,7 @@ func (r *Reconciler) stepUpBy(ctx context.Context, cfg *config.Config, t *v1alph
 	if !runFits(trial) || (t.Spec.MaxMicroUSD > 0 && ceiling > t.Spec.MaxMicroUSD) {
 		if handledID != 0 {
 			markHandled(t, handledID)
+			t.Status.NextTrigger = "" // no run is next (F-4)
 			narrateLater(t, narrate.TaskCapHolds(t, handledID))
 		}
 		return nil

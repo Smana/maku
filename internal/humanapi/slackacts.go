@@ -38,6 +38,7 @@ var slackActFactoryResults = []string{
 	"stepped_up",
 	"no_deeper_workflow",
 	"deeper_over_cap",
+	"task_cap_holds",
 	slackNotLinked,
 	slackNotMaintainer,
 	"not_running",

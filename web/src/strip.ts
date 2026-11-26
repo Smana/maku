@@ -95,9 +95,15 @@ function setNow(b: HTMLElement, n: Latest, t: number, present: boolean): void {
 // planWaits stands in for the last activity while a plan-first task waits in plan review: the
 // scoper's own last words ("Scope handed off to the implementer") read as if the implementer had
 // started, when the plan waits for a maintainer's approval (gcp-0, 2026-11-25).
+// A proposed split waits the same way, for a maintainer's decision.
 function planWaits(n: Latest | undefined, s: Summary | undefined, present: boolean): Latest | undefined {
-  if (!n || present || s?.status.reasonCode !== "plan_review") return n;
-  return { ...n, text: "The scoper proposed a plan; it waits for approval", status: "ended" };
+  if (!n || present) return n;
+  const code = s?.status.reasonCode;
+  if (code === "plan_review" || (!code && s?.status.proposedPlan && s.status.phase === "AwaitingHuman")) {
+    return { ...n, text: "The scoper proposed a plan; it waits for approval", status: "ended" };
+  }
+  if (code === "split_proposed") return { ...n, text: "The scoper proposed a split; it waits for a decision", status: "ended" };
+  return n;
 }
 
 // nowLine says what the agent is doing: the latest activity, a button that takes the
@@ -119,7 +125,10 @@ function nowLine(i: StripInput, t: number, onNow: (seq: number) => void): HTMLEl
   // A room that already says what comes next (a /factory retry, a PR to merge) gets no
   // second, contrary way forward.
   const told = !!(i.summary?.status.next || ownStep(i.summary));
-  const lead = !present && !told && i.snap && (i.snap.you.role === "owner" || i.snap.you.driver);
+  // A room whose task ended, or a sealed one, starts no run: Session › Run is gone or moot there.
+  const ended = !!i.sealed || ["done", "failed", "stopped"].includes(i.summary?.status.state ?? "")
+    || i.phase === "Closed" || i.phase === "Sealed";
+  const lead = !present && !told && !ended && i.snap && (i.snap.you.role === "owner" || i.snap.you.driver);
   return lead ? [line, el("span", { className: "now-hint", textContent: "Start one under Session › Run" })] : [line];
 }
 
@@ -431,13 +440,17 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
         shown.status = statusKey;
       }
       const present = i.running ?? !!latest;
-      const nowKey = JSON.stringify([latest, i.running, i.ran || !!st?.run, i.snap?.you.role, i.snap?.you.driver, !!(st?.next || own)]);
+      // The tick redraws the age in place, from the line nowLine showed: a plan that waits keeps
+      // its words rather than the scoper's last ones (planWaits).
+      const nowKey = JSON.stringify([latest, i.running, i.ran || !!st?.run, i.snap?.you.role, i.snap?.you.driver, !!(st?.next || own),
+        st?.reasonCode, st?.state, i.phase, !!i.sealed]);
       if (nowKey !== shown.now) {
         nowRow.replaceChildren(...nowLine(i, t, (seq) => onNow(seq)));
         shown.now = nowKey;
       } else if (latest) {
         const b = nowRow.querySelector<HTMLElement>(".now-link");
-        if (b) setNow(b, latest, t, present);
+        const n = planWaits(latest, i.summary, present);
+        if (b && n) setNow(b, n, t, present);
       }
       const tailKey = JSON.stringify([sealedBy, i.sealed, i.snap?.you.principal, st?.phase, i.phase, st?.reason, st?.next, own, st?.reasonCode, i.cardActs]);
       if (tailKey !== shown.tail) {

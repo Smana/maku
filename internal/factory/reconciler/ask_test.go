@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
+
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 )
 
@@ -38,6 +41,15 @@ func TestAStandardTaskWithNoAcceptanceIsAskedBeforeAnyRun(t *testing.T) {
 	comments := eventCommentBodies(g.f, 7)
 	if len(comments) != 1 || !strings.Contains(comments[0], "Which command or observation proves it is done?") {
 		t.Fatalf("comments = %q", comments)
+	}
+	// The question has a room from the start (gcp-0 drill, #538): maku needs lists it, and maku
+	// answer and maku cancel reach it, not only the issue.
+	var room roomv1.Room
+	if err := g.c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: tk.Name}, &room); err != nil || tk.Status.RoomRef != tk.Name {
+		t.Fatalf("room %q: %v", tk.Status.RoomRef, err)
+	}
+	if l := tk.Status.Facts; l == nil || !l.Posted {
+		t.Fatalf("the bounced task's facts reach its room: %+v", l)
 	}
 }
 

@@ -189,6 +189,9 @@ type Need struct {
 	// Deeper carries the offered step-up target on a recovery need when automatic step-up was held
 	// back (WR4): absent when no deeper workflow is offered.
 	Deeper *DeeperOffer `json:"deeper,omitempty"`
+	// RetryHeld marks a recovery need whose plain retry the factory would refuse (TaskFacts.RetryHeld,
+	// F-4): no view offers Retry on it; Deeper, when set, is still offered.
+	RetryHeld bool `json:"retryHeld,omitempty"`
 	// Source is where the item was derived from: for the tests, never in the object a surface renders.
 	Source NeedSource `json:"-"`
 }

@@ -89,6 +89,9 @@ type Server struct {
 	APIReader client.Reader
 	Namespace string
 	Stopped   func(context.Context) bool // the stop object (§6.1); true on doubt
+	// RetryHeld is the reconciler's F-4 predicate (reconciler.RetryHeld): a plain retry it would
+	// refuse is refused here, as task_cap_holds, instead of acknowledged. Nil holds none.
+	RetryHeld func(*config.Config, *factoryv1.Task) bool
 	NewRunID  func() string
 	Now       func() time.Time
 	Metrics   *fmetrics.Set

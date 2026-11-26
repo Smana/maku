@@ -727,6 +727,7 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 /* A list that could not be refreshed, and a room whose state could not be read: information under the
    list, not needs themselves, so the pill does not count them. */
 .needs-other li.needs-stale, .needs-other li.needs-unread { color: var(--muted-foreground); font-size: var(--text-small); }
+.needs-other li.needs-settled { font-size: var(--text-small); }
 /* A pending approval: the card shape, its waiting state a 3 px warning bar on its left edge
    (below); the Needs you heading and pill say it in words. */
 .approval { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: 6px;

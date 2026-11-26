@@ -443,7 +443,7 @@ describe("split", () => {
     const lis = [...rail.el.querySelectorAll<HTMLElement>("ol.rail-parts > li.rail-part")];
     expect(lis.map((l) => l.dataset.state)).toEqual(["done", "running", "queued"]);
     expect(lis.map((l) => l.querySelector("a")?.getAttribute("href") ?? null)).toEqual(["/r/aaaaaaaa", "/r/bbbbbbbb", null]);
-    expect(lis[2].textContent).toContain("#?");
+    expect(lis[2].textContent).toContain("part 3 queued"); // no issue until the part opens
     expect(rail.el.querySelector('li.rail-node[data-run="r-s"] ol.rail-parts')).not.toBeNull();
   });
 

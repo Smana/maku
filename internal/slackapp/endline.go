@@ -198,7 +198,7 @@ func stepUpReasonWords(reason string) string {
 	case "budget-run":
 		return "the run's budget was spent"
 	case "budget-task":
-		return "the task's budget was spent"
+		return "too little of the task's budget was left for a run"
 	case "not_met":
 		return "acceptance checks were not met"
 	case "review_rounds_exhausted":

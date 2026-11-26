@@ -254,6 +254,9 @@ func Reasons() []string {
 
 const escalatedNext = "a maintainer comments `/factory retry` on the issue to run it again, or pushes to the branch"
 
+// capHeldNext is an Escalated task's next step when its task cap holds (TaskFacts.RetryHeld).
+const capHeldNext = "a maintainer comments `/factory retry deeper` when a deeper workflow is offered, or opens a new task with a higher cap: a plain retry would stop at the same cap"
+
 // approveNext is an AwaitingHuman pull request's next step when a maintainer's approval returns it.
 const approveNext = "a maintainer reviews, then approves the current commit or closes the pull request on GitHub; the merger App merges that commit"
 
@@ -422,6 +425,9 @@ func waiting(f *envelope.TaskFacts, policyBot bool) (reason, next string) {
 		}
 		if next == "" {
 			next = escalatedNext
+			if f.RetryHeld { // F-4: a plain retry would stop at the same cap
+				next = capHeldNext
+			}
 		}
 	default:
 		return "", ""

@@ -813,6 +813,13 @@ func (c *card) actions(s summary.Summary) {
 					"revise with "+c.command("maku plan revise "+s.Room+" \"<comment>\""),
 					"split with "+c.command("maku plan split "+s.Room))
 			case summary.NeedRecovery:
+				if n.RetryHeld && n.Deeper == nil {
+					break // F-4: the factory refuses a plain retry
+				}
+				if n.RetryHeld && !seenRetry {
+					can = append(can, "run it again deeper with "+c.command("maku retry --deeper "+s.Room))
+					seenRetry = true
+				}
 				if !seenRetry {
 					can = append(can, "retry with "+c.command("maku retry "+s.Room))
 					seenRetry = true

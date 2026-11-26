@@ -55,6 +55,7 @@ export interface NeedItem {
   author?: string;
   approve?: boolean;
   deeper?: { workflow: string; ceilingMicroUSD?: number };
+  retryHeld?: boolean; // recovery: the factory refuses a plain retry (the task cap holds, F-4)
   action?: { kind: string; label: string; url?: string };
   source?: { kind: string; seq?: number; reason?: string };
 }

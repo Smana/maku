@@ -37,7 +37,7 @@ var table = map[string]Words{
 	"budget-person":                 {Short: "the daily budget in dollars of the pers…", Long: "the daily budget in dollars of the person its next run is charged to is spent", Next: ""},
 	"budget-principal":              {Short: "the factory's daily budget in dollars i…", Long: "the factory's daily budget in dollars is spent", Next: ""},
 	"budget-run":                    {Short: "the run spent its token budget", Long: "the run spent its token budget", Next: ""},
-	"budget-task":                   {Short: "the task is out of budget", Long: "the task's token budget has no room left for another run", Next: ""},
+	"budget-task":                   {Short: "too little task budget left for a run", Long: "what is left of the task's budget, in tokens or dollars, is less than a whole run needs", Next: ""},
 	"budget_calls":                  {Short: "the scoper hit its tool-call limit", Long: "the scoper reached its tool-call limit before handing off", Next: ""},
 	"cancelled":                     {Short: "its owner or a maintainer cancelled it …", Long: "its owner or a maintainer cancelled it from its room", Next: ""},
 	"changes_requested":             {Short: "changes were requested", Long: "a reviewer requested changes, and the factory does not merge over them", Next: ""},

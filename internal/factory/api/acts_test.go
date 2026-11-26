@@ -259,9 +259,10 @@ func newActEnv(t *testing.T, objs ...client.Object) *actEnv {
 			"zsub-contrib": "contributor",
 			"zsub-nowrite": "nowrite",
 		},
-		Writers: canWrite,
-		Answers: func(string) api.AnswerForge { return fg },
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Writers:   canWrite,
+		RetryHeld: reconciler.RetryHeld,
+		Answers:   func(string) api.AnswerForge { return fg },
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	rec := &reconciler.Reconciler{
@@ -455,6 +456,22 @@ func TestRetryOnlyEscalated(t *testing.T) {
 	}
 	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/6buqdlot/retries", `{"onBehalfOf":"slack:T01ABC/UMAINT"}`)); got != "retried" {
 		t.Fatalf("retry escalated: got %q, want retried", got)
+	}
+}
+
+// F-4, gcp-0 drill (#519): the route refuses a plain retry the reconciler would refuse, instead
+// of acknowledging one that never starts.
+func TestRetryAtAHeldTaskCapIsRefused(t *testing.T) {
+	held := makeActTask("3buqdlot", factoryv1.PhaseEscalated, "budget-task")
+	held.Spec.Budget = factoryv1.Budget{Tier: "standard", RunTokens: 1_500_000, TaskTokens: 3_000_000}
+	held.Status.Usage.Tokens = 1_900_000
+	env := newActEnv(t, held)
+	env.srv.Cfg.Current().Budgets.EnforceTask = true
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/retries", `{"onBehalfOf":"slack:T01ABC/UMAINT"}`)); got != "task_cap_holds" {
+		t.Fatalf("retry at a held cap: got %q, want task_cap_holds", got)
+	}
+	if tk := getActTask(t, env.client, "3buqdlot"); tk.Annotations[factoryv1.AnnotationRetry] != "" {
+		t.Fatalf("a refused retry is not annotated: %v", tk.Annotations)
 	}
 }
 

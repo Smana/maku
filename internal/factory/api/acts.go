@@ -55,6 +55,7 @@ const (
 	ActSplitAccepted    = "split_accepted"
 	ActSplitDeclined    = "split_declined"
 	ActNoSplit          = "no_split"
+	ActTaskCapHolds     = "task_cap_holds" // F-4: the task cap leaves less than a run; raise it on a new task
 
 	maxActBody  = 4 << 10
 	maxPlanNote = 1024
@@ -546,6 +547,10 @@ func (s *Server) actTask(w http.ResponseWriter, r *http.Request, retry bool) {
 			} else {
 				if t.Status.Phase != factoryv1.PhaseEscalated {
 					reply(w, http.StatusOK, ActResult{Result: ActNotEscalated})
+					return
+				}
+				if s.RetryHeld != nil && s.RetryHeld(cfg, t) {
+					reply(w, http.StatusOK, ActResult{Result: ActTaskCapHolds})
 					return
 				}
 				t.Annotations[factoryv1.AnnotationRetry] = fmt.Sprintf("%d:%s", t.Status.Retries, resolvedLogin)
