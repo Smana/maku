@@ -77,7 +77,8 @@ func TestThePlanGateHoldsNoRun(t *testing.T) {
 	if len(g.runs.specs) != 1 {
 		t.Fatalf("expected no run started while waiting on plan gate, got %d runs", len(g.runs.specs))
 	}
-	// Plan comment carries bounded task, expected touches, acceptance checks, and all three answers.
+	// Plan comment carries bounded task, expected touches, acceptance checks, and the answers: no
+	// split is offered for a plan that proposes no parts.
 	comments := eventCommentBodies(g.f, 7)
 	joined := strings.Join(comments, "\n")
 	for _, want := range []string{
@@ -86,11 +87,13 @@ func TestThePlanGateHoldsNoRun(t *testing.T) {
 		"go test ./...",
 		"/factory plan approve",
 		"/factory plan revise",
-		"/factory plan split",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("plan comment missing %q:\n%s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "/factory plan split") {
+		t.Fatalf("plan comment offers a split it did not propose:\n%s", joined)
 	}
 	// A subsequent reconcile while unanswered starts no run.
 	tk = g.reconcile(t, tk.Name, 1)
