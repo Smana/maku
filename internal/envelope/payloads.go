@@ -54,6 +54,10 @@ type MessagePayload struct {
 	// PullRequest is the pull request a review_verdict is about (SP2 design §3).
 	// Additive: C4 v1's envelope is unchanged, and SP3 reads it (ruling P29).
 	PullRequest string `json:"pullRequest,omitempty"`
+	// Checks is what a review_verdict's run was asked to check, the acceptance the factory wrote on
+	// its claim (runwatch.ReviewChecksAnnotation): set by room_verdict on an approve with no text
+	// only, never from the model's arguments. Additive.
+	Checks string `json:"checks,omitempty"`
 	// Integration is an integration_result's outcome (v4 MR10).
 	Integration *IntegrationResult `json:"integration,omitempty"`
 	// Output is a safe-output event's record (hardening UH4).
@@ -527,6 +531,23 @@ var commitRE = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
 
 // ValidCommit reports whether s is empty or a commit id PRFact.ApprovedCommit may carry.
 func ValidCommit(s string) bool { return s == "" || commitRE.MatchString(s) }
+
+// VerdictPrefix is how many leading hex digits of a verdict's commit must match the head its run was
+// given when the rest does not: an agent that read a 12-digit short sha sometimes guesses the other
+// 28 (paired trial 2026-11-26). 48 bits of a head the factory chose itself name one commit.
+const VerdictPrefix = 12
+
+// VerdictOf reports whether commit, as a review verdict names it, is head, the full sha the run was
+// given: a prefix of it of at least 7 digits, or any id whose first VerdictPrefix digits are its own.
+func VerdictOf(head, commit string) bool {
+	if head == "" || commit == "" {
+		return false
+	}
+	if strings.HasPrefix(head, commit) && len(commit) >= 7 {
+		return true
+	}
+	return len(commit) >= VerdictPrefix && len(head) >= VerdictPrefix && commit[:VerdictPrefix] == head[:VerdictPrefix]
+}
 
 // githubLogin is GitHub's rule for a user name: 1 to 39 letters and digits, single hyphens between
 // them, none at either end. A GitHub App authors as its slug plus the literal suffix "[bot]".

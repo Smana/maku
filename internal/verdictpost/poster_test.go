@@ -325,6 +325,20 @@ func TestBody(t *testing.T) {
 	if unknown := Body(ev, v, "", ""); strings.Contains(unknown, "Missing a test") {
 		t.Error("a room whose data class is unknown is never treated as public")
 	}
+	// An approve with no summary (15 of 16 in the paired trial of 2026-11-26) says what it covers:
+	// the acceptance the factory asked the reviewer to check, quoted inert as a summary is.
+	empty := approve
+	empty.Text, empty.Checks = "", "- test-cost-crosscheck --json: proves @Smana's table and JSON agree"
+	if b := Body(ev, empty, "public", ""); !strings.Contains(b, "_The reviewer wrote no summary. It was asked to check the diff against this acceptance:_\n\n```\n- test-cost-crosscheck --json: proves @Smana's table and JSON agree\n```\n") {
+		t.Errorf("an empty approve quotes its checks:\n%s", b)
+	}
+	if b := Body(ev, empty, "internal", ""); strings.Contains(b, "cost-crosscheck") {
+		t.Errorf("an internal room's checks stay in the room:\n%s", b)
+	}
+	empty.Checks = ""
+	if b := Body(ev, empty, "public", ""); !strings.Contains(b, "_The reviewer wrote no summary._\n") || strings.Contains(b, "```") {
+		t.Errorf("an empty approve with no checks renders no empty block:\n%s", b)
+	}
 }
 
 func TestMarker(t *testing.T) {

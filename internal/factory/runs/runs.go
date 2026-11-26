@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -46,7 +47,7 @@ const (
 	// Both set at CREATE only (R48), so a replay that finds the claim reads back what its run was
 	// given, never what the replay would give a run now.
 	AnnStartSeq = "agents.ogenki.io/start-seq" // the room's lastSeq when the run was created
-	AnnHead     = "agents.ogenki.io/head"      // the pull request head a verifier was given
+	AnnHead     = runwatch.HeadAnnotation      // the pull request head a verifier was given
 	// The run API's fingerprint of the request that made the run, so a replay of its
 	// Idempotency-Key with another body is told apart from a retry. CREATE only.
 	AnnRequestHash = "agents.ogenki.io/request-hash"
@@ -77,6 +78,9 @@ const (
 	// AnnPersona records the run's persona (e.g. scoper, security-reviewer) when it differs from
 	// spec.role (WR11): spec.role stays one of the four run roles. CREATE only.
 	AnnPersona = "agents.ogenki.io/persona"
+	// AnnReviewChecks is what a reviewer run was asked to check (runwatch.ReviewChecksAnnotation):
+	// the broker quotes it in an approve's comment that carries no summary. CREATE only.
+	AnnReviewChecks = runwatch.ReviewChecksAnnotation
 )
 
 // safeOutputTypes are the types a claim may name as safe outputs: H2's four, and push from stage H3.
@@ -162,6 +166,9 @@ type Spec struct {
 	LabelAllowlist []string
 	// ForgeAPIDeny writes AnnForgeAPI: deny, on a run of a repository in mode enforce (HR36).
 	ForgeAPIDeny bool
+	// ReviewChecks is a reviewer's acceptance, written as AnnReviewChecks at CREATE only, clipped
+	// to runwatch.MaxReviewChecks bytes; "" writes none.
+	ReviewChecks string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -353,6 +360,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Persona != "" && s.Persona != s.Role {
 		ann[AnnPersona] = s.Persona
+	}
+	if s.ReviewChecks != "" {
+		ann[AnnReviewChecks] = clipUTF8(s.ReviewChecks, runwatch.MaxReviewChecks)
 	}
 	if len(s.SafeOutputs) > 0 {
 		types := slices.Clone(s.SafeOutputs)
@@ -586,7 +596,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnPersona, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnPersona, AnnReviewChecks, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}
@@ -613,4 +623,15 @@ func (c Client) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("delete run %s: %w", id, err)
 	}
 	return nil
+}
+
+// clipUTF8 is s cut to at most n bytes on a rune boundary.
+func clipUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

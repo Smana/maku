@@ -66,7 +66,7 @@ func TestScoperBriefNeverReadsSuggestion(t *testing.T) {
 		"triager":  TriagerBrief(tk, "n0nce"),
 		"scoper":   ScoperBrief(tk, "n0nce", config.Scoper{}.WithDefaults(), choices),
 		"tester":   TesterBrief(tk, "n0nce", sc),
-		"reviewer": ReviewerBrief(tk, "n0nce", sc),
+		"reviewer": ReviewerBrief(tk, "n0nce", sc, testHead),
 		"revise":   revise,
 	} {
 		if brief == "" || strings.Contains(brief, canary) {

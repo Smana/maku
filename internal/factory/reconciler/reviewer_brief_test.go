@@ -10,6 +10,9 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 )
 
+// testHead is the pull request head a reviewer's brief names in full.
+const testHead = "6b47574ccb0d880e0a41c3d2b1a0f9e8d7c6b5a4"
+
 func reviewTask(text string) *v1alpha1.Task {
 	tk := issueTask("3buqdlot", 7, text)
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
@@ -22,10 +25,13 @@ func TestTheReviewerBriefJudgesTheDiffNotTheStory(t *testing.T) {
 	tk := reviewTask("# Fix the links")
 	sc := readyScope()
 	sc.Acceptance = []envelope.Acceptance{{Check: "task links passes", Proves: "every link resolves n0nce234"}}
-	got := ReviewerBrief(tk, "n0nce234", &Scoped{Scope: sc, Seq: 9})
+	got := ReviewerBrief(tk, "n0nce234", &Scoped{Scope: sc, Seq: 9}, testHead)
 	for _, want := range []string{
 		"You are the reviewer for agent factory task 3buqdlot in Smana/cloud-native-ref",
 		"https://github.com/Smana/cloud-native-ref/pull/12",
+		"at head " + testHead + ".\n",
+		"write one to three lines naming the acceptance checks you verified and the tests you ran or read",
+		"Leave commit out: the platform records the head above as the commit you reviewed.",
 		"Report only defects that affect correctness",
 		"Style, naming, and scope the task did not ask for are not findings.",
 		"an approval with no comment is a complete answer",
@@ -56,7 +62,7 @@ func TestTheReviewerBriefJudgesTheDiffNotTheStory(t *testing.T) {
 // R8: with no scope, the issue's own acceptance is quoted as fenced data, at most 4 KiB as the
 // harness's reader takes it; with none, the brief says so.
 func TestTheReviewerBriefFallsBackToTheIssuesAcceptance(t *testing.T) {
-	got := ReviewerBrief(reviewTask("Fix it.\n\n## Acceptance\n- task links passes n0nce234\n\n## Notes\nnone"), "n0nce234", nil)
+	got := ReviewerBrief(reviewTask("Fix it.\n\n## Acceptance\n- task links passes n0nce234\n\n## Notes\nnone"), "n0nce234", nil, testHead)
 	data, ok := fenced(got, "ACCEPTANCE-DATA-n0nce234")
 	if !ok || !strings.Contains(data, "- task links passes") || strings.Contains(data, "n0nce234") || strings.Contains(data, "none") {
 		t.Fatalf("the issue's acceptance is not quoted as fenced data:\n%s", got)
@@ -64,23 +70,23 @@ func TestTheReviewerBriefFallsBackToTheIssuesAcceptance(t *testing.T) {
 	if !strings.Contains(got, untrustedNotice("ACCEPTANCE-DATA-n0nce234")) || !strings.HasPrefix(data, untrustedHeader+"\n") {
 		t.Fatalf("an untrusted issue's acceptance is not marked as the snapshot is:\n%s", got)
 	}
-	big := ReviewerBrief(reviewTask("Acceptance: "+strings.Repeat("a", 6000)), "n0nce234", nil)
+	big := ReviewerBrief(reviewTask("Acceptance: "+strings.Repeat("a", 6000)), "n0nce234", nil, testHead)
 	data, _ = fenced(big, "ACCEPTANCE-DATA-n0nce234")
 	if q := strings.TrimPrefix(data, untrustedHeader+"\n"); len(q) != acceptanceQuoteMax {
 		t.Fatalf("the quote is capped at 4 KiB: %d bytes", len(q))
 	}
 	trusted := reviewTask("Acceptance: run it.")
 	trusted.Spec.Source.Trust = "trusted"
-	if tb := ReviewerBrief(trusted, "n0nce234", nil); !strings.Contains(tb, "reviewed configuration") || strings.Contains(tb, untrustedHeader) {
+	if tb := ReviewerBrief(trusted, "n0nce234", nil, testHead); !strings.Contains(tb, "reviewed configuration") || strings.Contains(tb, untrustedHeader) {
 		t.Fatalf("a trusted task's acceptance:\n%s", tb)
 	}
 	noChecks := readyScope()
 	noChecks.Acceptance = nil
-	if b := ReviewerBrief(reviewTask("Acceptance: run it."), "n0nce234", &Scoped{Scope: noChecks, Seq: 9}); strings.Contains(b, "SCOPE-DATA-") ||
+	if b := ReviewerBrief(reviewTask("Acceptance: run it."), "n0nce234", &Scoped{Scope: noChecks, Seq: 9}, testHead); strings.Contains(b, "SCOPE-DATA-") ||
 		!strings.Contains(b, "ACCEPTANCE-DATA-") {
 		t.Fatalf("a scope without checks falls through to the issue's:\n%s", b)
 	}
-	none := ReviewerBrief(reviewTask("# Fix the links"), "n0nce234", nil)
+	none := ReviewerBrief(reviewTask("# Fix the links"), "n0nce234", nil, testHead)
 	if !strings.Contains(none, "## Acceptance checks\nThe task states none") || strings.Contains(none, "ACCEPTANCE-DATA-") {
 		t.Fatalf("no acceptance:\n%s", none)
 	}
@@ -90,7 +96,7 @@ func TestTheReviewerBriefFallsBackToTheIssuesAcceptance(t *testing.T) {
 // room's pointer, the checks stay.
 func TestTheReviewerBriefFits(t *testing.T) {
 	tk := steered(reviewTask(strings.Repeat("s", 14336)))
-	b := ReviewerBrief(tk, "n0nce234", &Scoped{Scope: maxScope(t), Seq: 9})
+	b := ReviewerBrief(tk, "n0nce234", &Scoped{Scope: maxScope(t), Seq: 9}, testHead)
 	if len(b) > firstCap || !strings.Contains(b, "SCOPE-DATA-") || !strings.Contains(b, "sinceSeq 0") {
 		t.Fatalf("%d bytes (cap %d)", len(b), firstCap)
 	}
@@ -100,8 +106,24 @@ func TestTheReviewerBriefFits(t *testing.T) {
 func TestAPartsReviewerBriefNamesThePart(t *testing.T) {
 	tk := partTask(parentText)
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
-	b := ReviewerBrief(tk, "n0nce234", partScoped(tk))
+	b := ReviewerBrief(tk, "n0nce234", partScoped(tk), testHead)
 	if !strings.Contains(b, "part 1 of 2 of the task") || strings.Contains(b, "handoff seq 0") {
 		t.Fatalf("%s", b)
+	}
+}
+
+// reviewChecks is what the claim carries to an approve's comment: the scope's checks, one a line,
+// else the issue's acceptance, else nothing.
+func TestReviewChecks(t *testing.T) {
+	sc := readyScope()
+	sc.Acceptance = []envelope.Acceptance{{Check: "task links\npasses", Proves: "every link resolves"}, {Check: "go test ./...", Proves: "nothing broke"}}
+	if got := reviewChecks(reviewTask("# Fix"), &Scoped{Scope: sc}); got != "- task links passes: proves every link resolves\n- go test ./...: proves nothing broke" {
+		t.Errorf("scope checks = %q", got)
+	}
+	if got := reviewChecks(reviewTask("Fix it.\n\n## Acceptance\n- task links passes\n\n## Notes\nnone"), nil); got != "- task links passes" {
+		t.Errorf("issue acceptance = %q", got)
+	}
+	if got := reviewChecks(reviewTask("# Fix the links"), nil); got != "" {
+		t.Errorf("no acceptance = %q", got)
 	}
 }
