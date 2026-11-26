@@ -10,7 +10,11 @@ gate: the sandbox is the agent's to change, and the CI stays the only judge of a
 
   agent-checks                every step; exit 0 when none failed, 1 otherwise, 2 when nothing is declared
   agent-checks --step NAME    one step; its result never stands for the head's
-  agent-checks --install      the toolchain only: agent-run's background prefetch
+  agent-checks --install      the toolchain only, then pre-commit's hook environments: agent-run's
+                              install phase, before the agent starts
+
+After agent-run closes the install phase (STATE/install-closed: the run's egress no longer reaches
+GitHub's release hosts), nothing installs: a tool missing then is named, and CI checks it.
 """
 import argparse
 import collections
@@ -52,6 +56,9 @@ SCRUBBED_PREFIXES = ("OH_SESSION_API_KEYS_", "MISE_")
 LOG_CAP, LINE_CAP = 50 * 1024 * 1024, 4096
 RESULTS = ("pass", "fail", "timeout", "skip")
 LEDGER = "runs.jsonl"
+# The install phase's record: the pins it installed, and agent-run's mark that the phase is closed.
+INSTALLED, CLOSED = "install.json", "install-closed"
+HOOKS = "pre-commit hooks"
 
 
 class ToolchainError(Exception):
@@ -229,12 +236,35 @@ def wait(proc, limit: float, beat) -> str:
         beat(int(time.monotonic() - start))
 
 
+def closed() -> bool:
+    """Whether agent-run closed the install phase: the install hosts are no longer reachable."""
+    return os.path.exists(os.path.join(STATE, CLOSED))
+
+
+def installed_pins() -> dict:
+    """The pins the install phase installed, {} when it recorded none."""
+    try:
+        with open(os.path.join(STATE, INSTALLED)) as f:
+            pins_ = json.load(f).get("pins", {})
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return pins_ if isinstance(pins_, dict) else {}
+
+
 def install(tools: dict[str, str | None], say) -> list[str]:
-    """Installs the pinned tools mise lacks, within INSTALL_S; returns the declared tools still missing."""
+    """Installs the pinned tools mise lacks, within INSTALL_S; returns the declared tools still missing.
+    After the install phase closed it installs nothing (the hosts are gone, and a retry would only
+    wait on refusals): it names each missing tool and why, once."""
     os.makedirs(TOOLCHAIN, exist_ok=True)
     specs = {t: "%s@%s" % (t, v) for t, v in tools.items() if v}
     have = installed(specs)
     todo = [s for t, s in specs.items() if t not in have]
+    if todo and closed():
+        before = installed_pins()
+        for t in (t for t in tools if t not in have):
+            why = "pin changed after the install phase" if t in before and before[t] != tools[t] else "not installed in the install phase"
+            say("toolchain incomplete: %s (%s; CI checks it)" % (t, why))
+        return [t for t in tools if t not in have]
     if todo:
         say("installing %s" % " ".join(todo))
         with open(os.path.join(STATE, "install.log"), "a") as log:
@@ -244,6 +274,22 @@ def install(tools: dict[str, str | None], say) -> list[str]:
                 say("the install stopped after %ds" % INSTALL_S)
         have = installed(specs)
     return [t for t in tools if t not in have]
+
+
+def install_hooks(tools: dict[str, str | None], missing: list[str], say) -> bool:
+    """pre-commit's hook environments, when pre-commit is a declared, installed tool and the work tree
+    configures it, within INSTALL_S: in the install phase, while the hook repositories and registries
+    are reachable. True when there was nothing to build or the build succeeded."""
+    if "pre-commit" not in tools or "pre-commit" in missing or not os.path.exists(os.path.join(REPO, ".pre-commit-config.yaml")):
+        return True
+    say("installing the pre-commit hook environments")
+    with open(os.path.join(STATE, "install.log"), "a") as log:
+        proc = subprocess.Popen(["pre-commit", "install-hooks"], cwd=REPO, env=step_env(tools, missing),
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        if wait(proc, INSTALL_S, lambda s: say("installing the hook environments, %ds" % s)) == "timeout":
+            say("the hook install stopped after %ds" % INSTALL_S)
+            return False
+    return proc.returncode == 0
 
 
 def step_env(tools: dict[str, str | None], missing: list[str]) -> dict:
@@ -443,7 +489,12 @@ def main(argv: list[str]) -> int:
                 say("waiting for another agent-checks (the toolchain install, or a run), %ds" % (time.monotonic() - waited))
                 time.sleep(HEARTBEAT_S)
         if args.install:
-            missing = install(pins(decl["tools"]), say)
+            tools = pins(decl["tools"])
+            missing = install(tools, say)
+            with open(os.path.join(STATE, INSTALLED), "w") as f:
+                json.dump({"pins": tools}, f)
+            if not install_hooks(tools, missing, say):
+                missing.append(HOOKS)
             say("toolchain ready" if not missing else "toolchain incomplete: %s" % ", ".join(missing))
             return 1 if missing else 0
         try:

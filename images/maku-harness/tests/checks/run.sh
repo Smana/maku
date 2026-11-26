@@ -14,9 +14,11 @@ set -euo pipefail
 image=$1 repo=$2 profiles=$3 token=$4
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# The composition's _EGRESS_PROFILES, the two v3 hosts included; runctl's defaultProfiles are the same.
+# runctl's defaultProfiles, and its defaultInstallHosts under [install]: a check run reaches them while
+# its toolchain installs, which is all this suite runs, so they are allowed here throughout.
 declare -A HOSTS=(
-  [github]="github.com api.github.com codeload.github.com objects.githubusercontent.com raw.githubusercontent.com release-assets.githubusercontent.com"
+  [github]="github.com api.github.com"
+  [install]="release-assets.githubusercontent.com objects.githubusercontent.com raw.githubusercontent.com"
   [pypi]="pypi.org files.pythonhosted.org"
   [npm]="registry.npmjs.org"
   [golang]="proxy.golang.org sum.golang.org dl.google.com"
@@ -31,7 +33,7 @@ case "$code" in
   *) echo "FAIL ${repo}: could not read its declaration (HTTP $code)"; exit 1 ;;
 esac
 
-allow=${HOSTS[github]}
+allow="${HOSTS[github]} ${HOSTS[install]}"
 for p in ${profiles//,/ }; do
   [ -n "${HOSTS[$p]:-}" ] || { echo "unknown profile $p" >&2; exit 2; }
   allow="$allow ${HOSTS[$p]}"

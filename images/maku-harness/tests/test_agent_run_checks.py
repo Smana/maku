@@ -1,4 +1,4 @@
-"""agent-run's half of v3 feature 3 (offline proof 5): the rule, the milestone, the prefetch, the final
+"""agent-run's half of v3 feature 3 (offline proof 5): the rule, the milestone, the install phase, the final
 run on the head, its note and its deadline. agent-checks itself is test_agent_checks.py's."""
 import json
 import os
@@ -164,15 +164,15 @@ class FinalChecksTest(unittest.TestCase):
         self.assertTrue(text.endswith(", ….") and "Failed: step-00" in text)
 
 
-    def test_a_prefetch_that_cannot_start_starts_no_span(self):
+    def test_an_install_that_cannot_start_starts_no_span(self):
         spans = []
         with mock.patch.object(agent_run, "CHECKS_DIR", os.path.join(self.tmp, "no", "such", "\0")):
             with self.assertRaises((OSError, ValueError)):
-                agent_run.prefetch(spans.append)
+                agent_run.install_toolchain(spans.append)
         self.assertEqual(spans, [])
         with mock.patch("agent_run.subprocess.Popen", side_effect=OSError("boom")):
             with self.assertRaises(OSError):
-                agent_run.prefetch(spans.append)
+                agent_run.install_toolchain(spans.append)
         self.assertEqual(spans, [])
 
     def test_a_malformed_result_is_unreadable_not_an_exception(self):
@@ -316,7 +316,8 @@ class MainChecksTest(unittest.TestCase):
                     mock.patch("agent_run.persisted", return_value=False), \
                     mock.patch("agent_run.clone", return_value=False), \
                     mock.patch("agent_run.checks_module") as module, \
-                    mock.patch("agent_run.prefetch") as pre, \
+                    mock.patch("agent_run.install_toolchain") as pre, \
+                    mock.patch("agent_run.close_install"), \
                     mock.patch("agent_run.final_checks") as final, \
                     mock.patch("agent_run.build_request", return_value={"x": 1}) as build, \
                     mock.patch("agent_run.http", return_value={"id": "c1"}), \
@@ -328,7 +329,7 @@ class MainChecksTest(unittest.TestCase):
                 agent_run.main()
         return pre, final, build.call_args.args[2]
 
-    def test_a_check_enabled_run_prefetches_states_the_rule_and_checks_the_finished_head(self):
+    def test_a_check_enabled_run_installs_states_the_rule_and_checks_the_finished_head(self):
         pre, final, rules = self._main({"AGENT_CHECKS": "1"})
         pre.assert_called_once()
         self.assertTrue(rules.startswith("rules\nRepository checks:\n- Before every push"))
@@ -341,7 +342,7 @@ class MainChecksTest(unittest.TestCase):
         self.assertIsNone(final.call_args.args[1])
 
     def test_a_checks_failure_never_fails_the_run(self):
-        for name in ("prefetch", "final_checks"):
+        for name in ("install_toolchain", "final_checks"):
             with self.subTest(name=name):
                 with mock.patch("agent_run.declared", return_value=DECL), mock.patch("agent_run.%s" % name, side_effect=OSError("boom")):
                     with tempfile.TemporaryDirectory() as d:
@@ -354,7 +355,8 @@ class MainChecksTest(unittest.TestCase):
                                 mock.patch("agent_run.build_request", return_value={"x": 1}), \
                                 mock.patch("agent_run.http", return_value={"id": "c1"}), mock.patch("agent_run.poll", return_value=0), \
                                 mock.patch("agent_run.StepLog"), mock.patch("agent_run.stop", return_value="s"), \
-                                mock.patch("agent_run.timed"), mock.patch("agent_run.final_checks" if name == "prefetch" else "agent_run.prefetch"):
+                                mock.patch("agent_run.timed"), mock.patch("agent_run.close_install"), \
+                                mock.patch("agent_run.final_checks" if name == "install_toolchain" else "agent_run.install_toolchain"):
                             self.assertEqual(agent_run.main(), 0)
 
     def test_a_failed_conversation_is_not_checked(self):

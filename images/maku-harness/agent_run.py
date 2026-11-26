@@ -17,6 +17,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -765,6 +766,10 @@ NOTE_MAX = 280
 CHECKS_SKIPS = {"deadline", "no result", "unreadable result"}
 CHECKS_RESULTS = {"pass", "fail", "timeout", "skip"}
 CHECKS_SPAN, INSTALL_SPAN = "agent-run.checks", "agent-run.checks.install"
+# The install phase: agent-checks --install's two bounds (tools, then hook environments) and a margin;
+# then the close's check, a release download the egress proxy must refuse.
+INSTALL_PHASE_S = 660
+SELF_CHECK_HOST, SELF_CHECK_S = "release-assets.githubusercontent.com:443", 10
 BOOT_SPAN, CLONE_SPAN = "agent-run.boot", "agent-run.clone"
 
 
@@ -810,24 +815,82 @@ def _end(span, error: str | None) -> None:
     span.end()
 
 
-def prefetch(start_span=None):
-    """agent-checks --install in the background, right after the clone, so the toolchain installs
-    while the model reads the task (RC1). A waiter thread ends its span when it exits."""
+def install_toolchain(start_span=None) -> None:
+    """agent-checks --install in the foreground, right after the clone and before the agent starts: the
+    pinned toolchain, then pre-commit's hook environments, while the run's install hosts are open
+    (GitHub egress tightening). Bounded by INSTALL_PHASE_S; an incomplete install never fails the run,
+    its steps then say which tool is missing."""
+    ac = checks_module()
     os.makedirs(CHECKS_DIR, exist_ok=True)
-    with open(os.path.join(CHECKS_DIR, "prefetch.log"), "a") as log:
+    path = os.path.join(CHECKS_DIR, "install-phase.log")
+    with open(path, "a") as log:
         proc = subprocess.Popen([CHECKS_TOOL, "--install"], stdin=subprocess.DEVNULL, stdout=log,
                                 stderr=subprocess.STDOUT, start_new_session=True)
     span = start_span(INSTALL_SPAN) if start_span else None
+    error = "install_incomplete"
+    try:
+        if ac.wait(proc, INSTALL_PHASE_S, lambda _s: None) == "done" and proc.returncode == 0:
+            error = None
+    finally:
+        _end(span, error)
+    with open(path, errors="replace") as log:
+        said = [line.strip() for line in log if line.startswith("agent-checks: toolchain ")]
+    print("agent-run install phase: %s" % (said[-1] if said else "agent-checks said nothing (%s)" % path), flush=True)
 
-    def wait():
-        error = "install_incomplete"
-        try:
-            error = "install_incomplete" if proc.wait() else None
-        finally:
-            _end(span, error)
 
-    threading.Thread(target=wait, daemon=True).start()
-    return proc
+class EgressInstallOpen(Exception):
+    """The install hosts could not be closed, or are still reachable after the close: the agent never
+    starts (egress_install_open)."""
+
+
+def connect_status(env: dict, target: str):
+    """The egress proxy's status code for CONNECT target, None when it gave none."""
+    u = urllib.parse.urlsplit(env.get("HTTPS_PROXY") or env.get("https_proxy") or "")
+    if not u.hostname:
+        return None
+    try:
+        with socket.create_connection((u.hostname, u.port or 80), timeout=5) as c:
+            c.sendall(("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n" % (target, target)).encode())
+            line = c.makefile("rb").readline(256).decode("latin-1").split()
+    except OSError:
+        return None
+    return int(line[1]) if len(line) > 1 and line[1].isdigit() else None
+
+
+def close_install(env: dict) -> None:
+    """Closes the run's install hosts at the egress proxy, for good, and checks it: a CONNECT to
+    SELF_CHECK_HOST must then be refused (403). Raises EgressInstallOpen when either fails. Without a
+    close endpoint (a network mode with no install window, or a run with no install set) it closes
+    nothing, and a check run says its install hosts stay open."""
+    url = env.get("EGRESS_INSTALL_CLOSE_URL", "")
+    if not url:
+        if env.get("AGENT_CHECKS") == "1":
+            print("agent-run: the install hosts stay open for this run: its network mode has no install window",
+                  file=sys.stderr, flush=True)
+        return
+    req = urllib.request.Request(url, data=json.dumps({"podUID": env.get("POD_UID", "")}).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        # Direct: the proxy's Service is in NO_PROXY, and the close is the proxy's own route.
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=10) as r:
+            status = r.status
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        exc.close()
+    except (urllib.error.URLError, OSError, HTTPException) as exc:
+        raise EgressInstallOpen("the close failed: %s" % _short(exc, 200)) from None
+    if status != 200:
+        raise EgressInstallOpen("the close answered %d" % status)
+    # A replica's pod watch can trail the close another replica wrote: retry the check briefly.
+    deadline = time.monotonic() + SELF_CHECK_S
+    while (got := connect_status(env, SELF_CHECK_HOST)) != 403:
+        if time.monotonic() >= deadline:
+            raise EgressInstallOpen("%s answers %s after the close, not 403" % (SELF_CHECK_HOST, got))
+        time.sleep(0.5)
+    os.makedirs(CHECKS_DIR, exist_ok=True)
+    with open(os.path.join(CHECKS_DIR, checks_module().CLOSED), "w") as f:
+        f.write("closed\n")
+    print("agent-run: install hosts closed: %s is refused" % SELF_CHECK_HOST, flush=True)
 
 
 def _git_out(*args: str) -> str:
@@ -852,14 +915,10 @@ def start_base() -> str:
     return _git_out("rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD^{commit}")
 
 
-def contract_env(decl, prefetched=None) -> dict:
-    """The tests' environment: the toolchain the prefetch installed (F1-R13), scrubbed as a step's."""
+def contract_env(decl) -> dict:
+    """The tests' environment: the toolchain the install phase installed (F1-R13), scrubbed as a step's.
+    After the phase closed, the install only checks, offline, and names what is missing."""
     ac = checks_module()
-    if prefetched is not None:
-        try:
-            prefetched.wait(timeout=ac.INSTALL_S)
-        except subprocess.TimeoutExpired:
-            pass
     tools = ac.pins(decl.get("tools", []))
     missing = ac.install(tools, lambda m: print("agent-run contract: " + m, file=sys.stderr, flush=True))
     env = ac.step_env(tools, missing)
@@ -1945,14 +2004,14 @@ def contract_loop(env: dict, cid: str, steps, hold, notes=None) -> int:
             return 0
 
 
-def make_hold(env: dict, base: str, contract: dict, decl, prefetched):
+def make_hold(env: dict, base: str, contract: dict, decl):
     """The hold as a zero-argument callable; the toolchain is built on its first call (F1-R13)."""
     cache = {}
 
     def run() -> dict:
         try:
             if "env" not in cache:
-                cache["env"] = contract_env(decl or {}, prefetched)
+                cache["env"] = contract_env(decl or {})
             tc = contract_module()
             return tc.hold(REPO_DIR, cache["env"], lambda m: print("agent-run contract: " + m, file=sys.stderr, flush=True),
                            base=base, contract=contract["commit"])[1]
@@ -2436,12 +2495,20 @@ def main() -> int:
                 base = start_base()
             except Exception as exc:  # noqa: BLE001 -- no base reads as no contract and no hold; the run goes on
                 print("agent-run: contract base not read: %s" % _short(exc, 200), file=sys.stderr, flush=True)
-        prefetched = None
+        # The install phase, before the agent: the toolchain, then the install hosts closed for good.
         if decl:
             try:
-                prefetched = prefetch(child_spans(provider, span))
-            except Exception as exc:  # noqa: BLE001 -- the run goes on without the prefetch
-                print("agent-run: checks prefetch not started: %s" % exc, file=sys.stderr, flush=True)
+                install_toolchain(child_spans(provider, span))
+            except Exception as exc:  # noqa: BLE001 -- the run goes on without the toolchain
+                print("agent-run: toolchain install not started: %s" % exc, file=sys.stderr, flush=True)
+        try:
+            close_install(env)
+        except EgressInstallOpen as exc:
+            print("agent-run: egress_install_open: %s; the agent does not start" % exc, file=sys.stderr, flush=True)
+            if span:
+                span.set_attribute("error.type", "egress_install_open")
+            code = 1
+            return code
         contract = load_contract(env, resumed, base)
         with open(env["TASK_FILE"]) as t, open(env["RULES_FILE"]) as r:
             search = driver.search_available()
@@ -2475,7 +2542,7 @@ def main() -> int:
                         nudge_steps(env) if search else 0, scoper_bounds(env, task), resumed,
                         summary_model=env.get("LIGHT_MODEL") or env.get("MODEL") or "",
                         driver=driver, on_event=getattr(driver, "on_event", None))
-        hold = make_hold(env, base, contract, decl, prefetched) if contract else None
+        hold = make_hold(env, base, contract, decl) if contract else None
         if policy:
             limit = env.get("AGENT_RUN_SECONDS", "")
             code, end, note = drive(env, cid, steps, policy, state, task, notes=notes, hold=hold,
@@ -2493,7 +2560,7 @@ def main() -> int:
             print("agent-run scoper end: %s: %s" % (end, note), flush=True)
         if code == 0 and test_first(env):
             try:
-                tester_end(env, cid, base, contract_env(decl or {}, prefetched), notes,
+                tester_end(env, cid, base, contract_env(decl or {}), notes,
                            child_spans(provider, span) if span else None)
             except Exception as exc:  # noqa: BLE001 -- every tester end exits 0 (F1-R7): the forge is what the factory reads
                 print("agent-run: contract check failed: %s" % _short(exc, 200), file=sys.stderr, flush=True)
