@@ -56,6 +56,8 @@ type makuBroker struct {
 	dryRun func(req stages.DryRunRequest) (int, any)
 	// stages answers GET /api/stages when set.
 	stages *stages.Report
+	// summary answers GET /api/rooms/{id}/summary when set; empty answers the default room.
+	summary string
 }
 
 func newMakuBroker(t *testing.T) *makuBroker {
@@ -146,6 +148,8 @@ func newMakuBroker(t *testing.T) *makuBroker {
 				_, _ = w.Write([]byte(`{"apiVersion":"needs/v1","items":[],"cursor":"2026-11-04T19:10:00Z"}`))
 			case strings.Contains(r.URL.Path, "/gone/"):
 				http.Error(w, "no such room", http.StatusNotFound)
+			case b.summary != "" && strings.HasSuffix(r.URL.Path, "/summary"):
+				_, _ = w.Write([]byte(b.summary))
 			default:
 				_, _ = w.Write([]byte(`{"apiVersion":"summary/v1","room":"26zfnuxm","url":"https://rooms.example/r/26zfnuxm","status":{"phase":"Implementing"},"needsYou":[],"actions":[],` +
 					`"notes":{"untrusted":true,"items":[{"at":"2026-10-08T19:14:00Z","run":"cf4ato2x","text":"hi\u001b[2J"}]},"cursor":"seq:142"}`))
