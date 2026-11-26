@@ -19,6 +19,7 @@ import (
 
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/meaning"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/resources"
 )
@@ -73,6 +74,10 @@ type ClassReport struct {
 	Proposal *Proposal `json:"proposal,omitempty"`
 	// Unproposed says why a class has no proposal: not_shadow, not_in_repository_policy.
 	Unproposed string `json:"unproposed,omitempty"`
+	// Meaning is the sentence of the class as this repository serves it: what it merges, what
+	// checks its meaning (correctness signals CS7). Nil for a class the factory's config does not
+	// resolve (one only the repository's file declares).
+	Meaning *meaning.Sentence `json:"meaning,omitempty"`
 }
 
 // PolicyStatus is a MergePolicy's stored status as the leader wrote it, and the object's
@@ -112,6 +117,20 @@ type PolicyReport struct {
 	Manifest     string                      `json:"manifest"`
 	ManifestPath string                      `json:"manifestPath"`
 	Status       factoryv1.MergePolicyStatus `json:"status"`
+	// Meaning is the policy's sentence read alone, without a repository's binding (CS7).
+	Meaning meaning.Sentence `json:"meaning"`
+	// Bindings are the policy's consumers the caller reads, each with the sentence of its binding.
+	Bindings []BindingMeaning `json:"bindings,omitempty"`
+}
+
+// BindingMeaning is one repository's binding of a policy, read-only on the policy's page: its
+// mode, the sentence of the resolved class, and what the binding adds.
+type BindingMeaning struct {
+	Repository     string           `json:"repository"`
+	Mode           string           `json:"mode"`
+	Meaning        meaning.Sentence `json:"meaning"`
+	HoldoutChecks  []string         `json:"holdoutChecks,omitempty"`
+	ProtectedFiles []string         `json:"protectedFiles,omitempty"`
 }
 
 // Report is a repository's policy as read at ReadAt, and its classes' promotion evidence as read
@@ -545,7 +564,7 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 		}
 	}
 	for _, c := range s.classes(cfg, rc, file) {
-		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode}
+		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode, Meaning: meaning.OfRepository(rc, c.name)}
 		if e, ok := classes[c.name]; ok {
 			cr.Evidence = &e
 		}
@@ -699,7 +718,8 @@ func (s *Service) Policy(ctx context.Context, name string) (PolicyReport, error)
 	if err != nil {
 		return PolicyReport{}, fmt.Errorf("evidence: policy manifest: %w", err)
 	}
-	r := PolicyReport{Name: name, Generation: p.Generation, Spec: *p.Spec.DeepCopy(), Manifest: string(m), ManifestPath: "mergepolicy-" + name + ".yaml"}
+	r := PolicyReport{Name: name, Generation: p.Generation, Spec: *p.Spec.DeepCopy(), Manifest: string(m), ManifestPath: "mergepolicy-" + name + ".yaml",
+		Meaning: meaning.OfPolicy(name, p.Spec)}
 	if s.PolicyStatus != nil {
 		if st, ok := s.PolicyStatus(ctx, name); ok {
 			r.Status = st.Status

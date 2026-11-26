@@ -80,3 +80,25 @@ func TestRecentCacheIsBounded(t *testing.T) {
 		t.Fatalf("%d entries kept, bound %d", n, maxRecentEntries)
 	}
 }
+
+// Correctness signals CS7: a pull request's timeline carries the sentence of each policy its
+// decisions name, as the repository serves it, for `maku policy explain`.
+func TestTheTimelineCarriesEachPolicysSentence(t *testing.T) {
+	cfg := boundRig(t)
+	cfg.FactoryLogin = "ogenki-agent-factory[bot]"
+	body := "<!-- agent-factory-decision head=a1 class=docs decision=shadow:shadow_would_arm files=1/0 lines=2/20 shape=n/a " +
+		"holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false signal=none reviewer=glm-5.3 -->"
+	s := &Service{Cfg: cfg, Comments: func(string) (CommentReader, bool) {
+		return func(context.Context, int) ([]Comment, error) {
+			return []Comment{comment(1, "ogenki-agent-factory[bot]", "2026-11-26T00:00:00Z", body)}, nil
+		}, true
+	}}
+	tl, err := s.Timeline(t.Context(), "Smana/cloud-native-ref", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := tl.Meanings["docs"]
+	if !ok || m.Signal != "none" || !m.Prose || m.CheckedBy != "nothing: this is prose" || tl.Decisions[0].Signal != "none" {
+		t.Fatalf("%+v %+v", tl.Meanings, tl.Decisions)
+	}
+}

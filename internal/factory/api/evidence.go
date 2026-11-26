@@ -16,6 +16,7 @@ import (
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/meaning"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
@@ -184,9 +185,21 @@ func (s *Server) bindersOf(cfg *config.Config, name string) map[string]string {
 // so its existence is not told to anyone else. A lookup that fails reads nothing.
 func (s *Server) visible(ctx context.Context, cfg *config.Config, pr authn.Principal, p evidence.PolicyReport) (evidence.PolicyReport, bool) {
 	reads := map[string]bool{}
+	var repos []string
 	for object, repo := range s.bindersOf(cfg, p.Name) {
 		if can, err := s.reads(ctx, pr, repo); err == nil && can {
 			reads[object] = true
+			repos = append(repos, repo)
+		}
+	}
+	// Each readable binding with its own sentence (correctness signals CS7), read-only on the page.
+	p.Bindings = nil
+	for _, repo := range slices.Sorted(slices.Values(repos)) {
+		rc := cfg.RepositoryFor(repo)
+		if in, ok := meaning.For(rc, p.Name); ok {
+			cl, _ := rc.Class(p.Name)
+			p.Bindings = append(p.Bindings, evidence.BindingMeaning{Repository: rc.Name, Mode: in.Mode, Meaning: meaning.Build(in),
+				HoldoutChecks: cl.HoldoutChecks, ProtectedFiles: cl.ProtectedFiles})
 		}
 	}
 	if len(reads) == 0 {

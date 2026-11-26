@@ -169,3 +169,23 @@ func TestAFileBoundPolicyIsShownToItsReaders(t *testing.T) {
 		t.Fatalf("a reader of no consumer: %d %s", w.Code, w.Body)
 	}
 }
+
+// Correctness signals CS7: a policy's page shows each binding the caller reads, read-only, with the
+// sentence of the class that repository serves; never a binding of a repository they cannot read.
+func TestAPolicyCarriesTheSentenceOfEachReadableBinding(t *testing.T) {
+	s := policiesServer(true)
+	cfg := s.Cfg.Current()
+	cfg.Repositories[0].Classes = map[string]config.Class{"dead-links": {Shadow: true, AllowedFiles: []string{`^observability/.+\.ya?ml$`},
+		HoldoutChecks: []string{"rules"}}}
+	cfg.Repositories[1].Classes = map[string]config.Class{"dead-links": {Live: true}}
+	w := getAs(s.Handler(), "human", "/v1/policy/policies/dead-links")
+	var p evidence.PolicyReport
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Bindings) != 1 || p.Bindings[0].Repository != coordPrimary || p.Bindings[0].Mode != "shadow" ||
+		p.Bindings[0].Meaning.Signal != "none" || !strings.Contains(p.Bindings[0].Meaning.When, "YAML under `observability/`") ||
+		len(p.Bindings[0].HoldoutChecks) != 1 {
+		t.Fatalf("%+v", p.Bindings)
+	}
+}
