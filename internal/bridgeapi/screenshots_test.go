@@ -157,13 +157,13 @@ func TestAScreenshotUploadIsRefused(t *testing.T) {
 			code: http.StatusRequestEntityTooLarge, reason: wire.ReasonScreenshotTooLarge},
 		{name: "over the quota", annotation: "10", token: "run:" + runA, path: shotPath(runA, 1), body: img,
 			setup: func(m *memShots, _ *memLog) { m.err = store.ErrScreenshotQuota },
-			code: http.StatusTooManyRequests, reason: wire.ReasonScreenshotQuota},
+			code:  http.StatusTooManyRequests, reason: wire.ReasonScreenshotQuota},
 		{name: "another image under the same n", annotation: "10", token: "run:" + runA, path: shotPath(runA, 1), body: img,
 			setup: func(m *memShots, _ *memLog) { m.err = store.ErrScreenshotConflict },
-			code: http.StatusConflict, reason: wire.ReasonScreenshotConflict},
+			code:  http.StatusConflict, reason: wire.ReasonScreenshotConflict},
 		{name: "a sealed room", annotation: "10", token: "run:" + runA, path: shotPath(runA, 1), body: img,
 			setup: func(m *memShots, _ *memLog) { m.err = fmt.Errorf("put: %w", store.ErrSealed) },
-			code: http.StatusGone, reason: wire.ReasonSealed},
+			code:  http.StatusGone, reason: wire.ReasonSealed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, log, w, shots := newShotServer(t)
