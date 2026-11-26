@@ -194,6 +194,23 @@ tests.append({"interval": "1h", "input_series": [
     rows(prep(expr("agent-factory", "Spend per UTC day: ledger vs gateway", "B")), [{"value": 3}], "40h"),
 ]})
 
+# The workflow panels (WR5) read seven days of series recorded once per ended task: a stage's
+# dollars, the harness split of run cost, and the task's share of its card's ceiling (0.4: the
+# median interpolates inside the (0.35, 0.5] bucket).
+WR5 = 'repository="o/a", class="docs"'
+tests.append({"interval": "1h", "input_series": [
+    {"series": 'maku_factory_stage_cost_usd_sum{%s, stage="implement"}' % WR5, "values": "0 3x100"},
+    {"series": 'maku_factory_stage_cost_usd_sum{%s, stage="review"}' % WR5, "values": "0 0.5x100"},
+    {"series": 'maku_factory_run_cost_usd_sum{harness="opencode", role="implementer", tier="standard", cohort="treatment", profile="standard"}', "values": "0 2x100"},
+    {"series": 'maku_factory_run_cost_usd_sum{harness="openhands", role="implementer", tier="standard", cohort="control", profile="standard"}', "values": "0 1x100"},
+] + [{"series": 'maku_factory_ceiling_use_ratio_bucket{%s, stage_count="3", le="%s"}' % (WR5, le), "values": "0 %dx100" % (0 if float(le) < 0.4 else 1)}
+     for le in ("0.05", "0.1", "0.2", "0.35", "0.5", "0.75", "1", "1.25", "1.5", "+Inf")], "promql_expr_test": [
+    rows(prep(expr("agent-factory", "Cost by stage (7 d)")), [{"labels": '{stage="implement"}', "value": 3}, {"labels": '{stage="review"}', "value": 0.5}], "100h"),
+    rows(prep(expr("agent-factory", "Cost by harness and role (7 d)")),
+         [{"labels": '{harness="opencode", role="implementer"}', "value": 2}, {"labels": '{harness="openhands", role="implementer"}', "value": 1}], "100h"),
+    rows(prep(expr("agent-factory", "Ceiling use, p50 and p90 (7 d)")), [{"value": 0.425}], "100h"),
+]})
+
 # The identity page (cloud-native-ref's test-agent-identity-queries.sh), two principals at once.
 A, B, F = "github:alice", "github:bob", "system:factory"
 X = 'namespace="maku", pod="agent-factory-0"'
