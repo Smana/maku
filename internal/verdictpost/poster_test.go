@@ -297,7 +297,7 @@ func TestBody(t *testing.T) {
 	ev := verdict(42, pr)
 	var v envelope.MessagePayload
 	_ = json.Unmarshal(ev.Payload, &v)
-	public := Body(ev, v, "public", "https://rooms.priv.aws.ogenki.io")
+	public := Body(ev, v, "public", "https://rooms.priv.aws.ogenki.io", 0)
 	for _, want := range []string{"### Agent review: changes requested", "```\nMissing a test.\ncc @Smana\n```\n",
 		"[3kq7x2ma](https://rooms.priv.aws.ogenki.io/r/3kq7x2ma)", "`4be1c9d`", "`7f3cq2xz`", "event 42", "neither approves nor blocks"} {
 		if !strings.Contains(public, want) {
@@ -309,35 +309,61 @@ func TestBody(t *testing.T) {
 	}
 	approve := v
 	approve.Verdict = "approve"
-	if !strings.Contains(Body(ev, approve, "public", ""), "### Agent review: approved") {
+	if !strings.Contains(Body(ev, approve, "public", "", 0), "### Agent review: approved") {
 		t.Error("approve title")
 	}
 	spoof := v
 	spoof.Text = "done\n```\n@Smana see Smana/other#3 ![x](https://evil.example/p.png) \u202eevil"
-	b := Body(ev, spoof, "public", "https://rooms.priv.aws.ogenki.io")
+	b := Body(ev, spoof, "public", "https://rooms.priv.aws.ogenki.io", 0)
 	if strings.Contains(b, "\u202e") || !strings.Contains(b, "````\ndone\n```\n@Smana see Smana/other#3 ![x](https://evil.example/p.png) evil\n````\n") {
 		t.Errorf("a summary is quoted in a block it cannot close (reviews M5, 3.5 m3):\n%s", b)
 	}
-	internal := Body(ev, v, "internal", "https://rooms.priv.aws.ogenki.io")
+	internal := Body(ev, v, "internal", "https://rooms.priv.aws.ogenki.io", 0)
 	if strings.Contains(internal, "Missing a test") || !strings.Contains(internal, "/r/3kq7x2ma") {
 		t.Errorf("an internal room's summary stays in the room:\n%s", internal)
 	}
-	if unknown := Body(ev, v, "", ""); strings.Contains(unknown, "Missing a test") {
+	if unknown := Body(ev, v, "", "", 0); strings.Contains(unknown, "Missing a test") {
 		t.Error("a room whose data class is unknown is never treated as public")
 	}
 	// An approve with no summary (15 of 16 in the paired trial of 2026-11-26) says what it covers:
 	// the acceptance the factory asked the reviewer to check, quoted inert as a summary is.
 	empty := approve
 	empty.Text, empty.Checks = "", "- test-cost-crosscheck --json: proves @Smana's table and JSON agree"
-	if b := Body(ev, empty, "public", ""); !strings.Contains(b, "_The reviewer wrote no summary. It was asked to check the diff against this acceptance:_\n\n```\n- test-cost-crosscheck --json: proves @Smana's table and JSON agree\n```\n") {
+	if b := Body(ev, empty, "public", "", 0); !strings.Contains(b, "_The reviewer wrote no summary. It was asked to check the diff against this acceptance:_\n\n```\n- test-cost-crosscheck --json: proves @Smana's table and JSON agree\n```\n") {
 		t.Errorf("an empty approve quotes its checks:\n%s", b)
 	}
-	if b := Body(ev, empty, "internal", ""); strings.Contains(b, "cost-crosscheck") {
+	if b := Body(ev, empty, "internal", "", 0); strings.Contains(b, "cost-crosscheck") {
 		t.Errorf("an internal room's checks stay in the room:\n%s", b)
 	}
 	empty.Checks = ""
-	if b := Body(ev, empty, "public", ""); !strings.Contains(b, "_The reviewer wrote no summary._\n") || strings.Contains(b, "```") {
+	if b := Body(ev, empty, "public", "", 0); !strings.Contains(b, "_The reviewer wrote no summary._\n") || strings.Contains(b, "```") {
 		t.Errorf("an empty approve with no checks renders no empty block:\n%s", b)
+	}
+}
+
+// TestBodyLinksScreenshots: a room holding screenshots gets one line linking its gallery (v5 Q16,
+// owner decision OQ1: a link, never pixels), whatever the room's data class.
+func TestBodyLinksScreenshots(t *testing.T) {
+	ev := verdict(42, pr)
+	var v envelope.MessagePayload
+	_ = json.Unmarshal(ev.Payload, &v)
+	for _, class := range []string{"public", "internal"} {
+		b := Body(ev, v, class, "https://rooms.priv.aws.ogenki.io", 3)
+		if !strings.Contains(b, "Screenshots: 3 taken by the agent, in the room: https://rooms.priv.aws.ogenki.io/r/3kq7x2ma#screenshots") {
+			t.Errorf("%s: no gallery link:\n%s", class, b)
+		}
+		if strings.Contains(b, "![") {
+			t.Errorf("%s: a verdict never embeds an image:\n%s", class, b)
+		}
+	}
+	if b := Body(ev, v, "public", "https://rooms.priv.aws.ogenki.io", 1); !strings.Contains(b, "Screenshots: 1 taken by the agent") {
+		t.Errorf("one screenshot:\n%s", b)
+	}
+	if b := Body(ev, v, "public", "https://rooms.priv.aws.ogenki.io", 0); strings.Contains(b, "Screenshots") {
+		t.Errorf("no screenshots, no line:\n%s", b)
+	}
+	if b := Body(ev, v, "public", "", 2); strings.Contains(b, "Screenshots") {
+		t.Errorf("no public URL, no link:\n%s", b)
 	}
 }
 

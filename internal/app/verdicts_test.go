@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/metrics"
+	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/verdictpost"
 )
 
@@ -157,5 +159,24 @@ func TestThePosterLeadsWithItsLoop(t *testing.T) {
 	<-done
 	if p.Leading() {
 		t.Fatal("leading after the lease")
+	}
+}
+
+type fakeShots struct {
+	list []store.ScreenshotMeta
+	err  error
+}
+
+func (f fakeShots) Screenshots(context.Context, string) ([]store.ScreenshotMeta, error) {
+	return f.list, f.err
+}
+
+func TestScreenshotCountCountsBrowserShotsOnly(t *testing.T) {
+	list := []store.ScreenshotMeta{{Source: store.SourceBrowser}, {Source: store.SourceRequest}, {Source: store.SourceBrowser}}
+	if n := screenshotCount(fakeShots{list: list})(t.Context(), "r"); n != 2 {
+		t.Fatalf("got %d, want the 2 browser screenshots", n)
+	}
+	if n := screenshotCount(fakeShots{err: errors.New("down")})(t.Context(), "r"); n != 0 {
+		t.Fatalf("a store error counts none, got %d", n)
 	}
 }

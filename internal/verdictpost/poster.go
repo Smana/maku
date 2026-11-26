@@ -58,11 +58,13 @@ type Poster struct {
 	Log       Log
 	GitHub    Commenter
 	DataClass func(ctx context.Context, room string) string
-	PublicURL string
-	Now       func() time.Time
-	Leading   func() bool
-	OnResult  func(ctx context.Context, result string)
-	Logger    *slog.Logger
+	// Screenshots counts the room's screenshots (v5 Q16); nil counts none.
+	Screenshots func(ctx context.Context, room string) int
+	PublicURL   string
+	Now         func() time.Time
+	Leading     func() bool
+	OnResult    func(ctx context.Context, result string)
+	Logger      *slog.Logger
 	// PostTimeout bounds one verdict's search and post; zero means a minute.
 	PostTimeout time.Duration
 
@@ -93,8 +95,10 @@ var (
 // nobody, links no other issue, loads nothing and renders no HTML, a marker
 // included (reviews M5, 3.5 m3). An approve with no summary says so, and quotes
 // the acceptance the factory asked the reviewer to check (Checks) the same way,
-// so the next reader knows what the approval covers.
-func Body(ev envelope.Event, v envelope.MessagePayload, dataClass, publicURL string) string {
+// so the next reader knows what the approval covers. A room holding shots screenshots gets one line
+// linking its gallery, whatever its data class: a link carries no pixels and opens for the room's
+// readers only (v5 Q16, owner decision OQ1).
+func Body(ev envelope.Event, v envelope.MessagePayload, dataClass, publicURL string, shots int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Agent review: %s\n\n", titles[v.Verdict])
 	switch {
@@ -111,7 +115,17 @@ func Body(ev envelope.Event, v envelope.MessagePayload, dataClass, publicURL str
 	fmt.Fprintf(&b, "\nRecorded by the %s run `%s` at `%s`, in room [%s](%s/r/%s), event %d. "+
 		"An agent verdict is advice: it neither approves nor blocks this pull request.",
 		ev.Actor.Role, ev.RunID, v.Commit, ev.RoomID, publicURL, ev.RoomID, ev.Seq)
+	if shots > 0 && publicURL != "" {
+		fmt.Fprintf(&b, "\n\nScreenshots: %d taken by the agent, in the room: %s/r/%s#screenshots", shots, publicURL, ev.RoomID)
+	}
 	return b.String()
+}
+
+func (p *Poster) shots(ctx context.Context, room string) int {
+	if p.Screenshots == nil {
+		return 0
+	}
+	return p.Screenshots(ctx, room)
 }
 
 // Once posts the unposted verdicts, while this replica leads, and records the
@@ -146,7 +160,7 @@ func (p *Poster) Once(ctx context.Context) error {
 		}
 		pctx, cancel := context.WithTimeout(ctx, p.postTimeout())
 		url, err := p.GitHub.Comment(pctx, v.PullRequest, Marker(ev.RoomID, ev.Seq),
-			Body(ev, v, p.DataClass(ctx, ev.RoomID), p.PublicURL))
+			Body(ev, v, p.DataClass(ctx, ev.RoomID), p.PublicURL, p.shots(ctx, ev.RoomID)))
 		cancel()
 		var ae *github.APIError
 		switch {
