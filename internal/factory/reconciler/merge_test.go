@@ -1616,7 +1616,7 @@ func TestADecisionIsRecordedWithItsPolicyGeneration(t *testing.T) {
 	}
 	// No repogen= and no policygen=, and resolved= names the class decided on (B13).
 	resolved := config.ShortHash(config.ResolvedHash(g.r.Cfg.Current().RepositoryFor(tk.Spec.Repository).Classes["docs-links"]))
-	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " resolved="+resolved+" reviewer=") || strings.Contains(c, "repogen=") || strings.Contains(c, "policygen=") {
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " resolved="+resolved+" signal=links-only:ok reviewer=") || strings.Contains(c, "repogen=") || strings.Contains(c, "policygen=") {
 		t.Fatalf("%q", c)
 	}
 }
@@ -1634,7 +1634,7 @@ func TestABoundDecisionRecordsBothGenerations(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	resolved := config.ShortHash(config.ResolvedHash(g.r.Cfg.Current().RepositoryFor(tk.Spec.Repository).Classes["docs-links"]))
-	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=4 repogen=7 resolved="+resolved+" reviewer=") {
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=4 repogen=7 resolved="+resolved+" signal=links-only:ok reviewer=") {
 		t.Fatalf("%q", c)
 	}
 }

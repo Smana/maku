@@ -195,9 +195,9 @@ func TestTheShadowRecordCarriesItsHead(t *testing.T) {
 }
 
 // recordHas is whether comment c carries a record whose fields before reviewer= end with tail; a
-// declared class's resolved= (B13) may sit between them.
+// declared class's resolved= (B13) and a held decision's signal= (CS1) may sit between them.
 func recordHas(c, tail string) bool {
-	return regexp.MustCompile(regexp.QuoteMeta(tail) + `( resolved=[0-9a-f]{12})? reviewer=`).MatchString(c)
+	return regexp.MustCompile(regexp.QuoteMeta(tail) + `( resolved=[0-9a-f]{12})?( signal=[a-z:-]+)? reviewer=`).MatchString(c)
 }
 
 // AM8: the comment a decision posts carries its record on a line of its own (R-m11), the would-arm,
@@ -213,51 +213,52 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 		g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": docsLinks, "revert": {Shadow: true}}
 	}
 	for _, tc := range []struct {
-		name string
-		rig  func(t *testing.T) *rig
-		want string
+		name   string
+		rig    func(t *testing.T) *rig
+		want   string
+		signal string // CS1: what judged the meaning of a decision that held, "" on a refusal
 	}{
 		{"would-arm, diff read", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Shadow: true}) // docs-links' built-in shape reads the diff
 			g.f.SetFileStats(forge.FileStat{Path: testFile, Status: "modified", Additions: 1, Deletions: 1})
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=shadow:shadow_would_arm files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=shadow:shadow_would_arm files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->", "links-only:ok"},
 		{"would-arm, the diff read for the selection", func(t *testing.T) *rig {
 			g := greenRig(t)
 			predict(t, g, "plain") // a shape and no file condition: MR1 reads the diff all the same
 			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"plain": {Shadow: true, DiffShape: "links-only"}}
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->", "links-only:ok"},
 		{"no policy matched: no class, the rows before any policy", func(t *testing.T) *rig {
 			g := greenRig(t)
 			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {}, "revert": {Live: true, Oracle: &config.Oracle{Probe: "x"}}}
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=- decision=human:no_policy_matched files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=- decision=human:no_policy_matched files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->", ""},
 		{"policy_pending stops before the breaker and the count", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Shadow: true})
 			g.f.SetChecks(12, green("PENDING"))
 			return g
-		}, "class=- decision=human:policy_pending files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=- paused=- capped=- reviewer=none -->"},
+		}, "class=- decision=human:policy_pending files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=- paused=- capped=- reviewer=none -->", ""},
 		{"steering_path, diff read", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Shadow: true})
 			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
 			g.f.SetFileStats(forge.FileStat{Path: ".github/agent-factory/steering/docs.md", Status: "modified", Additions: 2, Deletions: 1})
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=- decision=human:steering_path files=1/0 lines=3/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=- decision=human:steering_path files=1/0 lines=3/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->", ""},
 		{"diff too large", func(t *testing.T) *rig {
 			g := declaredRig(t)
 			g.f.SetDiffError(forge.ErrDiffTooLarge)
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=dead-links decision=human:patch_too_large files=-/3 lines=-/20 "},
+		}, "\n\n<!-- agent-factory-decision head=abc class=dead-links decision=human:patch_too_large files=-/3 lines=-/20 ", ""},
 		{"armed", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Live: true})
 			g.f.SetFileStats(forge.FileStat{Path: testFile, Status: "modified", Additions: 1, Deletions: 1})
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=arm:armed files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=arm:armed files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->", "links-only:ok"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := tc.rig(t)
@@ -271,8 +272,16 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 					want = strings.Replace(want, " reviewer=", " resolved="+config.ShortHash(config.ResolvedHash(cl))+" reviewer=", 1)
 				}
 			}
-			if c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n"); !strings.Contains(c, want) {
+			c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n")
+			// W11: but for signal=, the record is byte-identical to the one before correctness signals.
+			if bare := regexp.MustCompile(` signal=\S+`).ReplaceAllString(c, ""); !strings.Contains(bare, want) {
 				t.Fatalf("%q\nwant %q", c, want)
+			}
+			if tc.signal == "" && strings.Contains(c, " signal=") {
+				t.Fatalf("a refusal records a signal: %q", c)
+			}
+			if tc.signal != "" && !strings.Contains(c, " signal="+tc.signal+" reviewer=") {
+				t.Fatalf("want signal=%s before reviewer=: %q", tc.signal, c)
 			}
 			// The same record, as the log line every non-wait decision writes.
 			if l := logs.String(); !strings.Contains(l, `msg="merge decision"`) || !strings.Contains(l, "head=abc") || !strings.Contains(l, "rows=") {

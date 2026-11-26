@@ -22,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/meaning"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/hardening"
 )
@@ -479,12 +480,16 @@ func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha
 		ev.Body += "\n\n" + details
 	}
 	reason := cmp.Or(d.Reason, "armed")
+	if held := (d.Verdict == "arm" && reason == "armed") || reason == "shadow_would_arm"; held && class != "" {
+		d.Rows.Signal = signalOf(classes, class, t)
+	}
 	ev.Body += "\n\n" + decision.Marker(head, class, d.Verdict, reason, d.Rows)
 	if r.Decisions != nil && class != "" {
 		r.Decisions.Record(t.Spec.Repository, class, d.Verdict, reason, r.Now(), gen)
 	}
 	// MR1: each other shadow policy that held records its own would-merge, a line of its own.
 	for _, sh := range d.Shadows {
+		sh.Rows.Signal = signalOf(classes, sh.Name, t)
 		ev.Body += "\n\n" + decision.Marker(head, sh.Name, "shadow", "shadow_would_arm", sh.Rows)
 		if r.Decisions != nil {
 			g, _, _ := cfg.ClassGenerations(t.Spec.Repository, sh.Name)
@@ -492,6 +497,12 @@ func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha
 		}
 	}
 	return ev
+}
+
+// signalOf is the record's signal= for a decision class held on (correctness signals CS1): what
+// judged its meaning, from the class that decided. A contract counts only when t ran under one.
+func signalOf(classes map[string]config.Class, class string, t *v1alpha1.Task) string {
+	return meaning.Record(meaning.Of(class, classes[class]), t.Status.Contract != nil)
 }
 
 // maxGateReentries bounds the returns to the gate per task: an input that flaps between a
