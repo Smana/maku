@@ -6,6 +6,7 @@ package runwatch
 
 import (
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -31,6 +32,16 @@ const (
 	ForgeAPIAnnotation = "agents.ogenki.io/forge-api"
 	// ForgeAPIDeny is ForgeAPIAnnotation's one value.
 	ForgeAPIDeny = "deny"
+	// HeadAnnotation is the pull request head a verifier run was given, its full 40-hex sha,
+	// written by the factory at CREATE. room_verdict records it as the reviewed commit, so the
+	// agent never types one.
+	HeadAnnotation = "agents.ogenki.io/head"
+	// ReviewChecksAnnotation is what a reviewer run was asked to check, the task's acceptance as
+	// the factory quoted it, at most MaxReviewChecks bytes, written at CREATE. room_verdict carries
+	// it on an approve with no summary, so the verdict's comment says what the approval covers.
+	ReviewChecksAnnotation = "agents.ogenki.io/review-checks"
+	// MaxReviewChecks bounds ReviewChecksAnnotation.
+	MaxReviewChecks = 2 << 10
 	// OperatingModeAnnotation asks a suspendable run's Sandbox to be Suspended or Running
 	// (v2 warm-sandboxes design §6). The room-broker writes it and the next two; the
 	// composition reads them only when spec.suspendable is true.
@@ -80,6 +91,10 @@ type Run struct {
 	SafeOutputs, LabelAllowlist []string
 	// ForgeAPIDenied is ForgeAPIAnnotation set to ForgeAPIDeny: the run reads through forge_read.
 	ForgeAPIDenied bool
+	// Head is HeadAnnotation when it is a full 40-hex sha, else "" (an implementer, an adopted run).
+	Head string
+	// ReviewChecks is ReviewChecksAnnotation, "" past MaxReviewChecks bytes.
+	ReviewChecks string
 }
 
 // ServesOutput reports whether the run requests typ through the broker's output tool.
@@ -135,8 +150,17 @@ func (k Kind) FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
 	}
 	r.SafeOutputs, r.LabelAllowlist = readSafeOutputs(ann)
 	r.ForgeAPIDenied = ann[ForgeAPIAnnotation] == ForgeAPIDeny
+	if h := ann[HeadAnnotation]; fullSHA.MatchString(h) {
+		r.Head = h
+	}
+	if c := ann[ReviewChecksAnnotation]; len(c) <= MaxReviewChecks {
+		r.ReviewChecks = c
+	}
 	return r, true
 }
+
+// fullSHA is a commit's full 40-hex id.
+var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // readSafeOutputs reads the two hardening annotations. An allowlist that is not a JSON array of
 // strings reads as empty: output_labels then refuses every label, and the applier's T1 stays the

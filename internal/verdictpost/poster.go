@@ -91,14 +91,22 @@ var (
 // Body is the comment without its marker. Only a public room's summary leaves
 // the room (C7), quoted as a code block: it is an agent's text, so it notifies
 // nobody, links no other issue, loads nothing and renders no HTML, a marker
-// included (reviews M5, 3.5 m3).
+// included (reviews M5, 3.5 m3). An approve with no summary says so, and quotes
+// the acceptance the factory asked the reviewer to check (Checks) the same way,
+// so the next reader knows what the approval covers.
 func Body(ev envelope.Event, v envelope.MessagePayload, dataClass, publicURL string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Agent review: %s\n\n", titles[v.Verdict])
-	if dataClass == "public" {
-		b.WriteString(github.Quote(v.Text) + "\n")
-	} else {
+	switch {
+	case dataClass != "public":
 		b.WriteString("_The summary stays in the room: its data class is not public._\n")
+	case v.Text != "":
+		b.WriteString(github.Quote(v.Text) + "\n")
+	case v.Checks != "":
+		b.WriteString("_The reviewer wrote no summary. It was asked to check the diff against this acceptance:_\n\n" +
+			github.Quote(v.Checks) + "\n")
+	default:
+		b.WriteString("_The reviewer wrote no summary._\n")
 	}
 	fmt.Fprintf(&b, "\nRecorded by the %s run `%s` at `%s`, in room [%s](%s/r/%s), event %d. "+
 		"An agent verdict is advice: it neither approves nor blocks this pull request.",

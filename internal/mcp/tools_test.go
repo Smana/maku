@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,52 @@ func TestVerdictIsSP3sReservedMessage(t *testing.T) {
 	if p.Kind != envelope.KindReviewVerdict || p.Verdict != "changes" || p.Commit != "4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3" ||
 		p.Text != "Missing test for the new flag." || p.Delivery != envelope.DeliveryNone {
 		t.Fatalf("payload = %+v", p)
+	}
+}
+
+// TestVerdictRecordsTheRunsHead: a reviewer given a head (the claim's AnnHead) never has to type it.
+// The paired trial of 2026-11-26 saw 3 of 10 verdicts extend the 12-digit short sha into a guessed
+// 40-digit one; each cost a second reviewer run. Such a guess, a short sha, or no commit records the
+// head; another commit is recorded as named, so the factory reads it as a verdict on an older head.
+func TestVerdictRecordsTheRunsHead(t *testing.T) {
+	const head = "6b47574ccb0d880e0a41c3d2b1a0f9e8d7c6b5a4"
+	run := reviewer
+	run.Run.Head = head
+	run.Run.ReviewChecks = "- test-cost-crosscheck --json: proves the table and JSON agree"
+	for _, tc := range []struct {
+		name, args, commit, checks string
+		ok                         bool
+	}{
+		{"no commit", `{"verdict":"approve"}`, head, run.Run.ReviewChecks, true},
+		{"the head", `{"verdict":"approve","commit":"` + head + `"}`, head, run.Run.ReviewChecks, true},
+		{"the 12-digit short sha", `{"verdict":"approve","commit":"6b47574ccb0d"}`, head, run.Run.ReviewChecks, true},
+		{"a 7-digit prefix", `{"verdict":"approve","commit":"6b47574"}`, head, run.Run.ReviewChecks, true},
+		{"the trial's guess past 12 digits", `{"verdict":"approve","commit":"6b47574ccb0d22306548aa11bb22cc33dd44ee55"}`, head, run.Run.ReviewChecks, true},
+		{"a summary carries no checks", `{"verdict":"approve","summary":"Ran test-cost-crosscheck: 6 pass."}`, head, "", true},
+		{"changes carry no checks", `{"verdict":"changes","summary":"--json drops the exit code."}`, head, "", true},
+		{"another full commit", `{"verdict":"approve","commit":"4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3"}`, "4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3", run.Run.ReviewChecks, true},
+		{"another short commit", `{"verdict":"approve","commit":"4be1c9d0e8a7"}`, "", "", false},
+		{"11 digits, then a guess", `{"verdict":"approve","commit":"6b47574ccb0aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, "6b47574ccb0aaaaaaaaaaaaaaaaaaaaaaaaaaaaa", run.Run.ReviewChecks, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &memLog{}
+			_, err := tool(tools(log), "room_verdict").Call(t.Context(), run, json.RawMessage(tc.args))
+			if (err == nil) != tc.ok {
+				t.Fatalf("err = %v, want ok %v", err, tc.ok)
+			}
+			if !tc.ok {
+				return
+			}
+			var p envelope.MessagePayload
+			_ = json.Unmarshal(log.drafts[0].Payload, &p)
+			if p.Commit != tc.commit || p.Checks != tc.checks {
+				t.Fatalf("commit %q checks %q, want %q %q", p.Commit, p.Checks, tc.commit, tc.checks)
+			}
+		})
+	}
+	// A run with no head (an adopted run, a claim from before the annotation) names the full sha.
+	if _, err := tool(tools(&memLog{}), "room_verdict").Call(t.Context(), reviewer, json.RawMessage(`{"verdict":"approve"}`)); err == nil {
+		t.Fatal("a run with no head recorded a verdict with no commit")
 	}
 }
 
@@ -421,9 +468,24 @@ func TestRolesMatchTheSpecTable(t *testing.T) {
 		if !json.Valid(t2.InputSchema) || t2.Description == "" {
 			t.Errorf("%s: schema or description missing", t2.Name)
 		}
-		// The schema is what the agent reads before calling: it must ask for the full sha the gate
-		// compares, and the description must say how to get it.
-		if t2.Name == "room_handoff" || t2.Name == "room_verdict" {
+		// The schema is what the agent reads before calling: a handoff must name the full sha the gate
+		// compares, and the description must say how to get it. A verdict's commit is the platform's
+		// (the run's head): optional, and a short sha the agent read is accepted as it is.
+		if t2.Name == "room_verdict" {
+			var sc struct {
+				Required   []string `json:"required"`
+				Properties struct {
+					Commit struct{ Pattern string } `json:"commit"`
+				} `json:"properties"`
+			}
+			if json.Unmarshal(t2.InputSchema, &sc) != nil || sc.Properties.Commit.Pattern != "^[0-9a-f]{7,40}$" || slices.Contains(sc.Required, "commit") {
+				t.Errorf("room_verdict: commit pattern = %q, required %v: want an optional 7-to-40-hex sha", sc.Properties.Commit.Pattern, sc.Required)
+			}
+			if !strings.Contains(t2.Description, "one to three lines") || !strings.Contains(t2.Description, "git rev-parse HEAD") {
+				t.Errorf("room_verdict: description asks for no summary on approve, or no full sha: %q", t2.Description)
+			}
+		}
+		if t2.Name == "room_handoff" {
 			var sc struct {
 				Properties struct {
 					Commit struct{ Pattern string } `json:"commit"`

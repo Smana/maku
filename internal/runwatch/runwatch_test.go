@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -647,6 +648,32 @@ func TestFromUnstructuredSafeOutputs(t *testing.T) {
 			}
 			if r.ServesOutput("pr") != slices.Contains(tc.types, "pr") || r.ServesOutput("push") {
 				t.Fatal("ServesOutput")
+			}
+		})
+	}
+}
+
+// TestFromUnstructuredHeadAndChecks: room_verdict records the head and the checks the factory wrote
+// on the claim, and only well-formed ones.
+func TestFromUnstructuredHeadAndChecks(t *testing.T) {
+	const head = "6b47574ccb0d880e0a41c3d2b1a0f9e8d7c6b5a4"
+	for name, tc := range map[string]struct {
+		ann          map[string]string
+		head, checks string
+	}{
+		"none":            {nil, "", ""},
+		"both":            {map[string]string{HeadAnnotation: head, ReviewChecksAnnotation: "- make test"}, head, "- make test"},
+		"a short head":    {map[string]string{HeadAnnotation: head[:12]}, "", ""},
+		"checks too long": {map[string]string{ReviewChecksAnnotation: strings.Repeat("x", MaxReviewChecks+1)}, "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			u := claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")
+			if tc.ann != nil {
+				u.SetAnnotations(tc.ann)
+			}
+			r, ok := DefaultKind.FromUnstructured(u)
+			if !ok || r.Head != tc.head || r.ReviewChecks != tc.checks {
+				t.Fatalf("ok %v, head %q, checks %q", ok, r.Head, r.ReviewChecks)
 			}
 		})
 	}

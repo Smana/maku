@@ -734,7 +734,7 @@ func TestProfileChoices(t *testing.T) {
 
 func TestTheReviewersBriefAsksForCorrectnessOnly(t *testing.T) {
 	tk := reviewTask("# Fix links\n\n## Acceptance check\n`task docs` passes.")
-	got := ReviewerBrief(tk, "n0nce234", nil)
+	got := ReviewerBrief(tk, "n0nce234", nil, testHead)
 	for _, want := range []string{
 		"Report only defects that affect correctness",
 		"Style, naming, and scope the task did not ask for are not findings.",

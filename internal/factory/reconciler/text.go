@@ -860,13 +860,13 @@ func scopeDefang(nonce string) func(string) string {
 // correctness-only rules, then the acceptance checks as fenced data, the steering note and the issue
 // snapshot. It never carries the implementer's handoff: the reviewer judges the diff against the
 // checks, not the story told about it. sc, when set, is the task's scope (SC9).
-func ReviewerBrief(t *v1alpha1.Task, nonce string, sc *Scoped) string {
+func ReviewerBrief(t *v1alpha1.Task, nonce string, sc *Scoped, sha string) string {
 	pr := ""
 	if t.Status.PullRequest != nil {
 		pr = t.Status.PullRequest.URL
 	}
 	head := fmt.Sprintf("You are the reviewer for agent factory task %s in %s: a read-only run on the pull request %s, "+
-		"on branch agent/%s.\n", t.Name, t.Spec.Repository, pr, t.Name) + reviewerRules
+		"on branch agent/%s, at head %s.\n", t.Name, t.Spec.Repository, pr, t.Name, sha) + reviewerRules
 	return fit(head, reviewerChecks(t, nonce, sc)+steeringBlock(t, nonce), snapshotBlock(t, "TASK-DATA-"+nonce), t)
 }
 
@@ -878,19 +878,39 @@ func ForeignReviewerBrief(t *v1alpha1.Task, pr forge.PR, nonce string) string {
 		branch = "main"
 	}
 	head := fmt.Sprintf("You are the reviewer for agent factory task %s in %s: a read-only review on pull request %s "+
-		"(branch %s), which the factory did not write. Change nothing, push nothing, and merge nothing.\n",
-		t.Name, t.Spec.Repository, pr.URL, branch) + reviewerRules
+		"(branch %s, head %s), which the factory did not write. Change nothing, push nothing, and merge nothing.\n",
+		t.Name, t.Spec.Repository, pr.URL, branch, pr.HeadSHA) + reviewerRules
 	return fit(head, reviewerChecks(t, nonce, nil)+steeringBlock(t, nonce), snapshotBlock(t, "TASK-DATA-"+nonce), t)
 }
 
-// reviewerRules is the reviewer's charge (HR4, WR6).
+// reviewerRules is the reviewer's charge (HR4, WR6). An approve needs no comment, but one to three
+// lines on what it checked cost the run little and tell the next reader what the approval covers.
+// The head is in the brief in full, and room_verdict records it, so the agent never types one.
 const reviewerRules = "Review the diff of the pull request against the acceptance checks. Report only defects that affect " +
 	"correctness: a check that would fail, broken behaviour, or a file outside the scope's touches. Style, naming, and scope " +
 	"the task did not ask for are not findings. When you find no defect, approve: an approval with no comment is a complete " +
 	"answer. For every finding, cite the command you ran and its output, or the check run you read. Do not read or quote the " +
-	"implementer's handoff: judge the diff, not the story.\nEnd with one room_verdict call: verdict approve or changes, an " +
-	"optional summary (empty is complete on approve; list defects and the checks you read on changes), and the commit you " +
-	"reviewed (git rev-parse HEAD).\n"
+	"implementer's handoff: judge the diff, not the story.\nEnd with one room_verdict call: verdict approve or changes, and a " +
+	"summary. On approve, write one to three lines naming the acceptance checks you verified and the tests you ran or read; " +
+	"on changes, list the defects and the checks you read. Leave commit out: the platform records the head above as the " +
+	"commit you reviewed. Never shorten or extend a commit id.\n"
+
+// reviewChecks is what a reviewer run was asked to check, as the claim's AnnReviewChecks carries
+// it to the verdict's comment: the scope's checks, one a line, or else the issue's acceptance.
+// "" when the task states none. The broker quotes it inert, so it is not defanged here.
+func reviewChecks(t *v1alpha1.Task, sc *Scoped) string {
+	if sc != nil && len(sc.Scope.Acceptance) > 0 {
+		var d strings.Builder
+		for _, a := range sc.Scope.Acceptance {
+			fmt.Fprintf(&d, "- %s: proves %s\n", oneLine(a.Check), oneLine(a.Proves))
+		}
+		return strings.TrimSuffix(d.String(), "\n")
+	}
+	return acceptanceText(t.Spec.Text)
+}
+
+// oneLine is s on one line: a check's text never starts a line of its own.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // acceptanceQuoteMax bounds the issue's acceptance a reviewer's brief quotes: the harness's judge
 // reads at most as much (loop_policy.ACCEPTANCE_MAX).

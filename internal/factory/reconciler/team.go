@@ -174,6 +174,7 @@ func (r *Reconciler) startReviewOnly(ctx context.Context, cfg *config.Config, t 
 		s.Model = m
 	}
 	s.TaskText = ForeignReviewerBrief(t, pr, r.Nonce())
+	s.ReviewChecks = reviewChecks(t, nil)
 	s.Head = pr.HeadSHA
 	if err := r.startRun(ctx, cfg, t, s, "review"); err != nil {
 		return err
@@ -205,7 +206,8 @@ func (r *Reconciler) startVerifier(ctx context.Context, cfg *config.Config, t *v
 		if err != nil {
 			return err
 		}
-		s.TaskText = ReviewerBrief(t, r.Nonce(), sc)
+		s.TaskText = ReviewerBrief(t, r.Nonce(), sc, pr.HeadSHA)
+		s.ReviewChecks = reviewChecks(t, sc)
 	}
 	s.Head = pr.HeadSHA // rides the claim (AnnHead): a replay that records the run knows its head
 	if err := r.startRun(ctx, cfg, t, s, "review"); err != nil {
@@ -367,8 +369,10 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 			return err
 		}
 		// Never approve a moved head: the verdict names the commit the run was given, which is
-		// still the pull request's head. An adopted run's head is "", which no commit prefixes.
-		if pr.HeadSHA != cur.HeadSHA || !strings.HasPrefix(cur.HeadSHA, v.Commit) {
+		// still the pull request's head. An adopted run's head is "", which no commit matches. A
+		// commit whose first 12 digits are the head's is the head: an agent that guessed the rest of
+		// a short sha costs no second review run (paired trial 2026-11-26).
+		if pr.HeadSHA != cur.HeadSHA || !envelope.VerdictOf(cur.HeadSHA, v.Commit) {
 			if isCustom && maxR == 0 {
 				cur.Verdict = "none"
 				r.noteStage(t, stageRole, "verdict_stale")

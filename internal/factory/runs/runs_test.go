@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -105,6 +106,16 @@ func TestBuildCarriesTraceparentAndTier(t *testing.T) {
 	u := Build(runwatch.DefaultKind, s)
 	if u.GetAnnotations()[AnnTraceparent] != s.Traceparent || u.GetLabels()[LabelTier] != "standard" {
 		t.Fatalf("%v %v", u.GetAnnotations(), u.GetLabels())
+	}
+	// A reviewer's acceptance rides beside its head for room_verdict (paired trial 2026-11-26), clipped
+	// on a rune boundary, and the broker reads both back.
+	s.ReviewChecks = strings.Repeat("é", runwatch.MaxReviewChecks)
+	u = Build(runwatch.DefaultKind, s)
+	if c := u.GetAnnotations()[AnnReviewChecks]; len(c) != runwatch.MaxReviewChecks || !utf8.ValidString(c) {
+		t.Fatalf("checks clipped to %d bytes, valid %v", len(c), utf8.ValidString(c))
+	}
+	if br, ok := runwatch.DefaultKind.FromUnstructured(u); !ok || br.Head != s.Head || br.ReviewChecks != u.GetAnnotations()[AnnReviewChecks] {
+		t.Fatalf("the broker reads back head %q checks %d bytes", br.Head, len(br.ReviewChecks))
 	}
 	u = Build(runwatch.DefaultKind, spec())
 	if _, ok := u.GetAnnotations()[AnnTraceparent]; ok {
@@ -301,7 +312,7 @@ func TestAnnotateRefusesTheCreateOnlyKeys(t *testing.T) {
 	if err := c.Create(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnMaxMicroUSD, AnnCohort, AnnProfile, AnnPersona} {
+	for _, key := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnMaxMicroUSD, AnnCohort, AnnProfile, AnnPersona, AnnReviewChecks} {
 		if err := c.Annotate(t.Context(), s.RunID, map[string]string{key: "https://github.com/Smana/cloud-native-ref/issues/1"}); err == nil {
 			t.Errorf("%s was patched", key)
 		}

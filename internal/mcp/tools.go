@@ -219,27 +219,35 @@ func RoomTools(log Log, red Redactor, now func() time.Time) []Tool {
 				return appendAs(ctx, c, envelope.Handoff, p)
 			}},
 		{Name: "room_verdict", Roles: []string{"reviewer"}, Action: policy.Chat,
-			Description: "Record your review: approve or changes, an optional summary (empty is complete on approve; required on changes), and the commit you reviewed as its full 40-hex sha (git rev-parse HEAD, never an abbreviation). A verdict is not a merge.",
-			InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["verdict","commit"],"properties":{"verdict":{"type":"string","enum":["approve","changes"]},"summary":{"type":"string","maxLength":8192},"commit":{"type":"string","pattern":"^[0-9a-f]{40}$"}}}`),
+			Description: "Record your review: approve or changes, and a summary: on approve, one to three lines naming the acceptance checks you verified and the tests you ran or read; on changes, the defects and the checks you read. The platform records the pull request head you were given as the reviewed commit: leave commit out, or pass the full 40-hex sha (git rev-parse HEAD). A verdict is not a merge.",
+			InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["verdict"],"properties":{"verdict":{"type":"string","enum":["approve","changes"]},"summary":{"type":"string","maxLength":8192},"commit":{"type":"string","pattern":"^[0-9a-f]{7,40}$"}}}`),
 			Call: func(ctx context.Context, c Caller, args json.RawMessage) (any, error) {
+				const rule = "verdict is approve or changes; summary at most 8192 bytes with no control characters (required on changes); commit optional, the full 40-hex sha from git rev-parse HEAD"
 				var a struct {
 					Verdict string `json:"verdict"`
 					Summary string `json:"summary"`
 					Commit  string `json:"commit"`
 				}
-				if mcpwire.DecodeArgs(args, &a) != nil || (a.Verdict != "approve" && a.Verdict != "changes") || !commitRE.MatchString(a.Commit) {
-					return nil, argError("verdict is approve or changes; summary at most 8192 bytes (required on changes); commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
+				if mcpwire.DecodeArgs(args, &a) != nil || (a.Verdict != "approve" && a.Verdict != "changes") {
+					return nil, argError(rule)
+				}
+				commit, ok := verdictCommit(c.Run.Head, a.Commit)
+				if !ok {
+					return nil, argError(rule)
 				}
 				if a.Verdict == "changes" {
 					if !text(a.Summary, maxSummary) {
-						return nil, argError("verdict is approve or changes; changes requires a summary of 1 to 8192 bytes; commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
+						return nil, argError(rule)
 					}
 				} else if a.Summary != "" && !optionalText(a.Summary, maxSummary) {
-					return nil, argError("verdict is approve or changes; summary at most 8192 bytes with no control characters; commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
+					return nil, argError(rule)
 				}
-				return appendAs(ctx, c, envelope.Message, envelope.MessagePayload{Kind: envelope.KindReviewVerdict,
-					Text: strings.TrimSpace(a.Summary), Verdict: a.Verdict, Commit: a.Commit, Delivery: envelope.DeliveryNone,
-					PullRequest: pullRequestOf(prs, c.Run)})
+				p := envelope.MessagePayload{Kind: envelope.KindReviewVerdict, Text: strings.TrimSpace(a.Summary),
+					Verdict: a.Verdict, Commit: commit, Delivery: envelope.DeliveryNone, PullRequest: pullRequestOf(prs, c.Run)}
+				if p.Verdict == "approve" && p.Text == "" {
+					p.Checks = c.Run.ReviewChecks // the factory's, from the claim: what this approval covers
+				}
+				return appendAs(ctx, c, envelope.Message, p)
 			}},
 	}
 }
@@ -277,6 +285,21 @@ func readRoom(ctx context.Context, log Log, room string, since int64, limit int)
 		}
 	}
 	return out, last, nil
+}
+
+// verdictCommit is the commit a verdict records. A run given a head (the claim's, never the
+// model's) records that head when the agent names none, or one that envelope.VerdictOf matches: an
+// agent that guessed the 28 digits past a short sha costs no second review. Any other commit is
+// recorded as named, and the factory reads it as a verdict on an older head. A run given no head
+// must name a full sha.
+func verdictCommit(head, commit string) (string, bool) {
+	switch {
+	case head != "" && (commit == "" || envelope.VerdictOf(head, commit)):
+		return head, true
+	case commitRE.MatchString(commit):
+		return commit, true
+	}
+	return "", false
 }
 
 // pullRequestOf is the pull request a verdict is about: the run's task URL, when

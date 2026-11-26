@@ -90,6 +90,10 @@ func TestPairStartsAReviewerOnTheBranch(t *testing.T) {
 		s.BaseRef != "agent/3buqdlot" || !strings.HasPrefix(s.TaskText, "You are the reviewer") || s.Branch != "agent/3buqdlot" {
 		t.Fatalf("%s %+v", tk.Status.Phase, s)
 	}
+	// The brief names the head in full, and the claim carries it to room_verdict (paired trial 2026-11-26).
+	if s.Head == "" || !strings.Contains(s.TaskText, "at head "+s.Head+".") {
+		t.Fatalf("head %q not in the brief:\n%s", s.Head, s.TaskText)
+	}
 	// HR4: the claim, not only the Spec, carries the brief beside the pull request (preflight B1).
 	u := runs.Build(runwatch.DefaultKind, s)
 	text, _, _ := unstructured.NestedString(u.Object, "spec", "task", "text")
@@ -215,6 +219,7 @@ func TestAnApproveOfAnotherHeadIsNoVerdict(t *testing.T) {
 		"the head moved to it":     {head2, head2},
 		"a commit that is no sha":  {"", head1},
 		"a prefix of another head": {head1[:6] + "0", head1},
+		"11 of the head's digits":  {head1[:11] + "f" + head2[12:], head1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := pairRig(t)
@@ -228,11 +233,17 @@ func TestAnApproveOfAnotherHeadIsNoVerdict(t *testing.T) {
 			}
 		})
 	}
-	g := pairRig(t)
-	g.log.verdict(rid(1), "approve", head1, "LGTM")
-	g.finish(rid(1), "Succeeded", "agent_finished")
-	if tk := g.reconcile(t, "3buqdlot", 2); tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Verdict != "approve" {
-		t.Fatalf("the full sha of the head it was given: %s %s", tk.Status.Phase, tk.Status.Verdict)
+	// The head itself, its short sha, or the 12-digit short sha with the other 28 guessed (3 of 10
+	// verdicts in the paired trial of 2026-11-26, each one a paid second review run) is the head.
+	for name, commit := range map[string]string{"full": head1, "short": head1[:12], "guessed past 12": head1[:12] + head2[12:]} {
+		t.Run(name, func(t *testing.T) {
+			g := pairRig(t)
+			g.log.verdict(rid(1), "approve", commit, "LGTM")
+			g.finish(rid(1), "Succeeded", "agent_finished")
+			if tk := g.reconcile(t, "3buqdlot", 2); tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Verdict != "approve" || len(g.runs.specs) != 2 {
+				t.Fatalf("the head it was given: %s %s, %d runs", tk.Status.Phase, tk.Status.Verdict, len(g.runs.specs))
+			}
+		})
 	}
 }
 
