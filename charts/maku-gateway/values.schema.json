@@ -217,8 +217,8 @@
       "properties": {
         "preset": {"type": "string", "enum": ["openai", "anthropic", "zai", "mistral", "moonshot", "gemini", "vertex", "custom"]},
         "existingSecret": {"type": "string"},
-        "projectId": {"description": "vertex only: the Google Cloud project that serves and bills the calls.", "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$"},
-        "region": {"description": "vertex only: global, the multi-regions us and eu, or a single region such as europe-west4.", "type": "string", "pattern": "^(global|us|eu|[a-z]+-[a-z]+[0-9]+)$"},
+        "projectId": {"description": "vertex only: the Google Cloud project that serves and bills the calls, or a ${variable} a GitOps tool substitutes after rendering (Flux postBuild).", "type": "string", "pattern": "^([a-z][a-z0-9-]{4,28}[a-z0-9]|\\$\\{[a-z_][a-z0-9_]*\\})$"},
+        "region": {"description": "vertex only: global, the multi-regions us and eu, or a single region such as europe-west4. Never a ${variable}: the host and the network policy are derived from it at render time.", "type": "string", "pattern": "^(global|us|eu|[a-z]+-[a-z]+[0-9]+)$"},
         "key": {"type": "string", "minLength": 1},
         "dataClasses": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["public", "internal"]}},
         "host": {"type": "string", "minLength": 1},
