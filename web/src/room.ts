@@ -21,6 +21,7 @@ import type { Dashboard } from "./dashboards";
 import { mountRailPane } from "./railpane";
 import { mountCoordinationPanel } from "./coordination";
 import { mountRunView, mountScrollIndex } from "./runview";
+import { fetchShots } from "./shots";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
 import { mountSettingsLink } from "./settingslink";
@@ -133,6 +134,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     load: (after, limit) => fetchEvents(id, after, limit, o.get),
     views: (el) => mountViews(el, (seq) => fork.open(seq), () => snap?.you.principal),
     chosen: (run) => rail.chosen(run),
+    shots: { room: id, load: async (run) => (await fetchShots(id, o.get)).filter((s) => s.run === run) },
   });
   const scrollIndex = mountScrollIndex(main.querySelector<HTMLElement>(".view-chat")!,
     { nodes: () => summary?.flow?.nodes ?? [], mark: (run) => rail.mark(run) });

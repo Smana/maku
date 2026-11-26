@@ -18,6 +18,7 @@ export interface FlowNode {
   startedAt?: string; endedAt?: string; fromSeq: number; toSeq: number; outcome?: string;
   verdict?: string; microUSD?: number; model?: string; models?: string[]; effort?: string; judge?: { count: number; last: string };
   tools: { ok: number; failed: number }; steered?: number; chat?: number; edge?: string; startedBy?: string; reason?: string; handoff?: string;
+  screenshots?: number; // the run's screenshot events (harness screenshots phase B)
 }
 export interface Milestone { phase: string; at: string; seq: number }
 export interface PartRun {

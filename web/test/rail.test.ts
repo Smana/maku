@@ -572,6 +572,16 @@ describe("activity", () => {
     expect(card(rail).querySelector(".rail-steers")).toBeNull();
   });
 
+  it("a node with screenshots shows their count in words, none at zero", () => {
+    const { rail } = mount();
+    rail.set({ nodes: [node({ fromSeq: 10, screenshots: 3 })] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-shots")!.textContent).toBe("3 screenshots");
+    rail.set({ nodes: [node({ fromSeq: 10, screenshots: 1 })] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-shots")!.textContent).toBe("1 screenshot");
+    rail.set({ nodes: [node({ fromSeq: 10 })] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-shots")).toBeNull();
+  });
+
   // One fixture for Go and TS: the broker's golden summary carries a steer and a chat on its node.
   it("draws the marks of the broker's golden flow", () => {
     const golden = JSON.parse(readFileSync(join(__dirname, "../../internal/summary/testdata/normal.json"), "utf8")) as { want: { flow: Flow } };

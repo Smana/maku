@@ -14,6 +14,7 @@ import { Clips } from "./clip";
 import { deliveryChip, handoffHead, markdown, stateHead } from "./render";
 import { icon, type IconName } from "./icons";
 import { maxRows } from "./limits";
+import { screenshotCard, shotFromPayload, type Shot } from "./shots";
 import { count, emptyTally, stepLine, stepState, type StepCall, type StepTally } from "./step";
 
 function el(tag: string, cls: string, text?: string): HTMLElement {
@@ -446,6 +447,8 @@ export class ChatView {
   // A decision whose call the page never saw (the tail started between them)
   // renders as a marker; if the call still arrives, the marker folds into it.
   private pending = new Map<string, RoomEvent[]>();
+  // Each run's screenshots the chat has shown, for the viewer's previous and next.
+  private shots = new Map<string, Shot[]>();
   private clips: Clips;
 
   // fork, when set, gives every message and handoff a "fork here" at its seq. you, the
@@ -521,6 +524,18 @@ export class ChatView {
       case "handoff":
         this.put(ev.seq, this.tools(handoff(ev), ev.seq), "break");
         break;
+      case "screenshot": {
+        // Part of the step's work, like a tool call: the agent took it.
+        const s = shotFromPayload(p);
+        if (!s) { this.put(ev.seq, fallback(ev), "member"); break; }
+        const run = s.run || ev.runId || "";
+        const list = this.shots.get(run) ?? [];
+        if (!list.some((x) => x.digest === s.digest)) list.push(s);
+        list.sort((a, b) => a.n - b.n);
+        this.shots.set(run, list);
+        this.put(ev.seq, screenshotCard(ev.roomId, ev.seq, s, () => this.shots.get(run) ?? []), "member");
+        break;
+      }
       default:
         this.put(ev.seq, fallback(ev), "break");
     }
