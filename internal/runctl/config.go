@@ -77,6 +77,14 @@ type Config struct {
 	Tracing Tracing `json:"tracing,omitzero"`
 	// Browser is the sidecar a run with spec.screenshots gets (v5 Q16); its image is images.browser.
 	Browser BrowserConfig `json:"browser,omitzero"`
+	// Runtime is what a run's spec.image may name (developer review gap 2).
+	Runtime RuntimeConfig `json:"runtime,omitzero"`
+}
+
+// RuntimeConfig is the platform's list of image prefixes a repository's runtime image must start
+// with, such as "ghcr.io/acme/maku-harness-": empty refuses every spec.image.
+type RuntimeConfig struct {
+	AllowedImages []string `json:"allowedImages,omitempty"`
 }
 
 // Tracing is where runs export their span, and the collector pods their policy opens its port to:
@@ -661,6 +669,10 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return "spec.screenshots is for an implementer or tester run only (v5 Q16, VS5)"
 	case screenshotsOn(r) && c.Images.Browser == "":
 		return "spec.screenshots needs images.browser configured"
+	case r.Spec.Image != "" && r.Spec.Harness == "opencode":
+		return "spec.image replaces the OpenHands harness image: a run with spec.harness opencode takes none"
+	case r.Spec.Image != "" && !slices.ContainsFunc(c.Runtime.AllowedImages, func(p string) bool { return p != "" && strings.HasPrefix(r.Spec.Image, p) }):
+		return fmt.Sprintf("spec.image %s is under no runtime.allowedImages prefix", r.Spec.Image)
 	}
 	if c.Gateway() {
 		if why := c.gatewayInvalid(r); why != "" {

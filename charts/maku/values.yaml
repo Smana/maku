@@ -290,6 +290,11 @@ runController:
     resources:
       requests: {cpu: 250m, memory: 512Mi}
       limits: {cpu: "2", memory: 2Gi}
+  # The image prefixes a Repository's spec.runtime.image may start with, such as
+  # "ghcr.io/acme/maku-harness-": each such image is built FROM the harness image and pinned by
+  # digest. Empty refuses every runtime image.
+  runtime:
+    allowedImages: []
   # Secrets in runs.namespace the controller reads: model (api_key, model, base_url) and git.
   # modelSecret is model.mode secret's, and not read in model.mode gateway.
   modelSecret: agent-model

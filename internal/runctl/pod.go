@@ -242,7 +242,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		}
 	}
 	env = append(env, tracingEnv(r, c)...)
-	harnessImage := c.Images.Harness
+	harnessImage := cmp.Or(r.Spec.Image, c.Images.Harness) // admitted against runtime.allowedImages
 	readyCmd, healthCmd := localGet("/ready"), localGet("/health")
 	if isOpenCode {
 		harnessImage = c.Images.Opencode

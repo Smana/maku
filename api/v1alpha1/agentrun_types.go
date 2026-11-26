@@ -126,6 +126,13 @@ type AgentRunSpec struct {
 	// request for a draft-mode upkeep routine (UP14, P2-R3). Immutable once set.
 	// +optional
 	PRDraft bool `json:"prDraft,omitempty"`
+	// Image replaces the OpenHands harness image, pinned by digest: the repository's runtime image
+	// (developer review gap 2). The run-controller places it only under its runtime.allowedImages.
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9._/:-]*@sha256:[a-f0-9]{64}$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="image is immutable"
+	// +optional
+	Image string `json:"image,omitempty"`
 }
 
 // AgentRunScreenshots is a run's browser opt-in and its screenshot cap (v5 Q16).

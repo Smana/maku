@@ -471,6 +471,26 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              runtime:
+                description: |-
+                  Runtime is the image and size of the repository's implementer, tester and reviewer runs. The
+                  image is built from the harness image, pinned by digest, and allowed by the run-controller's
+                  runtime.allowedImages; the network stays the named profiles of checks.egress.
+                properties:
+                  image:
+                    description: 'Image replaces the harness image, pinned by digest:
+                      registry/name@sha256:<64 hex>.'
+                    maxLength: 512
+                    pattern: ^[a-z0-9][a-z0-9._/:-]*@sha256:[a-f0-9]{64}$
+                    type: string
+                  size:
+                    description: Size is small (the default), medium or large.
+                    enum:
+                    - small
+                    - medium
+                    - large
+                    type: string
+                type: object
               schedules:
                 items:
                   description: Schedule starts a task from config (§1). The config

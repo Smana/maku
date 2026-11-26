@@ -251,10 +251,21 @@ func short12(sha string) string {
 	return sha
 }
 
+// withRuntime gives an implementer, tester or reviewer run its repository's image and size
+// (developer review gap 2); any other run is the harness image, small.
+func (r *Reconciler) withRuntime(cfg *config.Config, s *runs.Spec, t *v1alpha1.Task) {
+	if s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester" {
+		return
+	}
+	rt := r.repo(cfg, t).Runtime
+	s.Image, s.Size = rt.Image, rt.Size
+}
+
 // withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a
 // workflow that has them (v3 feature 3, RC8, WF7): spec.loop.checks and the repository's
 // checks.egress. Any other run, an internal one included, is today's.
 func (r *Reconciler) withChecks(cfg *config.Config, s *runs.Spec, t *v1alpha1.Task) {
+	r.withRuntime(cfg, s, t)
 	if !r.checksOn(cfg, t) || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
 		s.Checks, s.EgressProfiles = false, nil
 		return
