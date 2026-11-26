@@ -6,7 +6,10 @@ import { mountSettings } from "../src/settings";
 const deadLinks = {
   name: "dead-links", generation: 4, manifestPath: "mergepolicy-dead-links.yaml",
   manifest: "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata:\n  name: dead-links\nspec:\n  maxModifiedLines: 20\n",
-  spec: { description: "Retargets dead external links.", requires: ["allowedFiles", "holdoutChecks", "oracleWorkflow"], maxModifiedLines: 20, diffShape: "links-only" },
+  spec: { description: "Retargets dead external links.", maxModifiedLines: 20, diffShape: "links-only" },
+  meaning: { signal: "links-only", prose: false, lead: "Would merge without you when", when: "an agent changes only link targets in Markdown, at most 20 lines",
+    checkedBy: "the `links-only` shape: every changed line is a link target on the same host", notChecked: "what the new page says",
+    text: "**Would merge without you when** an agent changes only link targets in Markdown, at most 20 lines. **Meaning checked by** the `links-only` shape: every changed line is a link target on the same host. **Not checked:** what the new page says." },
   status: { observedGeneration: 4, consumerCount: 2, currentCount: 1, liveCount: 0, consumers: [
     { repository: "ai-native-ref", mode: "shadow", servedGeneration: 3, accepted: false, reason: "MissingParameter" },
     { repository: "cloud-native-ref", mode: "shadow", servedGeneration: 4, accepted: true }] },
@@ -27,8 +30,10 @@ describe("a policy's page", () => {
     await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": deadLinks }));
     expect(app.querySelector(".page-title")!.textContent).toBe("dead-links");
     expect(app.querySelector(".policy-counts")!.textContent).toBe("2 repositories");
-    expect(app.querySelector(".policy-sentence")!.textContent).toContain("link targets only");
-    expect(app.textContent).toContain("Each binding must supply: allowedFiles, holdoutChecks, oracleWorkflow");
+    // W1: the page prints the factory's sentence verbatim, Markdown rendered, never rebuilt.
+    expect(app.querySelector(".policy-sentence")!.textContent).toBe(deadLinks.meaning.text.replaceAll("**", "").replaceAll("`", ""));
+    expect(app.querySelector(".policy-sentence strong")!.textContent).toBe("Would merge without you when");
+    expect(app.querySelector(".policy-meaning")!.textContent).toBe("Meaning checked by: the links-only shape: every changed line is a link target on the same host.");
     expect(app.querySelector(".policy-definition")!.textContent).toContain("Retargets dead external links.");
     const rows = [...app.querySelectorAll("table.consumers tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
     expect(rows).toEqual([["ai-native-ref", "shadow", "refused", "MissingParameter"], ["cloud-native-ref", "shadow", "accepted", ""]]);
@@ -111,7 +116,56 @@ describe("a policy's page", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: [] }, "/api/policy/policies": { policies: [deadLinks] } }));
     const rows = [...app.querySelectorAll("table.policy-table tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
-    expect(rows).toEqual([["dead-links", "link targets only, at most 20 lines", "2 repositories"]]);
+    expect(rows).toEqual([["dead-links", "an agent changes only link targets in Markdown, at most 20 lines", "2 repositories"]]);
     expect(app.querySelector('table.policy-table a[href="/settings/merge-policies/policies/dead-links"]')).not.toBeNull();
+  });
+
+  // Correctness signals W2, W4: a policy with only requires, evidence and monitor opens with its
+  // sentence, those fields in plain words, and each binding read-only: no empty form.
+  it("explains a policy whose fields the form does not edit (alert-rules)", async () => {
+    const alertRules = {
+      name: "alert-rules", generation: 2, manifestPath: "mergepolicy-alert-rules.yaml", manifest: "kind: MergePolicy\n",
+      spec: { description: "Alert rule changes.", requires: ["plan"], evidence: "standard", monitor: { verification: { within: "2h0m0s" }, followUpWindow: "2h0m0s" } },
+      status: { observedGeneration: 2, consumerCount: 1, currentCount: 1, consumers: [{ repository: "cloud-native-ref", mode: "shadow", servedGeneration: 2, accepted: true }] },
+      meaning: { signal: "none", prose: false, lead: "Would merge without you when", when: "an agent changes files and a reviewer approves", checkedBy: "nothing",
+        notChecked: "what a change means", wayOut: "To have its meaning checked, require a plan and tests.",
+        text: "**Would merge without you when** an agent changes files and a reviewer approves. **Meaning checked by** nothing. **Not checked:** what a change means. **To have its meaning checked,** require a plan and tests." },
+      bindings: [{ repository: "Smana/cloud-native-ref", mode: "shadow", holdoutChecks: ["rules"],
+        meaning: { signal: "none", prose: false, lead: "", checkedBy: "nothing", when: "an agent changes YAML under `observability/` and a reviewer approves", text: "x" } }],
+    };
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/policies/alert-rules", fakeFetch({ "/api/policy/policies/alert-rules": alertRules }));
+    expect(app.querySelector(".policy-sentence")!.textContent).toContain("Meaning checked by nothing");
+    expect(app.querySelector(".policy-meaning")!.textContent).toBe("Meaning checked by: nothing. To have its meaning checked, require a plan and tests.");
+    const fixed = Object.fromEntries([...app.querySelectorAll(".policy-readonly li")].map((li) => [(li as HTMLElement).dataset.key, li.querySelector(".readonly-words")!.textContent]));
+    expect(fixed).toEqual({
+      requires: "Tasks that touch these files run: a plan you approve",
+      evidence: "20 agreed decisions before promotion",
+      monitor: "After a merge, waits 2 h for RunLore's verdict and reads follow-up fixes for 2 h.",
+    });
+    const rows = [...app.querySelectorAll("table.bindings tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
+    expect(rows).toEqual([["Smana/cloud-native-ref", "shadow", "an agent changes YAML under observability/ and a reviewer approves", "rules", ""]]);
+    expect(app.querySelector("table.bindings a")!.getAttribute("href")).toBe("/settings/merge-policies/Smana/cloud-native-ref");
+    expect(app.textContent).not.toContain("Each binding must supply");
+    expect(app.textContent).not.toContain("No extra policy restriction");
+  });
+
+  it("says when the factory sends no sentence, and does not build one", async () => {
+    const old = structuredClone(deadLinks) as Partial<typeof deadLinks>;
+    delete old.meaning;
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": old }));
+    expect(app.querySelector(".policy-sentence")!.textContent).toBe("This factory does not say what checks this policy's meaning. Update Maku to see it.");
+    expect(app.querySelector(".policy-meaning")).toBeNull();
+  });
+
+  // W3: every rendered field has its help line, naming what happens when it is exceeded or unmet.
+  it("puts a help line under every field of the form", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/policies/dead-links", fakeFetch({ "/api/policy/policies/dead-links": deadLinks }));
+    const fields = [...app.querySelectorAll<HTMLElement>("label.editor-field")];
+    expect(fields.length).toBeGreaterThan(8);
+    for (const f of fields) expect(f.querySelector(".field-help")?.textContent, f.dataset.key).toMatch(/\S/);
+    expect(app.querySelector('[data-key="maxModifiedLines"] .field-help')!.textContent).toContain("patch_too_large");
   });
 });

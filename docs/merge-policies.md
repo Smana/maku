@@ -1114,7 +1114,7 @@ The gate's policy-related reasons. Every other reason is in [the factory](factor
 | `policy_unavailable` | the repository's merge policy could not be read recently, so auto-merge waits | a maintainer reviews the task and chooses the next step |
 | `policy_invalid` | the repository's merge policy is invalid, so auto-merge is paused | a maintainer reviews the task and chooses the next step |
 | `approval_required` | it changes a file its class asks a maintainer to approve | a maintainer reviews the task and chooses the next step |
-| `shadow_would_require_approval` | a shadow policy would merge, except a path needs a maintainer approval | a maintainer approves the current head; this is not clean promotion evidence |
+| `shadow_would_require_approval` | a shadow policy would merge, except a path needs a maintainer approval | a maintainer approves the current head; this does not count as an agreed decision |
 | `shadow_would_arm` | it would auto-merge, and the merge gate is in shadow | a maintainer reviews the task and chooses the next step |
 | `no_policy_matched` | no merge policy of the repository holds on this diff: a maintainer reviews and merges it | a maintainer reviews the task and chooses the next step |
 | `reviewer_verdict_missing` | no reviewer read this change, and its policy has no shape to check it | a maintainer reviews the task and chooses the next step |

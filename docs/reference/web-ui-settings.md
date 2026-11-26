@@ -92,6 +92,63 @@ object names, or a policy's name and mode, shows "3 of 9 repositories", and name
 **Clear** button when nothing matches. The query is kept in `?q=`, so a filtered page can be shared;
 `/` focuses the field, except while you type in another one, and Escape clears it.
 
+### A policy's page, in words
+
+A policy's page opens with the sentence the factory builds about it: what it merges without you,
+what checks the meaning of a change, and what is left open (see
+[holds, agreed, signal-checked](../merge-policies.md#holds-agreed-signal-checked)). The page prints
+that sentence and never builds one: a factory that sends none gets "This factory does not say what
+checks this policy's meaning". Then one line, **Meaning checked by**, with the way to add a signal
+when nothing checks it; the fields the form does not edit (`requires`, `evidence` where no shape or
+oracle allows `low`, `monitor`, `oracle`, `author`), read-only in plain words; and, under
+**Repositories using it**, each binding the reader can see, read-only, linked to the repository's
+page where it is edited.
+
+Every field of the editor carries one help line:
+
+| Field | Help line |
+|---|---|
+| Files it may change | A pull request that touches any other file waits for a maintainer (`file_not_allowed`) |
+| Files it must never touch | One matching file sends the whole pull request to a maintainer (`file_protected`) |
+| Most files changed, most lines changed | Above this, the pull request waits for a maintainer (`patch_too_large`). Lines are additions plus deletions |
+| Most merges a day | After this many, the next one waits until tomorrow (`auto_merge_cap`) |
+| Edit files only | A file added, deleted or renamed sends the pull request to a maintainer (`file_added_or_deleted`) |
+| Required diff shape | Every changed line must have this shape, or the policy does not apply (`class_mismatch`). A shape is what lets Maku check the meaning |
+| Checks that must pass | Each must report success from GitHub Actions on this exact commit. Skipped counts as failed (`holdout_red`). A check says something still works, not that the change is right |
+| Changes that need approval | A matching file asks a maintainer even when the policy is live (`approval_required`) |
+| Required stages (`requires`) | Tasks touching these files run these stages. A plan and tests together are what let Maku check the meaning of a configuration change |
+| Evidence | How many decisions a maintainer must agree with before promotion: 5 when a shape or an oracle checks the meaning, else 20 |
+| After a merge (`monitor`) | What Maku watches after a merge, and for how long. Silence here is quiet, not right |
+| Detector (`oracle`) | A scheduled workflow names the defects. The pull request must fix exactly those (`oracle_unrequested`, `oracle_finding_open`) |
+| Author (`author`) | Whose pull requests this policy takes: the factory's agents, or another bot's by login and branch |
+
+### A guided new policy
+
+**Guide me: what kind of change?**, above the shipped presets of a policy's editor, asks three
+questions and writes nothing: it ends in the editor, pre-filled, where **Check the change** returns
+the factory's sentence and the backtest is.
+
+1. **What kind of change?** A closed list, below.
+2. **What can check its meaning?** The suggested signal for that kind and what it takes.
+3. **Where, and how much?** Files, the most files and lines, the most merges a day, each with its
+   help line. **Open in the editor** starts from the served policy of the preset's name, or from
+   the template when the factory serves none.
+
+| Kind of change | Suggested signal | Preset | Says |
+|---|---|---|---|
+| Link targets in docs | `links-only` shape | `docs-links` | Can go live after 5 agreed decisions |
+| Dead links a scan finds | Oracle and `links-only` | `dead-links` | Needs a detector workflow in the repository |
+| Dependency patch updates | `semver-patch` shape | `deps-patch` | Checks the bump, not the release |
+| Dependency minor updates | `semver-minor` shape, shadow only | `deps-minor` | Stays in shadow until a rendered-manifest proof exists |
+| Prose | None | `docs` | Can go live after 20 agreed decisions |
+| Entries a bot adds | None: `added-entry` bounds the structure | `kb-entries` | As prose: 20 agreed decisions before it can go live |
+| Configuration (alerts, values, manifests) | Test contract: `requires: [plan, tests]` | `alert-rules` | Needs a test runner for this file type in the repository |
+| Generated or formatted files | Equivalence proof | none | Available when proofs ship |
+| Application code | none | none | No policy covers it. A maintainer merges |
+
+A card whose promotion is blocked keeps **Promote to live** visible and disabled, with one line per
+blocker and its next step: decisions still needed, wrong calls to read, the rollback drill to run.
+
 ## Theme
 
 Every page has a theme button, in the room page's dock and in the header elsewhere. Each press

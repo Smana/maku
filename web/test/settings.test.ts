@@ -65,9 +65,9 @@ describe("settings routes", () => {
 
 describe("evidence", () => {
   it("writes MP7's numbers as a track record in words, and blockers as actions", () => {
-    expect(trackRecord(ev()).textContent).toBe("20 clean merges (20 needed) · 0 bad · 2 awaiting outcome · 1 awaiting a verdict · worst-case bad rate ≤ 14 % · rollback drill passed");
+    expect(trackRecord(ev()).textContent).toBe("20 agreed (20 needed) · 0 wrong calls · 2 awaiting outcome · 1 awaiting a verdict · worst-case wrong-call rate ≤ 14 % · rollback drill done");
     expect(blockerActions(ev({ clean: 19, bad: 2, blockers: ["below_minimum", "bad_outcome", "no_drill"] })))
-      .toEqual(["needs 1 more clean merge", "2 bad merges to explain", "run a rollback drill (factory/drill)"]);
+      .toEqual(["needs 1 more decision you agree with", "2 wrong calls to explain", "run a rollback drill (factory/drill)"]);
     expect(blockerActions(ev({ blockers: [] }))).toEqual([]);
   });
   it("explains a refusal by its code, and names an unknown one", () => {
@@ -83,9 +83,9 @@ describe("the repository page", () => {
     const get = fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/policy/promotions": { promotion: { id: "aaaaaaaa" }, proposal, command: "gh pr create --repo Smana/cloud-native-ref" } }, calls);
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", get);
-    expect(app.textContent).toContain("20 clean merges (20 needed)");
+    expect(app.textContent).toContain("20 agreed (20 needed)");
     expect(app.textContent).toContain("glm-5.3 20/21");
-    expect(app.textContent).toContain("Live \u00b7 3 clean decisions recorded.");
+    expect(app.textContent).toContain("Live. 0 merged alone. 0 quiet. 0 wrong calls.");
     expect(app.textContent).not.toContain("not shadow");
     const buttons = [...app.querySelectorAll("button")].filter((b) => b.textContent === "Promote to live");
     expect(buttons).toHaveLength(1);
@@ -161,7 +161,7 @@ describe("the repository page", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": short, "/api/policy/exceptions/cccccccc": {} }, calls));
-    expect(app.textContent).toContain("Blocks promotion: needs 8 more clean merges.");
+    expect(app.textContent).toContain("Needs 8 more decisions you agree with.");
     const card = app.querySelector("#class-docs-links")!;
     expect([...card.querySelectorAll("button")].some((b) => b.textContent === "Ask an operator for an exception")).toBe(true);
     const approve = [...card.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
@@ -373,7 +373,7 @@ describe("pending evidence", () => {
     const ready = page();
     ready.report.evidenceAt = "2026-11-08T00:05:00Z";
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
-    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 clean merges (20 needed)");
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 agreed (20 needed)");
     expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toMatch(/^Evidence read .+\.$/);
     expect(app.querySelector(".policy-classes .evidence-age time")?.getAttribute("datetime")).toBe("2026-11-08T00:05:00Z");
     expect(app.querySelector("section.binding-editor")).toBe(editor);
@@ -437,7 +437,7 @@ describe("the evidence page polls", () => {
       await mountSettings(app, "/settings/evidence", fakeFetch(routes));
       expect(app.textContent).toContain(READING);
       routes["/api/policy/repositories/Smana/cloud-native-ref"] = page();
-      await expect.poll(() => app.querySelector("tbody")?.textContent).toContain("20 clean merges (20 needed)");
+      await expect.poll(() => app.querySelector("tbody")?.textContent).toContain("20 agreed (20 needed)");
       expect(app.textContent).not.toContain(READING);
       expect(app.querySelectorAll("tbody .reading")).toHaveLength(0);
       expect(app.querySelectorAll("table")).toHaveLength(1);
@@ -454,9 +454,9 @@ describe("the evidence page polls", () => {
     expect(app.querySelector(".evidence-error")?.textContent).toBe("Smana/cloud-native-ref: the last evidence read failed: rate limited.");
   });
 
-  it("writes clean merges past the minimum as a count, not N of M", () => {
-    expect(trackRecord(ev({ clean: 9, minimum: 5 })).textContent).toMatch(/^9 clean merges \(5 needed\) · /);
-    expect(trackRecord(ev({ clean: 3, minimum: 5 })).textContent).toMatch(/^3 of 5 clean merges · /);
+  it("writes agreed decisions past the minimum as a count, not N of M", () => {
+    expect(trackRecord(ev({ clean: 9, minimum: 5 })).textContent).toMatch(/^9 agreed \(5 needed\) · /);
+    expect(trackRecord(ev({ clean: 3, minimum: 5 })).textContent).toMatch(/^3 of 5 agreed · /);
   });
 });
 
@@ -553,7 +553,7 @@ describe("a bound repository's header, and a repository not migrated", () => {
     expect(app.querySelector(".policy-header")).toBeNull();
     expect(app.querySelector(".policy-editor")).toBeNull();
     expect(app.querySelectorAll(".class-card")).toHaveLength(2);
-    expect(app.querySelector(".policy-sentence")?.textContent).toBe("No extra policy restriction");
+    expect(app.querySelector(".policy-sentence")?.textContent).toBe("This factory does not say what checks this policy's meaning. Update Maku to see it.");
   });
 });
 
@@ -624,7 +624,7 @@ describe("the filter", () => {
     const ready = manyClasses();
     ready.report.evidenceAt = "2026-11-08T00:05:00Z";
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
-    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 clean merges (20 needed)");
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 agreed (20 needed)");
     expect(visible()).toEqual(["class-beta"]);
     expect(app.querySelector(".filter-count")?.textContent).toBe("1 of 4 policies");
   });

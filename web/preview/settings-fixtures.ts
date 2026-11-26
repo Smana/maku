@@ -11,6 +11,25 @@ import type { PolicyReport } from "../src/policy-page";
 import type { Recent } from "../src/decisions";
 import type { Backtest } from "../src/backtest";
 import type { BindingView, ClassReport, Condition, Evidence, RepositoryPage, RepositoryStatus } from "../src/settings";
+import type { Sentence } from "../src/sentence";
+
+// The factory's sentences (internal/factory/meaning.Build), as the API sends them.
+const S = (signal: string, prose: boolean, checkedBy: string, text: string, when = "", wayOut?: string): Sentence =>
+  ({ signal, prose, lead: "", when, checkedBy, text, wayOut });
+const meanings: Record<string, Sentence> = {
+  "docs-links": S("links-only", false, "the `links-only` shape: every changed line is a link target on the same host",
+    "**Would merge without you when** an agent changes only link targets in Markdown, at most 20 lines, and `Check the documentation links` passes. **Meaning checked by** the `links-only` shape: every changed line is a link target on the same host. **Not checked:** what the new page says. **After the merge** Maku watches main for 30 minutes and opens a revert on red. **Undo:** `factory/revert` within 7 days.",
+    "an agent changes only link targets in Markdown, at most 20 lines"),
+  revert: S("none", false, "nothing", "**Merges without you when** an agent changes files and a reviewer approves. **Meaning checked by** nothing. **Not checked:** what a change means. **To have its meaning checked,** require a plan and tests.",
+    "an agent changes files and a reviewer approves", "To have its meaning checked, require a plan and tests."),
+  docs: S("none", true, "nothing: this is prose", "**Would merge without you when** an agent changes Markdown under `docs/` or `README.md`, at most 5 files and 100 lines, 2 a day, and a reviewer approves. **Meaning checked by** nothing: this is prose.",
+    "an agent changes Markdown files, at most 5 files and 100 lines, 2 a day, and a reviewer approves"),
+  "deps-patch": S("semver-patch", false, "the `semver-patch` shape: only a patch version moves",
+    "**Would merge without you when** `renovate[bot]` moves only a patch version, at most 3 files and 10 lines, 2 a day, and `renovate/stability-days` passes. **Meaning checked by** the `semver-patch` shape: only a patch version moves. **Not checked:** the release itself; Maku waits for its release age.",
+    "`renovate[bot]` moves only a patch version, at most 3 files and 10 lines, 2 a day"),
+  "alert-rules": S("none", false, "nothing", "**Would merge without you when** an agent changes YAML under `observability/` and a reviewer approves. **Meaning checked by** nothing. **Not checked:** what a change means. **To have its meaning checked,** require a plan and tests.",
+    "an agent changes YAML under `observability/` and a reviewer approves", "To have its meaning checked, require a plan and tests."),
+};
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
   shadow: { mergedUnchanged: 14, changed: 1, reverted: 0, autoMerged: 0, drill: 1, reviewers: [{ model: "glm-5.3", mergedUnchanged: 14, changed: 1 }] },
@@ -56,7 +75,7 @@ const cnrBindings: BindingView[] = [
   { ...binding("deps-patch", "shadow", 1, { requiredLabel: "dependencies" }), accepted: false, reason: "MissingParameter" },
 ];
 const cnrManifest = manifest("cloud-native-ref", cnrBindings);
-const bound = (c: Omit<ClassReport, "source">): ClassReport => ({ source: "central", ...c });
+const bound = (c: Omit<ClassReport, "source">): ClassReport => ({ source: "central", meaning: meanings[c.class], ...c });
 
 export const cnrPage: RepositoryPage = {
   report: {
@@ -74,7 +93,7 @@ export const cnrPage: RepositoryPage = {
     bindings: cnrBindings,
     classes: [
       bound({ class: "docs-links", mode: "shadow", evidence: ev({ clean: 21, eligible: true, blockers: [] }), proposal: proposal("cloud-native-ref", cnrManifest, "docs-links") }),
-      bound({ class: "revert", mode: "live", unproposed: "not_shadow", evidence: ev({ clean: 40, eligible: true, blockers: [] }) }),
+      bound({ class: "revert", mode: "live", unproposed: "not_shadow", evidence: ev({ clean: 40, eligible: true, blockers: [], outcomes: { merges: 12, conclusive: 11, bad: 0 } }) }),
       bound({ class: "docs", mode: "shadow", evidence: ev(), proposal: proposal("cloud-native-ref", cnrManifest, "docs") }),
       bound({ class: "deps-patch", mode: "shadow", proposal: proposal("cloud-native-ref", cnrManifest, "deps-patch") }),
     ],
@@ -148,13 +167,16 @@ export const smallPages: Record<string, RepositoryPage> = Object.fromEntries(([
 
 // policy is a MergePolicy as /api/policy/policies lists it.
 const policy = (name: string, generation: number, spec: PolicyReport["spec"], consumers: number, current: number): PolicyReport => ({
-  name, generation, spec, manifest: "", manifestPath: `mergepolicy-${name}.yaml`,
+  name, generation, spec, manifest: "", manifestPath: `mergepolicy-${name}.yaml`, meaning: meanings[name],
   status: { observedGeneration: generation, consumerCount: consumers, currentCount: current },
+  bindings: name === "alert-rules" ? [{ repository: "Smana/cloud-native-ref", mode: "shadow", meaning: meanings["alert-rules"], holdoutChecks: ["Validate VMRules"] }] : undefined,
 });
 export const policies: PolicyReport[] = [
   policy("docs-links", 2, { description: "Link targets in Markdown, nothing else.", diffShape: "links-only", modifyOnly: true, maxModifiedLines: 20, evidence: "low" }, 8, 8),
   policy("revert", 1, { description: "Reverts a merge the factory made.", author: "agents", harness: "plain" }, 8, 8),
   policy("docs", 4, { description: "Prose in Markdown files, small changes.", allowedFiles: ["^.+\\.mdx?$"], maxPatchFiles: 5, maxModifiedLines: 100, maxPerDay: 2, evidence: "standard" }, 1, 1),
+  policy("alert-rules", 3, { description: "Alert rule changes, watched after the merge.", requires: ["plan"], evidence: "standard",
+    monitor: { verification: { within: "2h0m0s" }, followUpWindow: "2h0m0s" } }, 1, 1),
   policy("deps-patch", 1, { description: "A dependency's patch bump.", author: { adopt: { logins: ["renovate[bot]"], branches: ["^renovate/"] } }, diffShape: "semver-patch", modifyOnly: true, maxPatchFiles: 3, maxModifiedLines: 10, maxPerDay: 2, releaseAgeCheck: "renovate/stability-days", evidence: "low" }, 1, 0),
 ];
 

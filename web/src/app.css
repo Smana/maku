@@ -1431,3 +1431,19 @@ a.mode-badge:hover { text-decoration: underline; }
 .new-task-q-text { margin: 0; font-weight: 500; }
 .new-task-q-actions input { flex: 1 1 16em; min-width: 0; }
 .new-task-link-notice, .new-task-filed { margin: 0; }
+
+/* Correctness signals, guidance surfaces: the factory's sentence, the help line under each field,
+   the fields the form does not edit, a blocked promotion's lines, the explainer and the guided flow. */
+.settings .policy-meaning, .settings .evidence-progress { max-width: 64ch; margin: 4px 0 8px; }
+.settings .editor-field .field-help { grid-column: 2; color: var(--muted-foreground); font-size: var(--text-small); overflow-wrap: anywhere; }
+.policy-readonly { list-style: none; padding: 0; margin: 8px 0; max-width: 64ch; }
+.policy-readonly li { margin: 6px 0; }
+.policy-readonly .field-help { display: block; color: var(--muted-foreground); font-size: var(--text-small); }
+.promote-blockers { margin: 4px 0 8px; padding-left: 1.2em; font-size: var(--text-small); max-width: 64ch; }
+.promote-blockers .blocker-next { color: var(--muted-foreground); }
+.policy-explainer { margin: 8px 0 12px; max-width: 72ch; }
+.policy-explainer .md { overflow-x: auto; }
+.policy-guide { margin: 8px 0 12px; }
+.policy-guide .guide-kinds { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.policy-guide .guide-says, .policy-guide .guide-signal { max-width: 64ch; }
+@media (max-width: 600px) { .settings .editor-field .field-help { grid-column: 1; } }

@@ -7,6 +7,7 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
+import type { Sentence } from "./sentence";
 import { cleanCount, conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, servingStatus, timeText, trackRecord } from "./settings-api";
 import { policyPage, policiesTable, type PolicyReport } from "./policy-page";
 import { bindingEditor } from "./binding-editor";
@@ -27,10 +28,13 @@ export interface Evidence {
   clean: number; bad: number; immature: number; pending: number;
   bound: number; budget: number; widen: boolean; ladder: Step[];
   drill: string; minimum: number; eligible: boolean; blockers?: string[];
+  // The live merges: all of them, those whose monitor window closed (conclusive), and the wrong calls.
+  outcomes?: { merges: number; mature?: number; conclusive: number; bad: number };
 }
 export interface Proposal { path: string; line: number; file: string; editURL: string }
 // evidence is absent while the factory reads it: never read yet, or the class was added since.
-export interface ClassReport { class: string; source: string; mode: string; evidence?: Evidence; proposal?: Proposal; unproposed?: string }
+// meaning is the factory's sentence for this repository's binding (correctness signals CS7).
+export interface ClassReport { class: string; source: string; mode: string; evidence?: Evidence; proposal?: Proposal; unproposed?: string; meaning?: Sentence }
 export interface Condition { type: string; status: "True" | "False" | "Unknown" | string; reason?: string; message?: string }
 // A binding's parameters, as Repository.spec.mergePolicies holds them (B4).
 export interface Binding {

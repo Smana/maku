@@ -5,18 +5,26 @@
 import { explain, post, read } from "./settings-api";
 import { fileActions, toYAML } from "./policy-editor";
 import { backtestView, type Backtest } from "./backtest";
-import { patternDetails, policyWords } from "./policy-words";
+import { patternDetails } from "./policy-words";
+import { FIELD_HELP, READ_ONLY, readOnlyWords } from "./policy-help";
+import { checkedByLine, meaningNode, sentenceNode, type Sentence } from "./sentence";
+import { policyExplainer } from "./policy-explainer";
+import { policyGuide } from "./policy-guide";
 import { settingsFrame } from "./settings";
 import type { ThemeController } from "./theme";
 
 export interface ConsumerStatus { repository: string; mode?: string; servedGeneration?: number; accepted: boolean; reason?: string }
+// One repository's binding of the policy, read-only here and edited on the repository's page.
+export interface BindingMeaning { repository: string; mode: string; meaning: Sentence; holdoutChecks?: string[]; protectedFiles?: string[] }
 export interface PolicyReport {
   name: string; generation: number; spec: Record<string, unknown> & { description?: string; requires?: string[] };
   manifest: string; manifestPath: string;
   status: { observedGeneration?: number; consumerCount: number; currentCount: number; liveCount?: number; consumers?: ConsumerStatus[] };
+  // The policy's sentence read alone, and each binding the caller reads (correctness signals CS7).
+  meaning?: Sentence; bindings?: BindingMeaning[];
 }
 export interface ConsumerImpact { repository: string; mode: string; change: string; why?: string[]; resolves: boolean; reason?: string }
-export interface PolicyPreview { valid: boolean; errors?: string[]; consumers?: ConsumerImpact[]; manifest?: string; manifestPath?: string }
+export interface PolicyPreview { valid: boolean; errors?: string[]; consumers?: ConsumerImpact[]; manifest?: string; manifestPath?: string; meaning?: Sentence }
 type Spec = PolicyReport["spec"];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
@@ -58,7 +66,7 @@ export function policiesTable(ps: PolicyReport[]): HTMLTableElement {
   return table(["Policy", "What it allows", "Repositories using it"], ps.map((p) => {
     const a = el("a", p.name);
     a.href = `/settings/merge-policies/policies/${encodeURIComponent(p.name)}`;
-    return [a, policyWords(p.spec), countsWords(p)];
+    return [a, p.meaning?.when ? sentenceNode(p.meaning.when, "policy-when", "span") : "", countsWords(p)];
   }), "policy-table");
 }
 
@@ -69,18 +77,24 @@ export async function policyPage(app: HTMLElement, name: string, get: typeof fet
   catch (e) { main.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); return; }
   const catalog = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get).then((x) => x.policies, () => [p]);
   const repositories = await read<{ repositories: string[] }>("/api/policy/repositories", get).then((x) => x.repositories, () => []);
-  main.append(el("p", policyWords(p.spec), "policy-sentence"));
+  // The sentence the factory built, what checks the meaning, and the fields the form cannot edit.
+  main.append(meaningNode(p.meaning));
+  const checked = checkedByLine(p.meaning);
+  if (checked) main.append(checked);
+  main.append(policyExplainer());
+  const fixed = readOnlyFields(p.spec);
+  if (fixed) main.append(fixed);
   const patterns = Array.isArray(p.spec.allowedFiles) ? p.spec.allowedFiles as string[] : [];
   if (patterns.length) main.append(patternDetails(patterns));
   const certainty = el("details", undefined, "policy-certainty");
   certainty.append(el("summary", "How sure is this?"), el("p", countsWords(p), "policy-counts"));
-  if (p.spec.requires?.length) certainty.append(el("p", `Each binding must supply: ${p.spec.requires.join(", ")}`, "policy-requires"));
   main.append(certainty);
   const definition = el("details", undefined, "policy-source");
   definition.append(el("summary", "Show the YAML"), el("pre", toYAML(p.spec), "policy-definition"));
   main.append(definition, el("h2", "Repositories using it"));
+  if (p.bindings?.length) main.append(bindingsTable(p.bindings));
   const cs = p.status.consumers ?? [];
-  if (cs.length === 0) main.append(el("p", "No repository you read binds this policy."));
+  if (cs.length === 0 && !p.bindings?.length) main.append(el("p", "No repository you read binds this policy."));
   else main.append(table(["Repository", "Mode", "Status", "Why"],
     cs.map((c) => [c.repository, c.mode ?? "", c.accepted ? "accepted" : "refused", c.reason ?? ""]), "consumers"));
   main.append(el("h2", "Edit this policy"), policyEditor(p, get, catalog, repositories));
@@ -134,15 +148,49 @@ function field(spec: Spec, key: string, label: string, kind: FieldKind, changed:
   }
   input.setAttribute("aria-label", `policy ${key}`);
   l.append(el("span", label), input);
+  if (FIELD_HELP[key]) l.append(sentenceNode(FIELD_HELP[key], "field-help", "span"));
   return l;
+}
+
+// editable says whether the form edits key: evidence only where a shape or an oracle allows low.
+const editable = (spec: Spec, key: string) => key !== "evidence" ? false : !!(spec.diffShape || spec.oracle);
+
+// readOnlyFields are the policy's fields the form does not edit, each in plain words with its help.
+export function readOnlyFields(spec: Spec): HTMLElement | undefined {
+  const ul = el("ul", undefined, "policy-readonly");
+  for (const key of READ_ONLY) {
+    const value = spec[key];
+    if (editable(spec, key)) continue;
+    if (key !== "evidence" && (value === undefined || value === null || (Array.isArray(value) && value.length === 0))) continue;
+    const words = readOnlyWords(key, value);
+    if (!words) continue;
+    const li = el("li");
+    li.dataset.key = key;
+    li.append(sentenceNode(words, "readonly-words", "span"), sentenceNode(FIELD_HELP[key] ?? "", "field-help", "span"));
+    ul.append(li);
+  }
+  return ul.children.length ? ul : undefined;
+}
+
+// bindingsTable is each repository's binding, read-only: edited on the repository's page.
+function bindingsTable(bs: BindingMeaning[]): HTMLTableElement {
+  return table(["Repository", "Mode", "What it may change", "Added checks", "Added protected paths"], bs.map((b) => {
+    const a = el("a", b.repository);
+    a.href = `/settings/merge-policies/${b.repository.split("/").map(encodeURIComponent).join("/")}`;
+    return [a, b.mode, b.meaning.when ? sentenceNode(b.meaning.when, "binding-when", "span") : "", (b.holdoutChecks ?? []).join(", "), (b.protectedFiles ?? []).join(", ")];
+  }), "bindings");
 }
 
 function presets(catalog: PolicyReport[], use: (p: PolicyReport) => void): HTMLElement {
   const box = el("section", undefined, "policy-presets");
-  box.append(el("h3", "Start from a shipped policy"));
+  // The guided flow first (guidance surface 2): it ends here, in the editor, pre-filled.
+  const guide = el("button", "Guide me: what kind of change?");
+  guide.type = "button";
+  guide.onclick = () => guide.replaceWith(policyGuide(catalog, (spec) => use({ name: "", spec, meaning: undefined } as unknown as PolicyReport)));
+  box.append(guide, el("h3", "Start from a shipped policy"));
   for (const p of catalog) {
     const item = el("details", undefined, "policy-preset");
-    item.append(el("summary", p.name), el("p", policyWords(p.spec)));
+    item.append(el("summary", p.name), meaningNode(p.meaning, "preset-sentence"));
     const yaml = el("details", undefined, "preset-yaml");
     yaml.append(el("summary", "Show the YAML"), el("pre", toYAML(p.spec)));
     const button = el("button", `Use ${p.name}`);
@@ -159,7 +207,11 @@ export function policyEditor(p: PolicyReport, get: typeof fetch, catalog: Policy
   const box = el("section", undefined, "policy-editor");
   let spec: Spec = structuredClone(p.spec);
   const out = el("div", undefined, "policy-preview");
+  // The editor's sentence is the factory's: the saved policy's until Check returns the edited one's.
+  const sentence = el("div", undefined, "editor-sentence-box");
+  let shown = p.meaning;
   const draw = () => {
+    sentence.replaceChildren(...(shown ? [meaningNode(shown, "editor-sentence")] : []), el("p", "Check the change to see the sentence of the edited policy.", "editor-meta"));
     const changed = () => out.replaceChildren();
     const form = el("div", undefined, "policy-fields");
     for (const [key, label, kind] of [["description", "Purpose", "text"], ["allowedFiles", "Files it may change", "list"], ["maxPerDay", "Most merges a day", "number"]] as [string, string, FieldKind][]) {
@@ -188,6 +240,7 @@ export function policyEditor(p: PolicyReport, get: typeof fetch, catalog: Policy
       check.disabled = true;
       try {
         const pv = (await post(`/api/policy/policies/${encodeURIComponent(p.name)}/preview`, { spec }, get)) as PolicyPreview;
+        if (pv.meaning) sentence.replaceChildren(meaningNode(pv.meaning, "editor-sentence"));
         out.replaceChildren(...previewOf(pv));
       } catch (e) { out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); }
       check.disabled = false;
@@ -218,8 +271,8 @@ export function policyEditor(p: PolicyReport, get: typeof fetch, catalog: Policy
       actions.append(label, backtest);
     }
     box.replaceChildren(el("p", "Choose a preset or edit the fields. Repository modes and parameters stay on each repository's page.", "editor-meta"),
-      presets(catalog, (next) => { spec = structuredClone(next.spec); out.replaceChildren(); draw(); }),
-      el("p", policyWords(spec), "policy-sentence"), form, actions, out);
+      presets(catalog, (next) => { spec = structuredClone(next.spec); shown = next.meaning; out.replaceChildren(); draw(); }),
+      sentence, form, actions, out);
   };
   draw();
   return box;
