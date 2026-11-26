@@ -1442,8 +1442,12 @@ spec}` checks a `MergePolicy` against every consumer the caller reads; any other
 route replays the edited `file`, `bindings`, or `policy`/`spec` over recorded diffs and returns the
 broker's changed-and-unknown backtest result. `POST /v1/policy/promote {repository, class}` opens
 the one-line promotion PR for a maintainer and returns `{proposal, command?, pullRequest?,
-pullRequestURL?, branch?}`. `POST /v1/policy/drill {repository, pullRequest}` opens its labelled
-rollback revert. `GET /v1/policy/promotion?repository=&class=&pr=` returns `{pullRequestState,
+pullRequestURL?, branch?}`. `POST /v1/policy/drill {repository, pullRequest}` opens a labelled
+rollback revert of any merged pull request of the repository, whoever merged it, through the merger
+App. It refuses `409 drill_not_merged` for a pull request that is not merged, `503
+drill_no_connection` or `503 drill_no_merger` when the factory cannot reach the repository with the
+factory or merger App, and `502 drill_revert_failed` when GitHub refuses the revert; the factory logs
+each refusal's cause. `GET /v1/policy/promotion?repository=&class=&pr=` returns `{pullRequestState,
 servedMode}` for the broker's automatic record close. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
 decision timeline from the factory's own comments, for a reader. With no `pr`, `since=<date>` returns
 that repository's recent per-policy decisions in the broker's shape, newest first. `GET /v1/policy/policies` and `GET

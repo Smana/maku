@@ -793,6 +793,14 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				return nil, false
 			}
 			return c.gh, true
+		}, Merger: func(repo string) (promote.Reverter, bool) {
+			// A drill's revert is a merge-side call (R16): the merger App holds contents: write, the
+			// factory App does not when the merger is separate.
+			c, ok := conns.get(repo)
+			if !ok || c.merger == nil {
+				return nil, false
+			}
+			return c.merger, true
 		}}}
 	}
 	apiSrv.Redact = redactor

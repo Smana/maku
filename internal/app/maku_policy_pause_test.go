@@ -40,7 +40,7 @@ func TestOpenPausePR(t *testing.T) {
 			if strings.Contains(path, "/branches/") {
 				return 200, []byte(`{"commit":{"sha":"base123"}}`), nil
 			}
-			return 200, []byte(`{"sha":"file123","content":"` + base64.StdEncoding.EncodeToString(raw) + `"}`), nil
+			return 200, []byte(`{"sha":"file123","content":"` + base64.StdEncoding.EncodeToString(raw) + `"}`), nil // the manifest on the gitops branch
 		},
 		Capture: func(_ context.Context, argv []string) (string, error) {
 			calls = append(calls, argv)
@@ -78,6 +78,7 @@ func TestOpenPausePR(t *testing.T) {
 	if calls[2][0] != "gh" || calls[2][1] != "pr" || calls[2][2] != "create" {
 		t.Fatalf("%q", calls[2])
 	}
+	raw = updated // the pause merged: the resume reads a paused manifest
 	url, err = m.openPausePR(t.Context(), factory, "Smana/a", "resume", "")
 	if err != nil || url == "" {
 		t.Fatalf("%q %v", url, err)
@@ -94,5 +95,58 @@ func TestOpenPausePR(t *testing.T) {
 	}
 	if resumed.Spec.Merge != nil && resumed.Spec.Merge.Paused != nil {
 		t.Fatalf("%+v", resumed.Spec.Merge.Paused)
+	}
+}
+
+// A resume of a repository that is not paused, or a pause that changes nothing, is refused before
+// anything is written: the gcp-0 drill's resume opened an empty pull request (#549).
+func TestPausePRRefusesANoOpBeforeWriting(t *testing.T) {
+	notPaused := "apiVersion: maku.ogenki.io/v1alpha1\nkind: Repository\nspec:\n  repository: Smana/a\n  merge:\n    maxPerDay: 2\n"
+	paused := "apiVersion: maku.ogenki.io/v1alpha1\nkind: Repository\nspec:\n  repository: Smana/a\n  merge:\n    paused: {reason: \"Incident freeze\"}\n"
+	for _, tc := range []struct {
+		name, manifest, verb, reason, want string
+	}{
+		{"resume when not paused", notPaused, "resume", "", "is not paused"},
+		{"resume with no merge block", "kind: Repository\nspec:\n  repository: Smana/a\n", "resume", "", "is not paused"},
+		{"pause when paused for the same reason", paused, "pause", "Incident freeze", "already paused"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls [][]string
+			m := Maku{
+				GH: func(_ context.Context, path string) (int, []byte, error) {
+					if strings.Contains(path, "/branches/") {
+						return 200, []byte(`{"commit":{"sha":"base123"}}`), nil
+					}
+					return 200, []byte(`{"sha":"file123","content":"` + base64.StdEncoding.EncodeToString([]byte(tc.manifest)) + `"}`), nil
+				},
+				Capture: func(_ context.Context, argv []string) (string, error) {
+					calls = append(calls, argv)
+					return "https://github.com/Smana/gitops/pull/9\n", nil
+				},
+			}
+			factory := factoryv1.Factory{Spec: factoryv1.FactorySpec{GitOps: &factoryv1.GitOps{Repository: "Smana/gitops", Path: "repository-a.yaml"}}}
+			url, err := m.openPausePR(t.Context(), factory, "Smana/a", tc.verb, tc.reason)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || url != "" || len(calls) != 0 {
+				t.Fatalf("url=%q err=%v calls=%q", url, err, calls)
+			}
+		})
+	}
+	// A resume of a paused repository still opens its pull request.
+	var calls [][]string
+	m := Maku{
+		GH: func(_ context.Context, path string) (int, []byte, error) {
+			if strings.Contains(path, "/branches/") {
+				return 200, []byte(`{"commit":{"sha":"base123"}}`), nil
+			}
+			return 200, []byte(`{"sha":"file123","content":"` + base64.StdEncoding.EncodeToString([]byte(paused)) + `"}`), nil
+		},
+		Capture: func(_ context.Context, argv []string) (string, error) {
+			calls = append(calls, argv)
+			return "https://github.com/Smana/gitops/pull/9\n", nil
+		},
+	}
+	factory := factoryv1.Factory{Spec: factoryv1.FactorySpec{GitOps: &factoryv1.GitOps{Repository: "Smana/gitops", Path: "repository-a.yaml"}}}
+	if url, err := m.openPausePR(t.Context(), factory, "Smana/a", "resume", ""); err != nil || url == "" || len(calls) != 3 {
+		t.Fatalf("resume of a paused repository: %q %v %d calls", url, err, len(calls))
 	}
 }

@@ -99,9 +99,19 @@ func (r Maku) openPausePR(ctx context.Context, factory factoryv1.Factory, reposi
 	if !strings.EqualFold(repositoryObject.Spec.Repository, repository) {
 		return "", fmt.Errorf("gitops manifest is for %s, not %s", repositoryObject.Spec.Repository, repository)
 	}
+	// Refuse before anything is written: a resume of a repository that is not paused once opened a
+	// pull request of zero files (gcp-0 live drill, #549), and a second pause would do the same.
+	if paused := repositoryObject.Spec.Merge != nil && repositoryObject.Spec.Merge.Paused != nil; verb == "resume" && !paused {
+		return "", fmt.Errorf("policy resume: %s is not paused (its manifest has no spec.merge.paused); nothing to resume", repository)
+	} else if verb == "pause" && paused && repositoryObject.Spec.Merge.Paused.Reason == reason {
+		return "", fmt.Errorf("policy pause: %s is already paused with that reason; nothing to change", repository)
+	}
 	updated, err := setMergePaused(raw, verb == "pause", reason)
 	if err != nil {
 		return "", err
+	}
+	if string(updated) == string(raw) {
+		return "", fmt.Errorf("policy %s: the edit changes nothing in %s; no pull request opened", verb, gitops.Path)
 	}
 	changeBranch := "factory/" + verb + "-" + strings.ReplaceAll(repository, "/", "-")
 	if _, err := r.capture(ctx, []string{"gh", "api", "--method", "POST", "repos/" + gitops.Repository + "/git/refs",

@@ -5,6 +5,8 @@ package promote
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -81,13 +83,14 @@ func promotionRig(mode string) (*Service, *fakeGit) {
 	cfg := &config.Config{GitOps: json.RawMessage(`{"repository":"Smana/ai-native-ref","path":"factory/repository-ai-native-ref.yaml"}`),
 		Repositories: []config.Repository{{Name: "Smana/ai-native-ref", Merge: config.Merge{MergerLogin: "ogenki-agent-merger[bot]"}}}}
 	git := &fakeGit{raw: manifest, blob: "blob1"}
-	return &Service{Cfg: config.NewLive(cfg), Git: func(string) (Git, bool) { return git, true }, Reports: reportFunc(func(context.Context, string) (evidence.Report, error) {
-		return evidence.Report{Repository: "Smana/ai-native-ref", EvidenceAt: &at, Classes: []evidence.ClassReport{{
-			Class: "docs", Mode: mode, Evidence: &evidence.Evidence{Clean: 20, Minimum: 20, Drill: evidence.DrillPassed,
-				Shadow: evidence.ShadowTally{Judged: []int{42, 43}}},
-			Proposal: &evidence.Proposal{Path: "factory/repository-ai-native-ref.yaml", Line: 8, File: manifest},
-		}}}, nil
-	})}, git
+	return &Service{Cfg: config.NewLive(cfg), Git: func(string) (Git, bool) { return git, true },
+		Merger: func(string) (Reverter, bool) { return git, true }, Reports: reportFunc(func(context.Context, string) (evidence.Report, error) {
+			return evidence.Report{Repository: "Smana/ai-native-ref", EvidenceAt: &at, Classes: []evidence.ClassReport{{
+				Class: "docs", Mode: mode, Evidence: &evidence.Evidence{Clean: 20, Minimum: 20, Drill: evidence.DrillPassed,
+					Shadow: evidence.ShadowTally{Judged: []int{42, 43}}},
+				Proposal: &evidence.Proposal{Path: "factory/repository-ai-native-ref.yaml", Line: 8, File: manifest},
+			}}}, nil
+		})}, git
 }
 
 func TestOpenPromotesOneLineWithItsEvidence(t *testing.T) {
@@ -146,6 +149,45 @@ func TestDrillOpensAndLabelsARevert(t *testing.T) {
 	got, err := s.Drill(t.Context(), "Smana/ai-native-ref", 42)
 	if err != nil || got.Number != 92 || git.revertOf.Number != 42 || len(git.labels) != 1 || git.labels[0] != "factory/drill" {
 		t.Fatalf("%+v %+v %+v", got, git, err)
+	}
+}
+
+// factoryApp is the factory App's connection when the merger is a separate App: it reads pull
+// requests, and GitHub refuses it a revert, which needs contents: write.
+type factoryApp struct{ fakeGit }
+
+func (*factoryApp) RevertPR(context.Context, forge.RevertOf) (forge.Revert, error) {
+	return forge.Revert{}, errors.New("open a revert: Resource not accessible by integration")
+}
+
+// The gcp-0 drill: a pull request a maintainer merged, on a repository without merge.autoRevert,
+// with a separate merger App. The factory App reads it; the merger opens and labels the revert. The
+// drill once opened the revert with the factory App, which GitHub refuses, and answered a bare 503.
+func TestDrillOfAMaintainersMergeRevertsThroughTheMerger(t *testing.T) {
+	s, _ := promotionRig("shadow")
+	app := &factoryApp{fakeGit{pr: forge.PR{Number: 505, NodeID: "PR_505", State: "MERGED", Title: "docs: link", MergedBy: "Smana"}}}
+	merger := &fakeGit{}
+	s.Git = func(string) (Git, bool) { return app, true }
+	s.Merger = func(string) (Reverter, bool) { return merger, true }
+	got, err := s.Drill(t.Context(), "Smana/ai-native-ref", 505)
+	if err != nil || got.Number != 92 || merger.revertOf.Number != 505 || merger.revertOf.NodeID != "PR_505" ||
+		!slices.Equal(merger.labels, []string{"factory/drill"}) || merger.revertOf.By != "ogenki-agent-merger[bot]" {
+		t.Fatalf("%+v %v merger=%+v", got, err, merger)
+	}
+}
+
+func TestDrillRefusalsAreNamed(t *testing.T) {
+	s, git := promotionRig("shadow")
+	git.pr = forge.PR{Number: 7, State: "OPEN"}
+	if _, err := s.Drill(t.Context(), "Smana/ai-native-ref", 7); !errors.Is(err, ErrNotMerged) {
+		t.Fatalf("open PR: %v", err)
+	}
+	if _, err := s.Drill(t.Context(), "Smana/other", 7); !errors.Is(err, ErrUnknownRepository) {
+		t.Fatalf("unknown repository: %v", err)
+	}
+	s.Merger = func(string) (Reverter, bool) { return nil, false }
+	if _, err := s.Drill(t.Context(), "Smana/ai-native-ref", 7); !errors.Is(err, ErrNoMerger) {
+		t.Fatalf("no merger: %v", err)
 	}
 }
 
