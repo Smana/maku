@@ -1,0 +1,24 @@
+{
+  "server": {"host": "127.0.0.1", "port": 9224},
+  "capabilities": ["core"],
+  "webmcp": false,
+  "imageResponses": "allow",
+  "outputDir": "/tmp/out",
+  "network": {"allowedOrigins": ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]},
+  "browser": {
+    "browserName": "chromium",
+    "isolated": true,
+    "launchOptions": {
+      "headless": true,
+      "chromiumSandbox": false,
+      "args": [
+        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+        "--disable-software-rasterizer", "--disable-extensions", "--disable-sync", "--mute-audio",
+        "--disable-breakpad", "--disable-crash-reporter", "--no-first-run",
+        "--proxy-server=http://127.0.0.1:9", "--proxy-bypass-list=127.0.0.1;localhost;[::1]",
+        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]"
+      ]
+    },
+    "contextOptions": {"viewport": {"width": 1280, "height": 800}, "serviceWorkers": "block"}
+  }
+}

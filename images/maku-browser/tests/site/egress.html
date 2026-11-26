@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>egress</title></head>
+<body>
+  <h1>Egress probe</h1>
+  <!-- Page-initiated requests the gate never sees: Chromium's proxy and resolver flags must fail them. -->
+  <img src="http://example.com/x.png" alt="">
+  <p id="r">pending</p>
+  <script>
+    fetch("http://93.184.216.34/").then(
+      () => { document.getElementById("r").textContent = "fetch-ok"; },
+      () => { document.getElementById("r").textContent = "fetch-failed"; });
+  </script>
+</body>
+</html>
