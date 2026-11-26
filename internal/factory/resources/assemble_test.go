@@ -406,6 +406,22 @@ func TestAssembleCarriesPrivateCode(t *testing.T) {
 	}
 }
 
+// v5 Q16: a Repository's screenshots opt-in reaches its config entry; another repository has none.
+func TestAssembleCarriesScreenshots(t *testing.T) {
+	r0 := served(t, "maku", "Smana/maku")
+	r0.Spec["screenshots"] = map[string]any{"enabled": true, "maxScreenshots": int64(7)}
+	r, err := Assemble(file(t), with(t, r0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := r.Config.RepositoryFor("Smana/maku").Screenshots; s == nil || !s.Enabled || s.MaxScreenshots != 7 {
+		t.Fatalf("screenshots dropped: %+v %+v", s, r.Refused)
+	}
+	if s := r.Config.RepositoryFor("Smana/cloud-native-ref").Screenshots; s != nil {
+		t.Fatalf("a repository without screenshots has none: %+v", s)
+	}
+}
+
 // WF9: a Factory's workflows are read, with no warning.
 func TestWorkflowsIsReadAsHarnessProfiles(t *testing.T) {
 	f := Object{Kind: KindFactory, Name: "aws-0", Spec: fileCatalogue(t)}

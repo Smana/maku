@@ -188,6 +188,10 @@ type RepositorySpec struct {
 	// models, which are usually SaaS (v4 D3). A private repository without it is warned in this
 	// release (the PrivateCode condition) and refused from the next.
 	PrivateCode *config.PrivateCode `json:"privateCode,omitempty"`
+	// Screenshots gives the repository's implementer and tester runs a loopback-only browser (v5
+	// Q16); off by default. Only a maintainer sets it, here: never an issue, a label or a run request.
+	// +optional
+	Screenshots *config.Screenshots `json:"screenshots,omitempty"`
 }
 
 // RepositoryStatus is what the factory made of its Repository (D11, narrowed for v1).

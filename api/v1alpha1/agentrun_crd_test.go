@@ -85,6 +85,12 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 	for _, f := range []string{"role", "repository", "baseRef", "principal", "model", "effort", "dataClass", "harness", "size", "egress", "task"} {
 		immutable(f, spec.Properties[f])
 	}
+	// v5 Q16: a run's screenshot cap is 1 to 25, and the opt-in is fixed at creation.
+	immutable("screenshots", spec.Properties["screenshots"])
+	shots := spec.Properties["screenshots"].Properties["maxScreenshots"]
+	if shots.Minimum == nil || *shots.Minimum != 1 || shots.Maximum == nil || *shots.Maximum != 25 {
+		t.Errorf("screenshots.maxScreenshots bounds %v..%v, want 1..25", shots.Minimum, shots.Maximum)
+	}
 	immutable("budget.maxMinutes", spec.Properties["budget"].Properties["maxMinutes"])
 	if m := spec.Properties["egress"].Properties["profiles"].MaxItems; m == nil || *m != 4 {
 		t.Errorf("egress.profiles maxItems %v, want 4", m)

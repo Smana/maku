@@ -2,7 +2,11 @@
 
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/Smana/maku/internal/factory/config"
+)
 
 // Bounds (review I3). etcd stores every Task, and the API server costs each CEL rule against
 // the declared bounds, so every free-form string carries a maxLength and every list a maxItems.
@@ -482,6 +486,10 @@ type ProfileStatus struct {
 	// Requires records workflow stages added or unmet from MergePolicy.spec.requires (WR6).
 	// +optional
 	Requires *ClassRequiresStatus `json:"requires,omitempty"`
+	// Screenshots is the Repository's browser opt-in, frozen at triage (v5 Q16): a later change to
+	// the Repository changes no run of this task.
+	// +optional
+	Screenshots *config.Screenshots `json:"screenshots,omitempty"`
 }
 
 // ClassRequiresStatus records workflow stages required by a MergePolicy class (WR6).
@@ -1045,6 +1053,9 @@ type RunProvenance struct {
 	// +kubebuilder:validation:Enum=openhands;opencode
 	// +optional
 	Harness string `json:"harness,omitempty"`
+	// Screenshots says the run's claim asked for the browser sidecar (v5 Q16), set at creation.
+	// +optional
+	Screenshots bool `json:"screenshots,omitempty"`
 }
 
 // The sources of a run's model (RunProvenance.ModelSource).

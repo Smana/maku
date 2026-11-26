@@ -238,6 +238,25 @@ spec:
               roomRef:
                 pattern: ^[a-z2-7]{8}$
                 type: string
+              screenshots:
+                description: |-
+                  Screenshots gives an implementer or tester run a loopback-only browser sidecar (v5 Q16). The
+                  factory stamps it from the Repository's opt-in; the run-controller refuses it on any other
+                  role. Set at creation.
+                properties:
+                  enabled:
+                    type: boolean
+                  maxScreenshots:
+                    description: 'MaxScreenshots caps the screenshots the browser
+                      takes; empty: the gate''s default, 10.'
+                    format: int32
+                    maximum: 25
+                    minimum: 1
+                    type: integer
+                type: object
+                x-kubernetes-validations:
+                - message: screenshots is immutable
+                  rule: self == oldSelf
               size:
                 default: small
                 enum:

@@ -415,6 +415,8 @@ type Repository struct {
 	ClassAuthority string `json:"classAuthority,omitempty"`
 	// PrivateCode is v4 D3's opt-in for a private or internal repository: nil acknowledges nothing.
 	PrivateCode *PrivateCode `json:"privateCode,omitempty"`
+	// Screenshots is the repository's opt-in to the browser sidecar (v5 Q16): nil is off.
+	Screenshots *Screenshots `json:"screenshots,omitempty"`
 	// Workflow is the workflow a task runs when nothing else names one, and the tester's opt-in (WF3, WF7).
 	Workflow RepositoryWorkflow `json:"workflow,omitzero"`
 	// Bound and Bindings are a Repository object's mergePolicies, written by resources.Assemble
@@ -2357,6 +2359,9 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	c.validateAuthority(r, bad)
 	if r.PrivateCode != nil && !r.PrivateCode.Acknowledged {
 		bad("privateCode.acknowledged: false says nothing: set it to true, or remove privateCode (D3)")
+	}
+	if r.Screenshots != nil {
+		r.Screenshots.validate(bad)
 	}
 	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
 	for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
