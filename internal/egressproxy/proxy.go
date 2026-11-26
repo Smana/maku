@@ -220,7 +220,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if n := buf.Reader.Buffered(); n > 0 {
 		head, _ = buf.Peek(n)
 	}
-	p.splice(client, up, head)
+	// A tunnel to an install host ends when the set does, whichever replica learns it: it never
+	// carries a download into the agent's phase.
+	var open func() bool
+	if !slices.Contains(e.Allow, target) {
+		open = func() bool { cur, ok := p.Index.Lookup(ip); return ok && cur.UID == e.UID && cur.InstallOpen(p.now()) }
+	}
+	p.splice(client, up, head, open)
 }
 
 // closeInstall closes the install set of the pod that sends it, named by its UID: a pod can close
@@ -267,8 +273,9 @@ func (p *Proxy) closeInstall(w http.ResponseWriter, r *http.Request, ip string, 
 	_, _ = io.WriteString(w, "closed\n")
 }
 
-// splice copies both ways until either side closes or no byte moves for IdleTimeout.
-func (p *Proxy) splice(client, up net.Conn, head []byte) {
+// splice copies both ways until either side closes, no byte moves for IdleTimeout, or open, when
+// given, turns false (checked every tick).
+func (p *Proxy) splice(client, up net.Conn, head []byte, open func() bool) {
 	idle := p.IdleTimeout
 	if idle <= 0 {
 		idle = DefaultIdleTimeout
@@ -318,7 +325,7 @@ func (p *Proxy) splice(client, up net.Conn, head []byte) {
 			}
 			return
 		case <-tick.C:
-			if time.Since(time.Unix(0, last.Load())) > idle {
+			if time.Since(time.Unix(0, last.Load())) > idle || (open != nil && !open()) {
 				closeBoth()
 			}
 		}

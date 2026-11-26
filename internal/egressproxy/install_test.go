@@ -298,3 +298,43 @@ func TestRefusalReasons(t *testing.T) {
 		t.Fatalf("an IP literal is bad_request: %v", rs.n)
 	}
 }
+
+// A tunnel to an install host opened while the set was open does not outlive it: the close, or the
+// deadline, ends it within the tunnel's tick, on whichever replica holds it.
+func TestInstallTunnelEndsWithTheSet(t *testing.T) {
+	for name, end := range map[string]func(c *clock, x *Index, f *fixture){
+		"closed": func(_ *clock, _ *Index, f *fixture) {
+			if code := closeInstall(t, f.url, uidBody("uid-1")); code != http.StatusOK {
+				t.Fatalf("close: %d", code)
+			}
+		},
+		"closed on another replica": func(_ *clock, x *Index, _ *fixture) {
+			x.Upsert(installPod("run-abcdefgh", "127.0.0.1", "uid-1", func(p *corev1.Pod) { p.Annotations[InstallClosedAnnotation] = "true" }))
+		},
+		"deadline": func(c *clock, _ *Index, _ *fixture) { c.set(t0.Add(time.Hour)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := NewIndex()
+			x.Upsert(installPod("run-abcdefgh", "127.0.0.1", "uid-1"))
+			c := newClock(t0)
+			f := installProxy(t, x, c, &fakeCloser{}, nil)
+			r, conn, br := connect(t, f.url, http.MethodConnect, releaseHost)
+			if r.StatusCode != http.StatusOK {
+				t.Fatalf("open set: %d", r.StatusCode)
+			}
+			keep, kc, _ := connect(t, f.url, http.MethodConnect, "github.com:443")
+			if keep.StatusCode != http.StatusOK {
+				t.Fatalf("run set: %d", keep.StatusCode)
+			}
+			end(c, x, f)
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			var ne net.Error
+			if _, err := br.ReadByte(); err == nil || (errors.As(err, &ne) && ne.Timeout()) {
+				t.Fatalf("the install tunnel ends with the set, not at a timeout: %v", err)
+			}
+			if _, err := io.WriteString(kc, "ping"); err != nil {
+				t.Fatalf("a run-set tunnel stays open: %v", err)
+			}
+		})
+	}
+}
