@@ -271,6 +271,9 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		if searchOn {
 			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "AGENT_SEARCH", Value: "1"})
 		}
+		if screenshotsOn(r) { // the bridge relays the gate's screenshots with its own token (C12)
+			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "BROWSER_GATE_URL", Value: browserGateURL})
+		}
 		if c.RoomToolsURL != "" {
 			// The harness calls the broker directly, so its room tools reach the bridge bare; the
 			// broker still enforces each tool's roles.
@@ -325,6 +328,19 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: "room-tools", ExpirationSeconds: &ttl, Path: "token"}}}}}})
 	}
 	om := meta(r, runID, r.Name)
+	// v5 Q16: the opt-in browser, after the room's sidecars. The harness keeps its proxy env, whose
+	// NO_PROXY already bypasses 127.0.0.1; the sidecar gets none.
+	if screenshotsOn(r) {
+		vision := c.VisionFor(r, m.Name)
+		ctr, vs := browserSidecar(r, c, vision)
+		inits = append(inits, ctr)
+		vols = append(vols, vs...)
+		harness.Env = append(harness.Env, browserEnv(vision)...)
+		om.Annotations[runwatch.ScreenshotsAnnotation] = strconv.Itoa(int(s.Screenshots.MaxScreenshots))
+		if vision {
+			om.Annotations[runwatch.VisionAnnotation] = "true"
+		}
+	}
 	// kubernetes mode (plan PR6): the harness alone goes through the egress proxy, which reads the
 	// pod's allow-list from its annotation; the bridge talks in-cluster only.
 	if c.NetworkPolicy == NetworkPolicyKubernetes {
