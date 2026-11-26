@@ -340,3 +340,6 @@ func Stages(requires []string) string {
 	}
 	return natural(out, "and")
 }
+
+// Plain is Text for a terminal: the Markdown bold markers dropped, the code spans kept.
+func (s Sentence) Plain() string { return strings.ReplaceAll(s.Text, "**", "") }
