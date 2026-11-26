@@ -27,7 +27,7 @@ Reference for the broker, bridge, factory, CLI and web UI. See the [status page]
 | [maku](cli.md) | Install, one-command setup, subcommands, MCP tools and `maku-handoff` |
 | [Web UI](web-ui.md) | Signing in, the room list, working a room, approvals and refusals |
 | [GitHub account link](github-link.md) | Linking a GitHub account, revocation and the activity window |
-| [Slack App](slack.md) | Manifest, config, `/maku` and thread flows |
+| [Slack App](slack.md) | Manifest, config, mentions and thread flows |
 
 ## Understand it
 

@@ -73,8 +73,8 @@ You do **not** need an external PostgreSQL database to start a Tier-1 Pilot.
    ```
 
    Review the generated `Repository` manifest (`spec.privateCode.acknowledged: true`), apply it
-   alongside `Factory` and `MergePolicy`, add `.github/agent-factory.yaml` to the repository, and
-   run the ruleset script.
+   alongside the `Factory`, add `.github/agent-factory.yaml` to the repository, and run the ruleset
+   script. You apply no `MergePolicy`: the chart ships the catalog, evaluated in `shadow`.
 
 4. **Verify every seam before running work:**
 

@@ -11,7 +11,7 @@ flowchart LR
   crds["1. CRDs\nagent-factory-crds &\nagentgateway CRDs"] --> secrets["2. Secrets\nsecrets/ or\nExternalSecrets"]
   secrets --> umbrella["3. Umbrella chart\nagent-factory\n(production seams)"]
   umbrella --> preflight["4. Preflight\nhelm test /\nmaku preflight"]
-  preflight --> repo["5. First repository\nFactory, Repository,\nMergePolicy & ruleset"]
+  preflight --> repo["5. First repository\nFactory, Repository\n& ruleset"]
 ```
 
 ## What you bring
