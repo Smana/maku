@@ -55,7 +55,7 @@ trap cleanup EXIT
 # The run-controller's shape (spec §4.1): restricted, read-only, no network, tmpfs scratch.
 run_args=(--runtime="$RUNTIME" --read-only --user 10001:10001 --cap-drop ALL
   --security-opt no-new-privileges --network none --memory 2g
-  --tmpfs /tmp:rw,nosuid,nodev,size=512m --tmpfs /home/browser/.cache:rw,nosuid,nodev,size=128m
+  --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 --tmpfs /home/browser/.cache:rw,nosuid,nodev,size=128m,mode=1777
   -e MAX_SCREENSHOTS=10 -e VISION=1)
 
 # mcp NAME ARGS...: the MCP client (tests/mcp-client.js) in container NAME; one JSON line.
