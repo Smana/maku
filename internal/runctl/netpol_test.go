@@ -116,9 +116,7 @@ func TestKubeNetworkPolicyInClusterModelGolden(t *testing.T) {
 
 func TestEgressIsTheAllowList(t *testing.T) {
 	got := strings.Join(Egress(goRun(), testConfig(t), testModel), ",")
-	want := "github.com:443,api.github.com:443,codeload.github.com:443,objects.githubusercontent.com:443," +
-		"raw.githubusercontent.com:443,release-assets.githubusercontent.com:443," +
-		"proxy.golang.org:443,sum.golang.org:443,dl.google.com:443,api.anthropic.com:443"
+	want := "github.com:443,api.github.com:443,proxy.golang.org:443,sum.golang.org:443,dl.google.com:443,api.anthropic.com:443"
 	if got != want {
 		t.Fatalf("Egress = %s\nwant      %s", got, want)
 	}

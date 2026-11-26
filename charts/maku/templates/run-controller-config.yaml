@@ -129,4 +129,8 @@ data:
     egressProfiles:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+    {{- with $c.installEgress }}
+    installEgress:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
 {{- end }}

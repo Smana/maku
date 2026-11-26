@@ -41,6 +41,9 @@ func RunController(ctx context.Context, logger *slog.Logger, getenv func(string)
 	if err != nil {
 		return err
 	}
+	for _, w := range cfg.Warnings() {
+		logger.Warn("run-controller config", "warning", w)
+	}
 	lr := logr.FromSlogHandler(logger.Handler()) // as the broker and the factory do
 	ctrl.SetLogger(lr)
 	klog.SetLogger(lr)

@@ -65,6 +65,9 @@ type Config struct {
 	Broker         Broker              `json:"broker"`
 	Images         Images              `json:"images"`
 	EgressProfiles map[string][]string `json:"egressProfiles,omitempty"`
+	// InstallEgress is a check-enabled run's install set: hosts it reaches only while its toolchain
+	// installs, before the agent starts (GitHub egress tightening, 2026-11-26).
+	InstallEgress InstallEgress `json:"installEgress,omitzero"`
 	// RoomToolsURL is the broker's :8090 room tools, by broker.url's host, for a broker serving
 	// roomTools.auth tokenreview. Set, a run with a room gets MCP_URL and a projected token of audience
 	// room-tools for the harness alone. Unset, the harness wires no MCP server.
@@ -365,11 +368,36 @@ type Images struct {
 	Browser string `json:"browser,omitempty"`
 }
 
+// InstallEgress is the install set and its window. In networkPolicy kubernetes the egress proxy allows
+// the set until the harness closes it or the window ends; in cilium mode the run's CNP holds it for the
+// whole run, since a CNP cannot narrow itself on the pod's signal.
+type InstallEgress struct {
+	// Hosts are reached on 443 during the install. Unset: defaultInstallHosts.
+	Hosts []string `json:"hosts,omitempty"`
+	// HookProfiles are profiles whose hosts the install also reaches, for pre-commit's hook
+	// environments, when the run does not request them for the whole run. Unset: pypi, npm and crates,
+	// those of them egressProfiles configures.
+	HookProfiles []string `json:"hookProfiles,omitempty"`
+	// WindowSeconds is the install set's ceiling from the pod's creation: image pull, clone and the
+	// install (agent-checks' bound, twice: tools, then hook environments) with a margin. Unset: 1200.
+	WindowSeconds int `json:"windowSeconds,omitempty"`
+}
+
+// defaultInstallHosts are GitHub's release asset hosts (new, then old assets) and raw files, which
+// mise's GitHub backends read during the install (the spec's M1 measurement).
+var defaultInstallHosts = []string{"release-assets.githubusercontent.com", "objects.githubusercontent.com", "raw.githubusercontent.com"}
+
+// installSpec names the design a warning points at.
+const installSpec = "docs/superpowers/specs/2026-11-26-github-egress-tightening-design.md"
+
+// hostRE is a DNS name: what an install host must be (no port, no scheme).
+var hostRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+
 // defaultProfiles are the composition's _EGRESS_PROFILES (crossplane-configuration v0.9.17) plus
-// RC7's two hosts, until PR 5 brings them into the composition: GitHub's release host, where a
-// release download lands (302), and Go's archive host.
+// RC7's Go archive host, minus GitHub's release and raw hosts, which only the install reaches.
 var defaultProfiles = map[string][]string{
-	"github": {"github.com", "api.github.com", "codeload.github.com", "objects.githubusercontent.com", "raw.githubusercontent.com", "release-assets.githubusercontent.com"},
+	// git and the forge API for the whole run; GitHub's release and raw hosts are defaultInstallHosts.
+	"github": {"github.com", "api.github.com"},
 	"pypi":   {"pypi.org", "files.pythonhosted.org"},
 	"npm":    {"registry.npmjs.org"},
 	"golang": {"proxy.golang.org", "sum.golang.org", "dl.google.com"},
@@ -395,6 +423,19 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if c.EgressProfiles == nil {
 		c.EgressProfiles = defaultProfiles
+	}
+	if c.InstallEgress.Hosts == nil {
+		c.InstallEgress.Hosts = slices.Clone(defaultInstallHosts)
+	}
+	if c.InstallEgress.HookProfiles == nil { // the defaults the profiles configure: an override may drop some
+		for _, p := range []string{"pypi", "npm", "crates"} {
+			if _, ok := c.EgressProfiles[p]; ok {
+				c.InstallEgress.HookProfiles = append(c.InstallEgress.HookProfiles, p)
+			}
+		}
+	}
+	if c.InstallEgress.WindowSeconds == 0 {
+		c.InstallEgress.WindowSeconds = 1200
 	}
 	if c.NetworkPolicy == "" {
 		c.NetworkPolicy = NetworkPolicyCilium
@@ -460,7 +501,44 @@ func (c Config) validate() error {
 	if len(c.EgressProfiles["github"]) == 0 {
 		errs = append(errs, errors.New("egressProfiles.github is required: every run clones from GitHub"))
 	}
+	errs = append(errs, c.installEgress()...)
 	return errors.Join(errs...)
+}
+
+// installEgress checks the install set: names without a port, configured hook profiles, a positive
+// window.
+func (c Config) installEgress() []error {
+	var errs []error
+	for _, h := range c.InstallEgress.Hosts {
+		if !hostRE.MatchString(h) {
+			errs = append(errs, fmt.Errorf("installEgress.hosts: %q is not a host name (no scheme, no port: the install reaches it on 443)", h))
+		}
+	}
+	for _, p := range c.InstallEgress.HookProfiles {
+		if _, ok := c.EgressProfiles[p]; !ok {
+			errs = append(errs, fmt.Errorf("installEgress.hookProfiles: profile %q is not configured", p))
+		}
+	}
+	if c.InstallEgress.WindowSeconds < 0 {
+		errs = append(errs, fmt.Errorf("installEgress.windowSeconds %d must be positive", c.InstallEgress.WindowSeconds))
+	}
+	return errs
+}
+
+// Warnings are what a valid config should still change: an install set host listed in the github
+// profile stays open for the whole run.
+func (c Config) Warnings() []string {
+	var open []string
+	for _, h := range c.InstallEgress.Hosts {
+		if slices.Contains(c.EgressProfiles["github"], h) {
+			open = append(open, h)
+		}
+	}
+	if len(open) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("egressProfiles.github lists %s: every run reaches them for its whole run, not only while its toolchain installs. Drop them from the github profile (%s)",
+		strings.Join(open, ", "), installSpec)}
 }
 
 // egressProxy checks kubernetes mode's proxy and DNS: an http URL with a port on a fully qualified
@@ -638,6 +716,31 @@ func (c Config) FQDNs(r *v1alpha1.AgentRun) []string {
 	}
 	if forgeAPIDenied(r) {
 		out = slices.DeleteFunc(out, func(h string) bool { return strings.EqualFold(h, ForgeAPIHost) })
+	}
+	return out
+}
+
+// InstallFQDNs are the hosts a check-enabled run reaches while its toolchain installs: the install
+// hosts, then its hook profiles' hosts, less any the run reaches for its whole run. A run without
+// checks installs nothing and has none.
+func (c Config) InstallFQDNs(r *v1alpha1.AgentRun) []string {
+	if !r.Spec.Loop.Checks {
+		return nil
+	}
+	run := c.FQDNs(r)
+	var out []string
+	add := func(h string) {
+		if !slices.Contains(run, h) {
+			out = addUnique(out, h)
+		}
+	}
+	for _, h := range c.InstallEgress.Hosts {
+		add(h)
+	}
+	for _, p := range c.InstallEgress.HookProfiles {
+		for _, h := range c.EgressProfiles[p] {
+			add(h)
+		}
 	}
 	return out
 }
