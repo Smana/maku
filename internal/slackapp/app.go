@@ -111,20 +111,21 @@ const (
 // where the channel's approvals flag is on — a card's button decides. A thread reply is read only
 // to amend an unfiled draft; none is ever a command (invariant 8) and no reply is ever a decision.
 type App struct {
-	Slack         Slack
-	Broker        BrokerAPI
-	Threads       Threads
-	Verifier      Verifier
-	WebhookKeys   func() ([][]byte, error)
-	TeamID        string
-	BotUserID     string
-	RoomsURL      string
-	Channels      map[string]Channel
-	PlanningAfter time.Duration // how long a plan runs before the thread shows a "planning…" status; zero means 4s
-	Async         func(func())  // runs an event's handling after the 200 (tests); nil means the App's workers
-	Now           func() time.Time
-	Metrics       Recorder
-	Logger        *slog.Logger
+	Slack          Slack
+	Broker         BrokerAPI
+	Threads        Threads
+	Verifier       Verifier
+	WebhookKeys    func() ([][]byte, error)
+	TeamID         string
+	BotUserID      string
+	RoomsURL       string
+	Channels       map[string]Channel
+	EscalatedHours *int          // the factory's caps.escalatedHours; nil is its default, 0 no limit
+	PlanningAfter  time.Duration // how long a plan runs before the thread shows a "planning…" status; zero means 4s
+	Async          func(func())  // runs an event's handling after the 200 (tests); nil means the App's workers
+	Now            func() time.Time
+	Metrics        Recorder
+	Logger         *slog.Logger
 
 	events, deliveries seen        // event_id and webhook-id
 	stepped            seen        // rooms whose step-up line was already posted (WR4)
@@ -909,7 +910,7 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	case "room.ended":
 		sum := a.taskSummary(ctx, e.Room)
 		if notificationClass(e) == narrate.ClassNeedsYou {
-			text := escalatedEndLine(e, sum, th, ch, a.RoomsURL)
+			text := escalatedEndLine(e, sum, th, ch, a.RoomsURL, a.escalationStop())
 			return a.upsertEndLine(ctx, e.Room, th, text, actLineBlocks(e, ch, text, sum), false)
 		}
 		text := doneEndLine(e, sum, th)
@@ -941,7 +942,7 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	case "room.waiting_for_human":
 		// ClassNeedsYou: mention the one actor, state the action and what happens if nothing is done.
 		sum := a.taskSummary(ctx, e.Room)
-		text := waitingLine(e, sum, th, a.RoomsURL)
+		text := waitingLine(e, sum, th, a.RoomsURL, a.escalationStop())
 		if blocks := actLineBlocks(e, ch, text); len(blocks) > 0 {
 			if _, err := a.Slack.PostCard(ctx, th.Channel, th.TS, text, blocks, nil); err != nil {
 				a.log().Warn("slack post card failed", "room", e.Room, "err", err)
@@ -1022,7 +1023,7 @@ func (a *App) line(e webhook.Event) (string, bool) {
 		return "A run started.", true
 	case "room.waiting_for_human":
 		return fmt.Sprintf("Needs you (%s): answer it on the room page, %s. Nothing posted here reaches the run. %s",
-			reason, url, needsYouDefault(e, summary.Summary{})), true
+			reason, url, needsYouDefault(e, summary.Summary{}, a.escalationStop())), true
 	case "room.pr_opened":
 		return fmt.Sprintf("Pull request #%d opened.", e.PR), true
 	case "room.verdict_posted":
