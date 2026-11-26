@@ -1,6 +1,6 @@
 # Merge policies: what checked the meaning of a change, and what the counts are allowed to say
 
-**Date:** 2026-11-26 · **Status:** design, [owner decisions of 2026-11-26](#owner-decisions-2026-11-26) (1 to 10), which settle CS1 to CS9 · **Track:** v5 roadmap, track 4 (live auto-merge beyond `docs-links`) · **Builds on:** [merge policies review](2026-11-14-merge-policies-review-design.md) (MR1 to MR14) and [trust and usability](2026-11-24-merge-policies-trust-and-usability-design.md) (MT1 to MT4) · **Facts read on:** Maku `origin/main` `e9040a50` (v0.54.5), ai-native-ref `main` `209292a`, the served objects of gcp-0 on 2026-11-26
+**Date:** 2026-11-26 · **Status:** design, [owner decisions of 2026-11-26](#owner-decisions-2026-11-26) (1 to 11), which settle CS1 to CS9 and add the guidance surfaces · **Track:** v5 roadmap, track 4 (live auto-merge beyond `docs-links`) · **Builds on:** [merge policies review](2026-11-14-merge-policies-review-design.md) (MR1 to MR14) and [trust and usability](2026-11-24-merge-policies-trust-and-usability-design.md) (MT1 to MT4) · **Facts read on:** Maku `origin/main` `e9040a50` (v0.54.5), ai-native-ref `main` `209292a`, the served objects of gcp-0 on 2026-11-26
 
 ## The question
 
@@ -405,6 +405,123 @@ alert-rules  shadow  nothing           8 of 20 agreed, stays shadow  0
 | Decision | Not now. Maku does not run a repository's code in the gate (MT2), and the tester's harness is where a second variant belongs |
 | Trigger to revisit | The first wrong call under a contract-backed policy. CS6 already asks for the missing test |
 
+## Guidance surfaces
+
+Owner requirement, 2026-11-26: the pages, the docs and the website must **guide and explain**, not only use the new words. A reader who has never seen a merge policy must learn from the surface in front of them what the policy does, what checks it, and what to do next. CS7 fixes the words; this section fixes what each surface teaches.
+
+### 1. The policy editor and page (web)
+
+| Element | Specification |
+|---|---|
+| Header | The generated sentence of CS7, per policy and per binding: "Merges without you when… / Meaning checked by… / Not checked…". For an unchecked policy: "Never merges without you: …", with the way out |
+| Help under every field | One line saying what the field does and **what happens when it is exceeded or unmet**, with the reason a maintainer will read. Table below |
+| Every field rendered | `requires`, `evidence`, `monitor`, `oracle`, `author` appear, read-only where the form cannot edit them, each with its plain words. `alert-rules` no longer opens as an empty form |
+| `requires` label | "Tasks that touch these files run: a plan you approve". The line "Each binding must supply" (`web/src/policy-page.ts:77`) goes |
+| The repository binding | Read-only on the policy's page, one row per repository: mode, file scope in words, added checks, added protected paths, a link to the repository's page where it is edited |
+| Progress | "7 agreed, 0 wrong calls, of 20 needed. Rollback drill: not done." Once live: "34 merged alone: 34 signal-checked, 34 quiet". Each number links to its list. No "clean", no "healthy" |
+| Promote, disabled | The button stays visible and says why, in one line per blocker, each with its next step. Table below |
+| "How merge policies decide" | A link in the page header opens a short explainer: holds → merge → monitor → evidence, with the diagram of this design and the vocabulary table. Same content as the docs section in point 4, not a second copy: the page renders that section |
+
+Help lines, one per field:
+
+| Field | Help line |
+|---|---|
+| Files it may change | "A pull request that touches any other file waits for a maintainer (`file_not_allowed`)." |
+| Files it must never touch | "One matching file sends the whole pull request to a maintainer (`file_protected`)." |
+| Most files changed, most lines changed | "Above this, the pull request waits for a maintainer (`patch_too_large`). Lines are additions plus deletions." |
+| Most merges a day | "After this many, the next one waits until tomorrow (`auto_merge_cap`)." |
+| Edit files only | "A file added, deleted or renamed sends the pull request to a maintainer (`file_added_or_deleted`)." |
+| Required diff shape | "Every changed line must have this shape, or the policy does not apply (`class_mismatch`). A shape is what lets Maku check the meaning." |
+| Checks that must pass | "Each must report success from GitHub Actions on this exact commit. Skipped counts as failed (`holdout_red`). A check says something still works, not that the change is right." |
+| Changes that need approval | "A matching file asks a maintainer even when the policy is live (`approval_required`)." |
+| Required stages (`requires`) | "Tasks touching these files run these stages. A plan and tests together are what let Maku check the meaning of a configuration change." |
+| Evidence | "How many decisions a maintainer must agree with before promotion: 5 when a shape or an oracle checks the meaning, else 20." |
+| After a merge (`monitor`) | "What Maku watches and for how long. Silence here is 'quiet', not 'right'." |
+| Detector (`oracle`) | "A scheduled workflow names the defects. The pull request must fix exactly those (`oracle_unrequested`, `oracle_finding_open`)." |
+| Author (`author`) | "Whose pull requests this policy takes: the factory's agents, or another bot's by login and branch." |
+
+Why Promote is disabled:
+
+| Blocker | The button says | Next step offered |
+|---|---|---|
+| `Unchecked`, not prose | "Nothing checks what these changes mean, so this policy cannot merge alone." | "Add a signal": opens the guided flow at step 2 |
+| `Unchecked`, prose | Not a blocker. Above the button: "Once live, Maku asks you about one in five." | — |
+| `below_minimum` | "Needs 13 more decisions you agree with." | The list of pull requests waiting for a merge |
+| `bad_outcome` | "1 wrong call in the last 180 days: #398." | The wrong call's page |
+| `no_drill` | "No rollback drill on this repository yet." | "Run the drill", with the three steps |
+| `candidates_open` | "2 later fixes may have corrected a merge of this policy. Answer them first." | The candidates |
+| Sensitive kinds | Not a blocker of promotion. On the card: "Changes to network, access, admission or secret objects always wait for a maintainer, live or not." | The list in force |
+
+### 2. A guided "new policy" flow
+
+Three steps, on the "Start from a shipped policy" entry of the editor. It writes nothing: it ends in the editor, pre-filled, where **Check** and the backtest already are.
+
+| Step | Asks | Then |
+|---|---|---|
+| 1 | "What kind of change?" | A closed list, below |
+| 2 | "What can check its meaning?" | The suggestion for that kind, or "Nothing yet: this policy will record what it would do and stay in shadow", with what would change that |
+| 3 | "Where, and how much?" | Files, caps, a day's limit, each with its help line. Then the generated sentence, before the editor opens |
+
+| Kind of change | Suggested signal | Preset | Says |
+|---|---|---|---|
+| Link targets in docs | `links-only` shape | `docs-links` | "Can go live after 5 agreed decisions." |
+| Dead links a scan finds | Oracle and `links-only` | `dead-links` | "Needs a detector workflow in the repository." |
+| Dependency patch updates | `semver-patch` shape | `deps-patch` | "Checks the bump, not the release." |
+| Dependency minor updates | `semver-minor` shape | `deps-minor` | "Stays in shadow until a rendered-manifest proof exists." |
+| Prose | None | `docs` | "Can go live after 20; Maku then asks you about one in five." |
+| Entries a bot adds | None (`added-entry` bounds the structure) | `kb-entries` | "As prose: 20, then one in five." |
+| Configuration (alerts, values, manifests) | Contract: `requires: [plan, tests]` | `alert-rules` | "Needs a test runner for this file type in the repository. Without it: shadow only." |
+| Generated or formatted files | Equivalence proof (MT2) | — | "Available when proofs ship." |
+| Application code | — | — | "No policy covers it. A maintainer merges." |
+
+### 3. CLI
+
+| Command | Prints |
+|---|---|
+| `maku policy explain owner/name#PR` | Per policy: holds or not, with the numbers; the same sentence; "meaning checked by: …" or "meaning checked by: nothing"; and, when a signal is missing, the line "To let it merge alone: …" |
+| `maku policy explain owner/name <policy>` | The sentence for that binding, the progress line, the blockers with their next steps: the page's card, in a terminal |
+| `maku policy list` | The `CHECKED BY` column and wrong calls (CS7) |
+| `maku policy wrong owner/name#PR --reason "…"` | Reports a wrong call (CS6) |
+
+The sentence comes from one Go function. The web page reads it from the API and does not rebuild it.
+
+### 4. Maku docs
+
+| Page | Change |
+|---|---|
+| `docs/merge-policies.md`, new first section "Holds, agreed, signal-checked" | The vocabulary table, the flow diagram, and three sentences: what a policy decides, what the monitor hears, what the counts mean. **Every surface links here**: the page's explainer, the pull request comment, `maku policy explain --help`, the Slack line |
+| Same page, "The catalog" | One worked example per shipped policy (`docs-links`, `deps-patch`, `docs`): a real diff that holds, one that does not and why, the sentence, the decision record with `signal=`, what the monitor then reads, and how a wrong call would be reported |
+| Same page, "Worked examples" | `alert-rules` rewritten around the contract: the plan, the rule test, the change, the record |
+| `docs/factory.md`, "The post-merge monitor" | "Quiet" defined once, with the link above. The `healthy` wire value named as such |
+| `docs/reference/web-ui-settings.md` | The editor's help lines and the guided flow |
+| Reasons table | The new reasons with their next step: `audit_sample`, `audit_pending`, `sensitive_change`, `sensitive_unreadable`, `contract_absent`, binding `Unchecked` |
+
+### 5. The ai-native-ref website
+
+Written to `docs/docs-style.md`: for a reader who was not there. Links to cloud-native-ref are absolute.
+
+| Page | Holds |
+|---|---|
+| `website/content/docs/use/guide/merge-policies.md`, rewritten as the operator's concept and guide page | **The mental model**: a policy says "inside", a signal says "means what it should", a maintainer says "agreed", the monitor says "quiet". **What can go wrong**, as one table: loud (reverted), silent (needs a signal), latent (the open ledger), security (always a maintainer). **How to make a change kind safe to go live**, worked on alert rules: write the rule test, require a plan and tests, watch 20 decisions, promote. **What Maku will never tell you**: that a change was right. Screenshot placeholders for the policy page header, a disabled Promote button with its reason, the guided flow's step 2, and an audit comment |
+| `website/content/docs/operate/auto-merge-safety.md` | The threat model table of this design, in the site's words, and the sensitive-kind list in force on the platform |
+| `website/content/docs/use/guide/cheat-sheet.md` | Rows: `factory/wrong` ("this merge was a mistake, at any time"), `maku policy wrong`, `maku policy explain`, "Maku asked me about a pull request it could have merged" (the audit) |
+| `website/content/docs/use/guide/when-things-go-wrong.md` | "A merge turned out wrong after the window": label it, what happens to the policy |
+| `website/content/docs/use/guide/merging.md` | The comment lines of point 6, with what each asks of the reader |
+
+### 6. Decision comments, GitHub and Slack
+
+Every decision message carries one line naming the signal, or saying there is none. It links to the docs section of point 4.
+
+| Message | Line |
+|---|---|
+| Merged, signal-checked | "Meaning checked by the `links-only` shape." |
+| Merged, live prose | "Meaning not checked: this is prose. Maku asks a maintainer about one in five." |
+| Would have merged (shadow), with a signal | "Meaning checked by the test contract." |
+| Would have merged (shadow), unchecked | "Meaning not checked. This policy cannot merge alone until something checks it." |
+| Audit | "Maku asks you about one in five: merge it unchanged if you agree." |
+| Waits, sensitive kind | "Changes `ClusterRoleBinding` in `rbac.yaml`: always a maintainer's." |
+| Slack, one line | "`docs-links` merged #2741 alone (meaning checked by `links-only`)" or "… (meaning not checked)" |
+
 ## Migration
 
 Seven policies are served on gcp-0. One binding is live.
@@ -434,9 +551,38 @@ One spec, three plans, in the order of [decision 10](#owner-decisions-2026-11-26
 
 | Plan | Repository | Holds | Changes a served decision |
 |---|---|---|---|
-| 1. Words, right after the 2026-11-24 usability plan | Maku | The vocabulary, the sentence, `signal=` in the record, the card, the editor's read-only fields, `explain` and `list` | No |
+| 1. Words and guidance, right after the 2026-11-24 usability plan | Maku | The vocabulary, the sentence, `signal=` in the record, and [guidance surfaces](#guidance-surfaces) 1 to 4 and 6 | No |
 | 2. Rules, before any second policy goes live | Maku | `Unchecked`, the audit, `factory/wrong`, sensitive kinds, CS8. Then `sensitiveFields` and late candidates | Yes: only toward a maintainer |
-| 3. Adoption | ai-native-ref, cloud-native-ref | `alert-rules` requires tests, the rule-test runner, `kb-entries` evidence, runbooks under `requiresApproval` | With each Maku pin |
+| 3. Adoption | ai-native-ref, cloud-native-ref | `alert-rules` requires tests, the rule-test runner, `kb-entries` evidence, runbooks under `requiresApproval`, and [guidance surface](#guidance-surfaces) 5 | With each Maku pin |
+
+### Acceptance criteria
+
+Plan 1, words and guidance (Maku). Each is checked by a test or by `task check`.
+
+| # | Criterion |
+|---|---|
+| W1 | One Go function builds the sentence. The policy page, `maku policy explain`, the promotion pull request and the comments print its output; a test compares them |
+| W2 | The policy page of a policy with only `requires`, `evidence` and `monitor` (the `alert-rules` fixture) shows a header sentence, those three fields with their plain words, and each binding read-only. No empty form |
+| W3 | Every editor field has a help line that names what happens when it is exceeded or unmet. A test fails on a field without one |
+| W4 | The string "Each binding must supply" is gone; `requires` reads as workflow stages |
+| W5 | The card prints agreed, signal-checked, quiet, wrong calls and the drill's state. "clean" and "healthy" appear in no user-facing string; a vocabulary check in `task check` refuses them outside wire names |
+| W6 | A disabled Promote button shows one line per blocker and a next step, for each row of the blocker table |
+| W7 | The guided flow reaches the editor for each kind of change in its table, with the suggested signal or the "stays in shadow" line |
+| W8 | `maku policy explain` prints the sentence and, when the policy has no signal, the missing-signal line |
+| W9 | `docs/merge-policies.md` opens with "Holds, agreed, signal-checked", carries one worked example per catalog policy, and the page explainer, the comments and the CLI help link to that section; the link check holds them |
+| W10 | Every merged, shadow, audit and Slack decision message carries the signal line. A golden test per message |
+| W11 | No served decision changes: the gate's golden decisions are byte-identical but for the added `signal=` field |
+
+Plan 3, adoption (ai-native-ref and cloud-native-ref). `task check` in ai-native-ref is the evidence.
+
+| # | Criterion |
+|---|---|
+| AD1 | The website's merge-policies page holds the mental model, the four-row threat table (loud, silent, latent, security), the alert-rule walkthrough and the screenshot placeholders, and passes `task docs` |
+| AD2 | The cheat sheet has the `factory/wrong`, `maku policy wrong`, `maku policy explain` and audit rows |
+| AD3 | `auto-merge-safety.md` lists the sensitive kinds in force and the threat model |
+| AD4 | cloud-native-ref's test runner runs alert rule tests, and one rule test exists as the worked example the site cites |
+| AD5 | `alert-rules` declares `requires: [plan, tests]`; `kb-entries` declares `evidence: standard`; runbook paths sit under `requiresApproval` |
+| AD6 | Screenshot placeholders are replaced at the first live session after the Maku pin |
 
 Plan 1 can ship before the 2026-11-24 proofs. Plan 2's contract signal needs nothing from them. The `rendered` row of CS5 waits for them.
 
@@ -468,7 +614,7 @@ Plan 1 can ship before the 2026-11-24 proofs. Plan 2's contract signal needs not
 
 ## Owner decisions, 2026-11-26
 
-Each is an owner decision of 2026-11-26, given on the ten questions this study closed with. Each took the recommendation.
+Each is an owner decision of 2026-11-26, given on the ten questions this study closed with, each taking the recommendation, plus one requirement of the owner's own (11).
 
 | # | Owner decision, 2026-11-26 | Settles |
 |---|---|---|
@@ -482,3 +628,4 @@ Each is an owner decision of 2026-11-26, given on the ten questions this study c
 | 8 | **Any change a maintainer makes to an audited pull request before merging is a wrong call**, whatever its size. So is a close | CS4 |
 | 9 | **No mutation probing now.** Revisit at the first wrong call under a contract | CS9 |
 | 10 | **Order:** the words plan right after the 2026-11-24 usability plan; the rules plan before any second policy goes live; then adoption in ai-native-ref and cloud-native-ref | Sequence |
+| 11 | **The UI, the docs and the website guide and explain**, not only use the new words: [guidance surfaces](#guidance-surfaces), as acceptance criteria of plans 1 and 3 | Guidance surfaces, sequence |
