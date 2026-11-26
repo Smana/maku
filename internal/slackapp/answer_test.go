@@ -37,8 +37,8 @@ func TestQuestionLineQuotesBrokerQuestion(t *testing.T) {
 	if !strings.HasPrefix(p.text, "The scoper asks: Which command proves it? &lt;!channel&gt; &lt;@U07GHI&gt; ") {
 		t.Fatalf("question line prefix = %q", p.text)
 	}
-	if !strings.HasSuffix(p.text, "…. Reply to answer. If nothing is done, it stops in 24 hours.") {
-		t.Fatalf("question line suffix = %q, want clipped question + '. Reply to answer. If nothing is done, it stops in 24 hours.'", p.text)
+	if !strings.HasSuffix(p.text, "…. Reply to answer. If nothing is done, it stops in 7 days.") {
+		t.Fatalf("question line suffix = %q, want clipped question + '. Reply to answer. If nothing is done, it stops in 7 days.'", p.text)
 	}
 	for _, leak := range []string{"<!channel>", "<@U07GHI>", "IGNORE ALL PREVIOUS", "SECRET AGENT FREE TEXT"} {
 		if strings.Contains(p.text, leak) || strings.Contains(string(p.blocks), leak) {

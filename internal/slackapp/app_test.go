@@ -2317,6 +2317,34 @@ func TestTheThreadSaysAStepUpOnce(t *testing.T) {
 	}
 }
 
+// The escalation's "if nothing is done" is the factory's caps.escalatedHours, mirrored in the App's
+// escalatedHours (Smana/maku#749's follow-up): never a fixed 24 hours.
+func TestEscalationStopFollowsTheFactoryLimit(t *testing.T) {
+	for _, tc := range []struct {
+		hours *int
+		want  string
+	}{
+		{nil, "If nothing is done, it stops in 7 days."},
+		{new(168), "If nothing is done, it stops in 7 days."},
+		{new(24), "If nothing is done, it stops in 1 day."},
+		{new(36), "If nothing is done, it stops in 36 hours."},
+		{new(1), "If nothing is done, it stops in 1 hour."},
+		{new(0), "If nothing is done, it stays parked."},
+	} {
+		if got := (&App{EscalatedHours: tc.hours}).escalationStop(); got != tc.want {
+			t.Errorf("escalationStop(%v) = %q, want %q", tc.hours, got, tc.want)
+		}
+	}
+
+	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+	rig.app.EscalatedHours = new(48)
+	rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001", Author: "U01REQ", Filer: "U02DEF"})
+	rig.webhook(`{"type":"room.ended","room":"aaaaaaaa","state":"failed","reason":"stalled"}`)
+	if posts := rig.posts(); len(posts) != 1 || !strings.HasSuffix(posts[0].text, "If nothing is done, it stops in 2 days.") {
+		t.Fatalf("posts = %+v, want one escalated end line naming 2 days", posts)
+	}
+}
+
 // Task G6: every needs_you message mentions the one person who can act, states the recommended
 // action (button, reply, command, or room link), and names what happens if nothing is done.
 func TestANeedsYouMessageNamesTheDefault(t *testing.T) {
@@ -2331,7 +2359,7 @@ func TestANeedsYouMessageNamesTheDefault(t *testing.T) {
 		wantDefault string
 	}{
 		{
-			name: "scoper question mentions author and names 24h stop",
+			name: "scoper question mentions author and names the 7-day default stop",
 			ch:   Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2},
 			sum: func() *summary.Summary {
 				var s summary.Summary
@@ -2345,7 +2373,7 @@ func TestANeedsYouMessageNamesTheDefault(t *testing.T) {
 			wantMention: "<@U01REQ>",
 			notMention:  "<@U02DEF>",
 			wantAction:  "Reply to answer.",
-			wantDefault: "If nothing is done, it stops in 24 hours.",
+			wantDefault: "If nothing is done, it stops in 7 days.",
 		},
 		{
 			name: "merge hold mentions filer and says it stays parked",
@@ -2381,16 +2409,16 @@ func TestANeedsYouMessageNamesTheDefault(t *testing.T) {
 			wantMention: "<@U02DEF>",
 			notMention:  "<@U01REQ>",
 			wantAction:  "/factory retry",
-			wantDefault: "If nothing is done, it stops in 24 hours.",
+			wantDefault: "If nothing is done, it stops in 7 days.",
 		},
 		{
-			name:        "escalated end with retry button names 24h stop",
+			name:        "escalated end with retry button names the 7-day default stop",
 			ch:          Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2, IntentActions: []string{"retry"}},
 			body:        `{"type":"room.ended","room":"aaaaaaaa","state":"failed","reason":"stalled"}`,
 			wantMention: "<@U02DEF>",
 			notMention:  "<@U01REQ>",
 			wantAction:  "Ended: escalated",
-			wantDefault: "If nothing is done, it stops in 24 hours.",
+			wantDefault: "If nothing is done, it stops in 7 days.",
 		},
 	}
 

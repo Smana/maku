@@ -36,6 +36,11 @@ type Config struct {
 	ClientIDFile      string `json:"clientIDFile"`
 	ClientSecretFile  string `json:"clientSecretFile"`
 	ProjectIDFile     string `json:"projectIDFile"`
+	// EscalatedHours is the factory's caps.escalatedHours (its Factory's spec.caps.escalatedHours):
+	// how long a task waits escalated for a maintainer before the factory stops it. The App cannot
+	// read it, so the operator sets the same value here; it only words a needs_you line's "if nothing
+	// is done". Omitted is the factory's default, 168; 0 is no limit.
+	EscalatedHours *int `json:"escalatedHours,omitempty"`
 	// Preset is "" or "zitadel" (today's token request: ZITADEL's fixed path, the project's
 	// audience scope, ProjectIDFile required), or "generic": any OIDC issuer (v4 D8).
 	Preset string `json:"preset,omitempty"`
@@ -159,6 +164,9 @@ func (c Config) validate() error {
 		}
 	}
 	errs = append(errs, c.validatePreset()...)
+	if c.EscalatedHours != nil && *c.EscalatedHours < 0 {
+		errs = append(errs, errors.New("escalatedHours must be 0 (no limit) or more"))
+	}
 	if !teamRE.MatchString(c.TeamID) {
 		errs = append(errs, fmt.Errorf("teamID %q is not a Slack workspace id", c.TeamID))
 	}

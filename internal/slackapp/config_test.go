@@ -269,3 +269,35 @@ func TestConfigAPIBaseURL(t *testing.T) {
 		}
 	}
 }
+
+// escalatedHours is the factory's caps.escalatedHours, mirrored: absent is the default, 0 is no
+// limit, a negative number is refused as the factory refuses it.
+func TestLoadConfigEscalatedHours(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		line   string
+		want   *int
+		errHas string
+	}{
+		{name: "absent", line: ""},
+		{name: "zero is no limit", line: "escalatedHours: 0\n", want: new(0)},
+		{name: "set", line: "escalatedHours: 48\n", want: new(48)},
+		{name: "negative", line: "escalatedHours: -1\n", errHas: "escalatedHours"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := loadConfigText(t, goodConfig+tc.line)
+			if tc.errHas != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.errHas) {
+					t.Fatalf("err = %v, want one naming %q", err, tc.errHas)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (c.EscalatedHours == nil) != (tc.want == nil) || (tc.want != nil && *c.EscalatedHours != *tc.want) {
+				t.Fatalf("EscalatedHours = %v, want %v", c.EscalatedHours, tc.want)
+			}
+		})
+	}
+}

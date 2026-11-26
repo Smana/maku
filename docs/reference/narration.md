@@ -14,7 +14,7 @@ Every narration event carries a `Class` (`needs_you`, `changed`, or `done`) that
 
 | Class | Mention | Shape |
 |---|---|---|
-| `needs_you` | Yes, the one person who can act | What is asked, one recommended action (a button, reply, or command), and what happens if nothing is done (for example, "it stays parked" or "it stops in 24 hours") |
+| `needs_you` | Yes, the one person who can act | What is asked, one recommended action (a button, reply, or command), and what happens if nothing is done (for example, "it stays parked" or, in Slack, "it stops in 7 days" from the factory's `caps.escalatedHours`) |
 | `changed` | No | A state transition with no mention (run start, workflow card, step-up, pull request opened, CI fix, resume, monitor verdict) |
 | `done` | Yes, once | The terminal end line (`Done`, `NoOp`, `Rejected`, `Closed`, `Stopped`, `Reverted`, or merged) |
 

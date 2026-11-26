@@ -301,7 +301,8 @@ func newSlackApp(cfg slackapp.Config, cl client.Client, rec slackapp.Recorder, l
 			return webhook.ReadKeys(cfg.WebhookKeyFile)
 		},
 		TeamID: cfg.TeamID, BotUserID: fileValue(cfg.BotUserIDFile), RoomsURL: cfg.RoomsURL, Channels: cfg.Channels,
-		Now: time.Now, Metrics: rec, Logger: log,
+		EscalatedHours: cfg.EscalatedHours,
+		Now:            time.Now, Metrics: rec, Logger: log,
 	}
 }
 

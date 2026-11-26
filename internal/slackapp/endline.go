@@ -41,17 +41,48 @@ func mentionPrefix(actor string) string {
 	return "<@" + actor + "> "
 }
 
-// needsYouDefault names what happens if nothing is done for a needs_you notification (G6).
-func needsYouDefault(e webhook.Event, sum summary.Summary) string {
+// defaultEscalatedHours is the factory's caps.escalatedHours when it is not set.
+const defaultEscalatedHours = 168
+
+// escalationStop is what happens to an escalated task nobody acts on, from the factory's
+// caps.escalatedHours: "If nothing is done, it stops in 7 days.", or, with no limit, that it stays
+// parked. A room a person drives never expires, but then something is being done.
+func (a *App) escalationStop() string {
+	h := defaultEscalatedHours
+	if a.EscalatedHours != nil {
+		h = *a.EscalatedHours
+	}
+	return escalationStopLine(h)
+}
+
+// escalationStopLine words a limit of h hours: whole days as days, anything else as hours.
+func escalationStopLine(h int) string {
+	if h <= 0 {
+		return "If nothing is done, it stays parked."
+	}
+	n, unit := h, "hour"
+	if h%24 == 0 {
+		n, unit = h/24, "day"
+	}
+	if n != 1 {
+		unit += "s"
+	}
+	return fmt.Sprintf("If nothing is done, it stops in %d %s.", n, unit)
+}
+
+// needsYouDefault names what happens if nothing is done for a needs_you notification (G6). stop is
+// the escalation's line (escalationStop): an escalated end and a question waiting for its author
+// both wait escalated, so caps.escalatedHours stops them.
+func needsYouDefault(e webhook.Event, sum summary.Summary, stop string) string {
 	reason := webhook.Clip("reason", e.Reason)
 	if reason == "" || reason == "other" {
 		reason = sum.Status.ReasonCode
 	}
 	switch {
 	case e.Type == "room.ended" && isEscalatedEnd(e.State):
-		return "If nothing is done, it stops in 24 hours."
+		return stop
 	case reason == "needs_author" || reason == "split_proposed" || hasOpenQuestion(sum):
-		return "If nothing is done, it stops in 24 hours."
+		return stop
 	case reason == "approval" || e.ApprovalID != "":
 		return "If nothing is done, it stays parked until the deadline."
 	default:
@@ -72,7 +103,7 @@ func doneEndLine(e webhook.Event, sum summary.Summary, th Thread) string {
 // escalatedEndLine formats an escalated room.ended notification under the needs_you class (G6):
 // mentions the one actor (when recorded), states what stopped, names one recommended action when
 // no button is attached, and says what happens if nothing is done.
-func escalatedEndLine(e webhook.Event, sum summary.Summary, th Thread, ch Channel, roomsURL string) string {
+func escalatedEndLine(e webhook.Event, sum summary.Summary, th Thread, ch Channel, roomsURL, stop string) string {
 	line := endLine(e, sum)
 	if !ch.actsOn(actRetry) {
 		url := strings.TrimSuffix(roomsURL, "/") + "/r/" + e.Room
@@ -80,7 +111,7 @@ func escalatedEndLine(e webhook.Event, sum summary.Summary, th Thread, ch Channe
 	} else {
 		line += "."
 	}
-	line += " " + needsYouDefault(e, sum)
+	line += " " + needsYouDefault(e, sum, stop)
 	return mentionPrefix(th.actorFor("")) + line
 }
 
