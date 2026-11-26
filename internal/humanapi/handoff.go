@@ -146,6 +146,26 @@ type handoffChecked struct {
 	Issues          []handoffIssue   `json:"issues,omitempty"`
 }
 
+// newHandoffChecked is the one checked view both handoff_check (MCP) and POST
+// /api/handoffs/{id}/check (the terminal's maku start) answer with: the draft's workflow choices,
+// first issue, wholePlans switch and, under wholePlans, every issue of the plan. Built in one place
+// so the two surfaces cannot drift again (the HTTP route once dropped wholePlans and issues, and
+// maku start filed only the first issue of a whole plan).
+func newHandoffChecked(checked planChecked, draft handoffDraft) handoffChecked {
+	return handoffChecked{
+		planChecked:     checked,
+		Workflows:       draft.Workflows,
+		WorkflowChoices: draft.WorkflowChoices,
+		DefaultChoice:   draft.DefaultChoice,
+		ActiveChoice:    draft.ActiveChoice,
+		Title:           draft.Title,
+		Body:            draft.Body,
+		Repository:      draft.Repository,
+		WholePlans:      draft.WholePlans,
+		Issues:          draft.Issues,
+	}
+}
+
 func (s *Server) wholePlans() bool {
 	return s.Intake != nil && s.Intake.WholePlans
 }
@@ -726,18 +746,7 @@ func (s *Server) handoffCheckTool(ctx context.Context, p authn.Principal, args j
 	}
 	return viewResult{
 		text: text,
-		data: handoffChecked{
-			planChecked:     checked,
-			Workflows:       draft.Workflows,
-			WorkflowChoices: draft.WorkflowChoices,
-			DefaultChoice:   draft.DefaultChoice,
-			ActiveChoice:    draft.ActiveChoice,
-			Title:           draft.Title,
-			Body:            draft.Body,
-			Repository:      draft.Repository,
-			WholePlans:      draft.WholePlans,
-			Issues:          draft.Issues,
-		},
+		data: newHandoffChecked(checked, draft),
 	}, nil
 }
 
@@ -1120,20 +1129,11 @@ func (s *Server) handoffCheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	checked = webStartable(checked)
 	writeJSON(w, handoffCheckResponse{
-		handoffChecked: handoffChecked{
-			planChecked:     checked,
-			Workflows:       draft.Workflows,
-			WorkflowChoices: draft.WorkflowChoices,
-			DefaultChoice:   draft.DefaultChoice,
-			ActiveChoice:    draft.ActiveChoice,
-			Title:           draft.Title,
-			Body:            draft.Body,
-			Repository:      draft.Repository,
-		},
-		ID:       id,
-		Workflow: wf,
-		Text:     text,
-		Linked:   linked,
+		handoffChecked: newHandoffChecked(checked, draft),
+		ID:             id,
+		Workflow:       wf,
+		Text:           text,
+		Linked:         linked,
 	})
 }
 

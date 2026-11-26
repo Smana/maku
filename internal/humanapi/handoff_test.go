@@ -780,3 +780,33 @@ func TestANonMaintainerIsOfferedNoStart(t *testing.T) {
 		t.Fatalf("start = %d %s, filed %d, recorded %d", rec.Code, rec.Body.String(), len(starter.reqs), len(starts.recs))
 	}
 }
+
+// POST /api/handoffs/{id}/check answers what handoff_check answers: under wholePlans, the switch and
+// every issue of the plan, in order (one newHandoffChecked for both surfaces).
+func TestHandoffCheckRouteCarriesTheWholePlan(t *testing.T) {
+	h := WholePlanBroker(t)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	cRec := post("/api/handoffs", `{"text":"fix the three stale docs pages"}`)
+	var created handoffCreateResponse
+	if cRec.Code != http.StatusOK || json.Unmarshal(cRec.Body.Bytes(), &created) != nil || created.ID == "" {
+		t.Fatalf("create = %d %s", cRec.Code, cRec.Body.String())
+	}
+	if !created.Ready { // the template's open gaps, accepted as maku start accepts them on Enter
+		if rec := post("/api/handoffs", `{"id":"`+created.ID+`","acceptRest":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("accept = %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	chk := post("/api/handoffs/"+created.ID+"/check", `{}`)
+	var checked handoffCheckResponse
+	if chk.Code != http.StatusOK || json.Unmarshal(chk.Body.Bytes(), &checked) != nil {
+		t.Fatalf("check = %d %s", chk.Code, chk.Body.String())
+	}
+	if !checked.WholePlans || len(checked.Issues) != 3 || checked.Issues[2].Index != 3 || len(checked.Issues[2].DependsOn) != 2 {
+		t.Fatalf("wholePlans=%v issues=%+v", checked.WholePlans, checked.Issues)
+	}
+}
