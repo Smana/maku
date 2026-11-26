@@ -1,4 +1,5 @@
 """OpenHands agent-server 1.56.0 driver for agent-run (OpenCode design §6.1)."""
+import browser_tools
 import json
 import os
 import secrets
@@ -126,6 +127,18 @@ def internal_condenser(condenser, env: dict):
     return condenser.model_copy(update={"max_size": CONDENSER_MAX_SIZE, "keep_first": CONDENSER_KEEP_FIRST, "llm": llm})
 
 
+def capability_overrides(env: dict) -> dict:
+    """The LLM's capability overrides: prompt cache on internal runs, and vision when the run's alias
+    accepts images. Without supports_vision the SDK drops an MCP tool's image before the request
+    (screenshots ledger L2), since the gateway alias is not in LiteLLM's model table."""
+    out = {}
+    if env.get("DATA_CLASS") == "internal":
+        out["supports_prompt_cache"] = True
+    if browser_tools.vision_on(env):
+        out["supports_vision"] = True
+    return out
+
+
 def build_request(
     env: dict,
     task: str,
@@ -154,7 +167,7 @@ def build_request(
         input_cost_per_token=float(env.get("LLM_INPUT_USD_PER_MTOK", default_input_usd)) / 1e6,
         output_cost_per_token=float(env.get("LLM_OUTPUT_USD_PER_MTOK", default_output_usd)) / 1e6,
         litellm_extra_body={"reasoning_effort": effort},
-        capability_overrides={"supports_prompt_cache": True} if env.get("DATA_CLASS") == "internal" else {},
+        capability_overrides=capability_overrides(env),
     )
     plain = {"expose_secrets": True}
     agent = get_default_agent(llm=llm, cli_mode=True)
@@ -179,6 +192,9 @@ def build_request(
         if headers:
             platform["headers"] = headers
         agent["mcp_config"] = {"platform": platform}
+    browser = browser_tools.mcp_server(env)
+    if browser:
+        agent["mcp_config"] = {**(agent.get("mcp_config") or {}), "browser": browser}
     extra = {"tool_module_qualnames": {SEARCH_TOOL: SEARCH_MODULE}} if search else {}
     request = StartConversationRequest.model_validate({
         **extra,

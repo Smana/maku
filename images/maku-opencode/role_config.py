@@ -1,4 +1,5 @@
 """Generate least-privilege OpenCode 2.4.1 V2 configuration per Maku role (design §7.1, §7.4)."""
+import browser_tools
 
 DEFAULT_ALIASES = (
     "agent-default",
@@ -195,15 +196,20 @@ def role_config(
         "agents": agents,
         "plugins": [],
     }
+    servers: dict = {}
     if mcp_proxy_url:
-        cfg["mcp"] = {
-            "servers": {
-                "platform": {
-                    "type": "remote",
-                    "url": mcp_proxy_url,
-                    "oauth": False,
-                    "codemode": False,
-                }
-            }
+        servers["platform"] = {
+            "type": "remote",
+            "url": mcp_proxy_url,
+            "oauth": False,
+            "codemode": False,
         }
+    # The opt-in browser sidecar's gate (v5 Q16). OpenCode forwards a tool's image to the model as a
+    # user message with no model-entry key (screenshots ledger L1, L4); the gate strips images for a
+    # model that cannot see them, so no modality is declared here.
+    browser = browser_tools.browser_url(env)
+    if browser:
+        servers["browser"] = {"type": "remote", "url": browser, "oauth": False, "codemode": False}
+    if servers:
+        cfg["mcp"] = {"servers": servers}
     return cfg
