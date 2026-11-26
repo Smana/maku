@@ -47,3 +47,23 @@ test("the Cost row says a confirmed cost caps the task, and whether a step-up ru
   const card = workflowCard({ ...base, name: "careful", ceilingMicroUSD: 5_100_000, confirmedMicroUSD: 5_100_000, workflowCeilingMicroUSD: 13_600_000 }, { nodes: [] });
   expect(card.querySelector(".workflow-head")!.textContent).toContain("capped at your confirmed $5.10 (careful's ceiling is $13.60)");
 });
+
+// testdata/progress.json is the Go side's table too (internal/roomview progress_test.go): the room
+// page's Will run row words the stages that already ran as maku task and Slack do.
+test("Will run marks the stages that ran, as roomview.PathLine does", async () => {
+  const { progress, pathWords } = await import("../src/profile");
+  const { default: cases } = await import("../../internal/roomview/testdata/progress.json");
+  for (const c of cases as { name: string; path: string[]; runs: { persona?: string; role?: string; outcome?: string; verdict?: string }[]; want: string }[]) {
+    const runs = c.runs.map((r) => ({ persona: r.persona ?? "", role: r.role ?? "", outcome: r.outcome, verdict: r.verdict }));
+    expect(pathWords(progress(c.path, runs)), c.name).toBe(c.want);
+  }
+});
+
+test("after a step-up the card shows the scoper done, not dropped or run again", () => {
+  const node = (persona: string, outcome?: string) =>
+    ({ run: persona, persona, role: persona, round: 1, fromSeq: 0, toSeq: 0, outcome, tools: { ok: 0, failed: 0 } });
+  const card = workflowCard({ name: "careful", source: "escalation", cohort: "labeled", reason: "stalled" },
+    { plan: ["implementer", "reviewer"], nodes: [node("scoper", "succeeded"), node("implementer", "failed")] });
+  const row = [...card.querySelectorAll(".workflow-row")].find((r) => r.textContent?.startsWith("Will run"));
+  expect(row?.querySelector(".workflow-value")?.textContent).toBe("scoper ✓ · implementer → reviewer → CI → merge gate");
+});

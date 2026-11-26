@@ -4,7 +4,7 @@
 // from structured facts only, plus a collapsed "How it was chosen" fold holding the raw fields.
 
 import { el } from "./controls";
-import type { Flow, Summary } from "./summary";
+import type { Flow, FlowNode, Summary } from "./summary";
 
 export type ProfileInput = NonNullable<Summary["status"]["profile"]>;
 
@@ -69,6 +69,39 @@ function pathOf(p: ProfileInput, flow?: Pick<Flow, "plan" | "nodes">): string[] 
   return [];
 }
 
+type RunLike = Pick<FlowNode, "persona" | "role" | "outcome" | "verdict">;
+
+// progress splits a workflow's path by the task's runs (oldest first), as roomview.Progress does:
+// done is the stages whose latest run succeeded, in the order they first ran, and rest the path
+// from the stage that runs next. After a step-up a stage that already ran (the scoper) shows once,
+// as done, whether the new path leaves it out or starts again with it. A failed or live stage stays
+// ahead, and a reviewer asking for changes sends the path back to the implementer.
+export function progress(path: string[], runs: RunLike[]): { done: string[]; rest: string[] } {
+  if (path.length === 0 || runs.length === 0) return { done: [], rest: path };
+  const name = (r: RunLike) => r.persona || r.role;
+  const ok = (r: RunLike) => r.outcome === "succeeded" && r.verdict !== "changes";
+  const latest = new Map<string, RunLike>();
+  for (const r of runs) if (name(r)) latest.set(name(r), r); // a Map keeps first-insertion order
+  const last = runs[runs.length - 1];
+  let pos = 0;
+  const i = path.indexOf(name(last));
+  if (i >= 0) {
+    pos = i;
+    if (ok(last)) pos = i + 1;
+    else if (last.verdict === "changes" && path.includes("implementer")) pos = path.indexOf("implementer");
+  }
+  const rest = path.slice(pos);
+  const done = [...latest].filter(([n, r]) => ok(r) && !rest.includes(n)).map(([n]) => n);
+  return { done, rest };
+}
+
+// pathWords is the Will run row, as roomview.PathLine words it: `scoper ✓ · implementer → reviewer`.
+export function pathWords(p: { done: string[]; rest: string[] }): string {
+  const parts = p.done.map((s) => `${s} \u2713`);
+  if (p.rest.length > 0) parts.push(p.rest.join(" \u2192 "));
+  return parts.join(" \u00b7 ");
+}
+
 function cardRow(label: string, value: string): HTMLElement {
   const row = el("div", { className: "workflow-row" });
   row.append(
@@ -112,10 +145,8 @@ export function workflowCard(
   const head = el("div", { className: "workflow-head" });
   head.append(cardRow("Workflow", `${profile.name} \u00b7 ${reasonOf(profile)}`));
 
-  const path = pathOf(profile, flow);
-  if (path.length > 0) {
-    head.append(cardRow("Will run", path.join(" \u2192 ")));
-  }
+  const line = pathWords(progress(pathOf(profile, flow), flow?.nodes ?? []));
+  if (line) head.append(cardRow("Will run", line));
 
   const cost = costWords(profile, profile.ceilingMicroUSD || fallbackCeilingMicroUSD || 0);
   if (cost) head.append(cardRow("Cost", cost));

@@ -899,10 +899,25 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
 .closed-hint button { min-height: 0; padding: 0; border: 0; background: transparent; color: var(--link); font: inherit; font-weight: 700; }
 .closed-hint button:hover { box-shadow: none; text-decoration: underline; }
 .list-tools label, .list-tools select, .list-tools button { min-height: var(--hit); }
-.list-tools [data-act="new-room"] { margin-left: auto; padding: 0 14px; font-weight: 400; }
-/* The auto-refresh: when it last read the list, the interval and the pause, before New room. */
+/* More holds the secondary acts (Investigate with an agent) beside New task, the one primary. */
+.list-tools .more-menu { position: relative; margin-left: auto; }
+.list-tools [data-act="more"] { padding: 0 14px; font-weight: 400; }
+.more-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 2; min-width: 16em; padding: 4px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 12%, transparent); }
+.more-items[hidden] { display: none; }
+.more-items [role="menuitem"] { display: block; width: 100%; text-align: left; border: 0; background: transparent; font-weight: 400; padding: 0 10px; }
+.more-items [role="menuitem"]:hover, .more-items [role="menuitem"]:focus-visible { background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+/* The search box filters the loaded rows; it gives way on a phone. */
+.list-tools .room-search { min-height: var(--hit); box-sizing: border-box; flex: 0 1 18em; min-width: 8em; }
+/* The auto-refresh: when it last read the list, the interval and the pause, before More. */
 .list-tools .refresh { display: inline-flex; gap: 8px; align-items: center; margin-left: auto; }
-.list-tools .refresh + [data-act="new-room"] { margin-left: 0; }
+.list-tools .refresh + .more-menu { margin-left: 0; }
+.new-room .new-room-lead { flex-basis: 100%; margin: 0; }
+/* A sortable column's header is a button that reads as the header: the arrow marks the order. */
+.rooms th .sort { min-height: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; display: inline-flex; gap: 4px; align-items: baseline; }
+.rooms th .sort:hover { box-shadow: none; color: var(--foreground); }
+.rooms th .sort:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 2px; }
+.rooms th[aria-sort] .sort { color: var(--foreground); }
+.rooms th .sort-arrow { display: inline-block; min-width: 1ch; }
 .refresh-status { color: var(--muted-foreground); font-size: var(--text-small); font-variant-numeric: tabular-nums; }
 .refresh-status[data-failed] { color: var(--destructive-text); }
 .refresh-pause { padding: 0 10px; }

@@ -3,6 +3,7 @@
 package roomview
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"math"
@@ -20,7 +21,8 @@ type WorkflowCard struct {
 	OutcomeInferred   bool     // true when Outcome was inferred rather than explicit or default
 	ReviewPR          int      // pull request number when Outcome is review
 	Workflow, Reason  string   // Reason is built by Reason(), never model text
-	Path              []string // implementer, reviewer, CI, merge gate
+	Path              []string // what is still to run: implementer, reviewer, CI, merge gate
+	Done              []string // stages that already ran and succeeded, shown first with a ✓
 	CeilingUSD        float64
 	StepUpUSD         float64 // 0: no step-up line
 	StepUpTo          string  // the workflow a step-up runs, when known
@@ -142,6 +144,7 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 	if len(p.RequiredStages) > 0 {
 		path = withRequiredPath(path, p.RequiredStages)
 	}
+	done, path := Progress(path, f.Runs)
 	reason := Reason(p.Source, p.By, rec, trigger, nil)
 	if cls := clean(p.RequiredBy); cls != "" && len(p.RequiredStages) > 0 {
 		reason += "; the class " + cls + " requires " + requiredStageWords(p.RequiredStages)
@@ -162,6 +165,7 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 		Workflow:    p.Name,
 		Reason:      reason,
 		Path:        path,
+		Done:        done,
 		CeilingUSD:  float64(ceiling) / 1e6,
 		StepUpUSD:   float64(p.StepUpCeilingMicroUSD) / 1e6,
 		StepUpTo:    p.StepUpTo,
@@ -170,6 +174,70 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 		ConfirmedUSD:       float64(p.ConfirmedMicroUSD) / 1e6,
 		WorkflowCeilingUSD: float64(p.WorkflowCeilingMicroUSD) / 1e6,
 	}
+}
+
+// Progress splits a workflow's path by the task's runs (oldest first): done is the stages whose
+// latest run succeeded, in the order they first ran, and rest is the path from the stage that
+// runs next. A step-up can hand a task a path without a stage that already ran (the scoper), or
+// one that starts again with it: either way the stage shows once, as done, and is not promised
+// again. A failed or live stage stays ahead, and a reviewer asking for changes sends the path
+// back to the implementer. With no run, done is nil and rest is the whole path.
+func Progress(path []string, runs []envelope.RunFact) (done, rest []string) {
+	if len(path) == 0 || len(runs) == 0 {
+		return nil, path
+	}
+	name := func(r envelope.RunFact) string { return cmp.Or(r.Persona, r.Role) }
+	ok := func(r envelope.RunFact) bool {
+		return r.Outcome == envelope.OutcomeSucceeded && r.Verdict != "changes"
+	}
+	latest := map[string]envelope.RunFact{}
+	var order []string
+	for _, r := range runs {
+		n := name(r)
+		if n == "" {
+			continue
+		}
+		if _, seen := latest[n]; !seen {
+			order = append(order, n)
+		}
+		latest[n] = r
+	}
+	last := runs[len(runs)-1]
+	pos := 0
+	if i := slices.Index(path, name(last)); i >= 0 {
+		pos = i
+		if ok(last) {
+			pos = i + 1
+		} else if last.Verdict == "changes" {
+			if j := slices.Index(path, "implementer"); j >= 0 {
+				pos = j
+			}
+		}
+	}
+	rest = path[pos:]
+	for _, n := range order {
+		if ok(latest[n]) && !slices.Contains(rest, n) {
+			done = append(done, n)
+		}
+	}
+	return done, rest
+}
+
+// PathLine is the Will run row: the done stages each with a ✓, then what is still to run, each
+// step through text (the surface's escaping). Empty when there is neither.
+func PathLine(c WorkflowCard, text func(string) string) string {
+	var parts []string
+	for _, st := range c.Done {
+		parts = append(parts, text(st)+" ✓")
+	}
+	if len(c.Path) > 0 {
+		next := make([]string, len(c.Path))
+		for i, st := range c.Path {
+			next[i] = text(st)
+		}
+		parts = append(parts, strings.Join(next, " → "))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func requiredStageWords(stages []string) string {
@@ -321,12 +389,8 @@ func WorkflowCardText(w io.Writer, c WorkflowCard, o Options) error {
 		wf += " · " + r.text(reason, false)
 	}
 	rows := [][2]string{{"Outcome", outcomeVal}, {"Workflow", wf}}
-	if len(c.Path) > 0 {
-		parts := make([]string, len(c.Path))
-		for i, step := range c.Path {
-			parts[i] = r.text(step, false)
-		}
-		rows = append(rows, [2]string{"Will run", strings.Join(parts, " → ")})
+	if line := PathLine(c, func(s string) string { return r.text(s, false) }); line != "" {
+		rows = append(rows, [2]string{"Will run", line})
 	}
 	if cost := CostLine(c); cost != "" {
 		rows = append(rows, [2]string{"Cost", cost})
