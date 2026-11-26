@@ -54,6 +54,8 @@ type makuBroker struct {
 	handoff func(path string, body []byte) (int, string)
 	// dryRun answers POST /api/workflows/dry-run when set.
 	dryRun func(req stages.DryRunRequest) (int, any)
+	// stages answers GET /api/stages when set.
+	stages *stages.Report
 }
 
 func newMakuBroker(t *testing.T) *makuBroker {
@@ -114,6 +116,9 @@ func newMakuBroker(t *testing.T) *makuBroker {
 			b.query = r.URL.Path + "?" + r.URL.RawQuery
 			b.mu.Unlock()
 			switch {
+			case r.URL.Path == "/api/stages" && b.stages != nil:
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(b.stages)
 			case r.URL.Path == "/api/workflows/dry-run":
 				var in stages.DryRunRequest
 				_ = json.NewDecoder(r.Body).Decode(&in)
@@ -1537,5 +1542,32 @@ func TestTerminalStartFilesAWholePlanInOrder(t *testing.T) {
 	}
 	if strings.Contains(got, "$13.60") {
 		t.Errorf("the Cost row shows one task's step-up beside the plan's ceiling:\n%s", got)
+	}
+}
+
+// maku stages --by model (Gemini plan A9): one block per model, its tasks, merges, spend and USD per
+// merged task, and its stages' effects.
+func TestMakuStagesByModel(t *testing.T) {
+	b := newMakuBroker(t)
+	b.stages = &stages.Report{Repository: "acme/app", Tasks: 4, Merged: 3, Classes: []stages.ClassReport{}, Models: []stages.ModelReport{
+		{Model: "agent-default", Tasks: 2, Merged: 2, USD: 1.2, USDPerMerged: 0.6, Stages: []stages.StageReport{{Stage: "review", Tasks: 2, USD: 0.2, Effects: map[string]int{"approve_agreed": 2}}}},
+		{Model: "gemini-standard", Tasks: 2, Merged: 1, USD: 2.4, USDPerMerged: 2.4, Stages: []stages.StageReport{{Stage: "implement", Tasks: 2, USD: 2.1, Effects: map[string]int{}}}},
+	}}
+	r, out := configured(t, b)
+	if err := r.Run(t.Context(), []string{"stages", "--repository", "acme/app", "--by", "model"}); err != nil {
+		t.Fatalf("stages --by model: %v", err)
+	}
+	s := out.String()
+	for _, want := range []string{"model agent-default · 2 tasks (2 merged) · $1.20 · $0.60 per merged",
+		"model gemini-standard · 2 tasks (1 merged) · $2.40 · $2.40 per merged", "approve_agreed=2"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("output missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "class ") {
+		t.Fatalf("--by model prints no class block:\n%s", s)
+	}
+	if err := r.Run(t.Context(), []string{"stages", "--repository", "acme/app", "--by", "tier"}); err == nil {
+		t.Fatal("--by tier: want an error")
 	}
 }

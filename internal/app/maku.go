@@ -90,7 +90,7 @@ const makuUsage = `usage: maku <command>
   split accept|decline <task>     accept a proposed split (charged to you) or decline it to run the task whole
   plan approve|split <task>       approve a proposed plan to start implementation, or split it into parts
   plan revise <task> "<comment>"  ask the planner to revise a proposed plan once with your one-line comment
-  stages [--repository owner/name] [--class c] [--json]
+  stages [--repository owner/name] [--class c] [--by class|model] [--json]
                                   per-stage cost and effect report for ended tasks of a repository
   workflow dry-run <name> [--file definition.yaml] [--repository owner/name] [--last 20] [--json]
                                   simulate a workflow definition over recent ended tasks and estimate cost (stores nothing)
@@ -1559,19 +1559,23 @@ func (r Maku) coordination(ctx context.Context, c maku.Client, args []string) er
 
 func (r Maku) stages(ctx context.Context, c maku.Client, args []string) error {
 	fs := flag.NewFlagSet("stages", flag.ContinueOnError)
-	var repo, class string
+	var repo, class, by string
 	var last int
 	var asJSON bool
 	fs.StringVar(&repo, "repository", "", "repository, owner/name")
 	fs.StringVar(&class, "class", "", "only this class")
+	fs.StringVar(&by, "by", "class", "group by class or model")
 	fs.IntVar(&last, "last", 0, "newest ended tasks to fold (default 500, max 500)")
 	fs.BoolVar(&asJSON, "json", false, "print the report JSON as is")
 	pos, err := flags(fs, args)
 	if err != nil || len(pos) != 0 {
-		return fmt.Errorf("stages [--repository owner/name] [--class c] [--last N] [--json]: %w", errors.Join(err, errors.New("no arguments")))
+		return fmt.Errorf("stages [--repository owner/name] [--class c] [--by class|model] [--last N] [--json]: %w", errors.Join(err, errors.New("no arguments")))
 	}
 	if repo == "" {
 		return errors.New("stages: --repository owner/name is required")
+	}
+	if by != "class" && by != "model" {
+		return fmt.Errorf("stages: --by is class or model, not %q", by)
 	}
 	ctx, cancel := context.WithTimeout(ctx, makuTimeout)
 	defer cancel()
@@ -1587,6 +1591,22 @@ func (r Maku) stages(ctx context.Context, c maku.Client, args []string) error {
 	if _, err := fmt.Fprintf(r.Out, "%s · %d tasks (%d merged)\n", maku.SafeText(rep.Repository), rep.Tasks, rep.Merged); err != nil {
 		return err
 	}
+	if by == "model" {
+		for _, m := range rep.Models {
+			per := "—"
+			if m.USDPerMerged > 0 {
+				per = roomview.Dollars(m.USDPerMerged)
+			}
+			if _, err := fmt.Fprintf(r.Out, "\nmodel %s · %d tasks (%d merged) · %s · %s per merged\n",
+				maku.SafeText(m.Model), m.Tasks, m.Merged, roomview.Dollars(m.USD), per); err != nil {
+				return err
+			}
+			if err := r.stageTable(m.Stages); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for _, cl := range rep.Classes {
 		typical := "—"
 		if cl.TypicalUSD > 0 {
@@ -1600,30 +1620,38 @@ func (r Maku) stages(ctx context.Context, c maku.Client, args []string) error {
 			maku.SafeText(cl.Class), cl.Tasks, cl.Merged, typical, p90); err != nil {
 			return err
 		}
-		if len(cl.Stages) == 0 {
-			continue
-		}
-		if _, err := fmt.Fprintln(r.Out, "STAGE       TASKS   USD       EFFECTS"); err != nil {
+		if err := r.stageTable(cl.Stages); err != nil {
 			return err
 		}
-		for _, st := range cl.Stages {
-			var keys []string
-			for k := range st.Effects {
-				keys = append(keys, k)
-			}
-			slices.Sort(keys)
-			var effs []string
-			for _, k := range keys {
-				effs = append(effs, fmt.Sprintf("%s=%d", maku.SafeText(k), st.Effects[k]))
-			}
-			effStr := strings.Join(effs, ", ")
-			if effStr == "" {
-				effStr = "—"
-			}
-			if _, err := fmt.Fprintf(r.Out, "%-11s %-7d %-9s %s\n",
-				maku.SafeText(st.Stage), st.Tasks, roomview.Dollars(st.USD), effStr); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+// stageTable prints stages' tasks, spend and effects, nothing when there are none.
+func (r Maku) stageTable(sts []stages.StageReport) error {
+	if len(sts) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(r.Out, "STAGE       TASKS   USD       EFFECTS"); err != nil {
+		return err
+	}
+	for _, st := range sts {
+		var keys []string
+		for k := range st.Effects {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		var effs []string
+		for _, k := range keys {
+			effs = append(effs, fmt.Sprintf("%s=%d", maku.SafeText(k), st.Effects[k]))
+		}
+		effStr := strings.Join(effs, ", ")
+		if effStr == "" {
+			effStr = "—"
+		}
+		if _, err := fmt.Fprintf(r.Out, "%-11s %-7d %-9s %s\n",
+			maku.SafeText(st.Stage), st.Tasks, roomview.Dollars(st.USD), effStr); err != nil {
+			return err
 		}
 	}
 	return nil
