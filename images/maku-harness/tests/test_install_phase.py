@@ -71,7 +71,8 @@ class CloseInstallTest(ProxyRig):
         with contextlib.redirect_stdout(out):
             agent_run.close_install(env)
         self.assertIn('close {"podUID": "uid-1"}', self.proxy_log())
-        self.assertIn("refuse install-closed " + RELEASE, self.proxy_log())
+        self.assertIn("install-check closed", self.proxy_log())
+        self.assertEqual(agent_run.connect_status(env, RELEASE + ":443"), 403, "a release download is refused")
         self.assertTrue(self.marker(), "agent-checks learns the phase is closed")
         self.assertIn("install hosts closed", out.getvalue())
         self.assertEqual(agent_run.connect_status(env, "github.com:443"), 200, "the run set stays open")
@@ -87,7 +88,7 @@ class CloseInstallTest(ProxyRig):
         env = self.proxy(CLOSE="ignore")
         with self.assertRaises(agent_run.EgressInstallOpen) as cm:
             agent_run.close_install(env)
-        self.assertIn(RELEASE, str(cm.exception))
+        self.assertIn("409", str(cm.exception))
         self.assertFalse(self.marker())
 
     def test_an_unreachable_proxy_fails_closed(self):

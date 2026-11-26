@@ -767,9 +767,10 @@ CHECKS_SKIPS = {"deadline", "no result", "unreadable result"}
 CHECKS_RESULTS = {"pass", "fail", "timeout", "skip"}
 CHECKS_SPAN, INSTALL_SPAN = "agent-run.checks", "agent-run.checks.install"
 # The install phase: agent-checks --install's two bounds (tools, then hook environments) and a margin;
-# then the close's check, a release download the egress proxy must refuse.
+# then the close's check: the egress proxy's check host, never dialled, answers for the pod's own
+# install set (409 open, 403 closed), so the check never reads as a download the alert is for.
 INSTALL_PHASE_S = 660
-SELF_CHECK_HOST, SELF_CHECK_S = "release-assets.githubusercontent.com:443", 10
+SELF_CHECK_HOST, SELF_CHECK_S = "install-check.maku.invalid:443", 10
 BOOT_SPAN, CLONE_SPAN = "agent-run.boot", "agent-run.clone"
 
 
@@ -859,7 +860,7 @@ def connect_status(env: dict, target: str):
 
 def close_install(env: dict) -> None:
     """Closes the run's install hosts at the egress proxy, for good, and checks it: a CONNECT to
-    SELF_CHECK_HOST must then be refused (403). Raises EgressInstallOpen when either fails. Without a
+    SELF_CHECK_HOST must then be refused (403, where an open set answers 409). Raises EgressInstallOpen when either fails. Without a
     close endpoint (a network mode with no install window, or a run with no install set) it closes
     nothing, and a check run says its install hosts stay open."""
     url = env.get("EGRESS_INSTALL_CLOSE_URL", "")
@@ -890,7 +891,7 @@ def close_install(env: dict) -> None:
     os.makedirs(CHECKS_DIR, exist_ok=True)
     with open(os.path.join(CHECKS_DIR, checks_module().CLOSED), "w") as f:
         f.write("closed\n")
-    print("agent-run: install hosts closed: %s is refused" % SELF_CHECK_HOST, flush=True)
+    print("agent-run: install hosts closed: the egress proxy refuses them", flush=True)
 
 
 def _git_out(*args: str) -> str:

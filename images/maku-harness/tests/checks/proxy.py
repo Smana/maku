@@ -2,7 +2,8 @@
 """A CONNECT proxy that allows exactly the hosts in ALLOW (comma-separated) on 443 and logs each
 CONNECT as `allow <host>` or `refuse <host>` to the file named by LOG. Stands in for the run's CNP,
 or for the egress proxy: the hosts in INSTALL are allowed too until a `POST /v1/close-install`
-closes them (logged `close <body>`; then `refuse install-closed <host>`). CLOSE=fail answers the close
+closes them (logged `close <body>`; then `refuse install-closed <host>`), and
+install-check.maku.invalid:443 answers 409 while they are open, 403 once closed. CLOSE=fail answers the close
 500 and CLOSE=ignore answers 200 and keeps them open: the harness's fail-closed paths. DIAL=0 answers
 an allowed CONNECT 200 without dialling it, for tests with no way out."""
 import asyncio
@@ -53,6 +54,11 @@ async def handle(r, w):
         w.close()
         return
     host, _, port = parts[1].rpartition(":")
+    if parts[1] == "install-check.maku.invalid:443":  # the egress proxy's self-check host, never dialled
+        LOG.write("install-check %s\n" % ("closed" if STATE["closed"] else "open"))
+        w.write(b"HTTP/1.1 403 Forbidden\r\n\r\n" if STATE["closed"] else b"HTTP/1.1 409 Conflict\r\n\r\n")
+        w.close()
+        return
     if host in INSTALL and port == "443" and STATE["closed"]:
         LOG.write("refuse install-closed %s\n" % host)
         w.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
