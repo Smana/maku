@@ -71,6 +71,7 @@ COPY --chmod=0755 \
     images/maku-harness/loop_policy.py \
     images/maku-harness/pr_footer.py \
     images/maku-harness/coordination_integration.py \
+    images/maku-harness/browser_tools.py \
     /opt/agent/
 COPY --chmod=0755 \
     images/maku-opencode/config.py \

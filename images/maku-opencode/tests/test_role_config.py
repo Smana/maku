@@ -8,6 +8,7 @@ import unittest
 
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "..", "maku-harness"))  # browser_tools, as /opt/agent holds both
 import config as oc_config  # noqa: E402
 import role_config  # noqa: E402
 
@@ -67,6 +68,20 @@ class RoleConfigTest(unittest.TestCase):
         self.assertEqual(srv["type"], "remote")
         self.assertFalse(srv["oauth"])
         self.assertFalse(srv["codemode"])
+
+    def test_browser_server_beside_the_platform(self):
+        env = {**PUBLIC, "BROWSER_MCP_URL": "http://127.0.0.1:9223/mcp", "SCREENSHOTS_VISION": "1"}
+        c = role_config.role_config(env, mcp_proxy_url="http://127.0.0.1:41000/mcp")
+        self.assertEqual(set(c["mcp"]["servers"]), {"platform", "browser"})
+        self.assertEqual(c["mcp"]["servers"]["browser"],
+                         {"type": "remote", "url": "http://127.0.0.1:9223/mcp", "oauth": False, "codemode": False})
+        # No modality key: OpenCode forwards images without one (screenshots ledger L4).
+        self.assertNotIn("modalities", c["providers"]["maku"]["models"]["agent-default"])
+
+    def test_no_browser_without_a_loopback_url(self):
+        self.assertNotIn("mcp", role_config.role_config(PUBLIC))
+        env = {**PUBLIC, "BROWSER_MCP_URL": "http://10.0.0.1:9223/mcp"}
+        self.assertNotIn("mcp", role_config.role_config(env))
 
     def test_real_opencode_accepts_generated_v2_config(self):
         tmp = tempfile.mkdtemp(prefix="oc-role-cfg-")

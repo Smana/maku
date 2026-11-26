@@ -91,6 +91,25 @@ class BuildRequestTest(unittest.TestCase):
         self.assertEqual(self.body["conversation_id"], ENV["CONVERSATION_ID"])
         self.assertEqual(self.body["workspace"]["working_dir"], "/workspace/repo")
 
+    def test_browser_sidecar_is_a_second_mcp_server_with_vision(self):
+        env = dict(ENV, BROWSER_MCP_URL="http://127.0.0.1:9223/mcp", SCREENSHOTS_VISION="1")
+        agent = agent_run.build_request(env, "t", "r")["agent"]
+        self.assertEqual(agent["mcp_config"]["browser"], {"url": "http://127.0.0.1:9223/mcp", "transport": "http"})
+        self.assertIn("platform", agent["mcp_config"])
+        # Without the override the SDK drops a tool's image (screenshots ledger L2).
+        self.assertTrue(agent["llm"]["capability_overrides"]["supports_vision"])
+
+    def test_browser_without_vision_sends_no_images(self):
+        env = dict(ENV, BROWSER_MCP_URL="http://127.0.0.1:9223/mcp", SCREENSHOTS_VISION="0")
+        agent = agent_run.build_request(env, "t", "r")["agent"]
+        self.assertIn("browser", agent["mcp_config"])
+        self.assertNotIn("supports_vision", agent["llm"].get("capability_overrides") or {})
+
+    def test_no_browser_without_opt_in(self):
+        agent = agent_run.build_request(ENV, "t", "r")["agent"]
+        self.assertNotIn("browser", agent.get("mcp_config") or {})
+        self.assertNotIn("supports_vision", agent["llm"].get("capability_overrides") or {})
+
     def test_mcp_calls_carry_the_run_spans_traceparent(self):
         # cloud-native-ref#2283: without it each gateway /mcp span is its own root.
         from opentelemetry.sdk.trace import TracerProvider

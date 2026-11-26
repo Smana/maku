@@ -27,6 +27,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+import browser_tools
 import coordination_integration
 from harness_driver import HarnessDriver
 from harness_types import ConversationRequest, EventPage
@@ -2454,7 +2455,8 @@ def main() -> int:
             conv_req = ConversationRequest(
                 env=env,
                 task=search_task(task, search),
-                rules=r.read() + checks_rules(env, decl) + contract_rules(env, contract, tests) + search_rules(search),
+                rules=(r.read() + checks_rules(env, decl) + contract_rules(env, contract, tests) + search_rules(search)
+                       + browser_tools.browser_rules(env)),
                 span=span,
                 search=search,
                 resumed=resumed,
