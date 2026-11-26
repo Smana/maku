@@ -113,7 +113,9 @@ export function rowCells(row: RoomRow, now: Date): { needs: string; task: string
 
 // closed asks for the closed rooms instead (the factory deleted their Room objects): mine and
 // needs me mean nothing there, so they are left out.
-export interface RoomFilters { mine?: boolean; needsMe?: boolean; repo?: string; closed?: boolean }
+// closedCount asks the default view to also count the closed view's rooms (X-Rooms-Closed): the
+// page asks on its first load and on a new repository, not on each refresh.
+export interface RoomFilters { mine?: boolean; needsMe?: boolean; repo?: string; closed?: boolean; closedCount?: boolean }
 
 // The closed view's window, as the API bounds it (humanapi closedWindow).
 const closedDays = 30;
@@ -124,6 +126,7 @@ function roomsURL(f: RoomFilters): string {
   else {
     if (f.mine) q.set("mine", "1");
     if (f.needsMe) q.set("needs_me", "1");
+    if (f.closedCount) q.set("closed_count", "1");
   }
   if (f.repo) q.set("repo", f.repo);
   const s = q.toString();
@@ -213,6 +216,8 @@ function roomRow(row: RoomRow, now: Date): HTMLTableRowElement {
 // (autorefresh.ts); refresh carries that control's clock and storage, for tests.
 export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, filters: RoomFilters = {}, theme?: ThemeController,
   refresh: AutoRefreshOptions = {}) {
+  // closedSeen is the count of closed rooms the last answer carried (X-Rooms-Closed), when it did.
+  let closedSeen: number | undefined;
   const fetchRooms = async (f: RoomFilters, say: (msg: string) => void = (m) => { app.textContent = m; }): Promise<RoomRow[] | undefined> => {
     try {
       const r = await api(roomsURL(f), {}, get);
@@ -220,13 +225,16 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
         say(`The room list is unavailable (${r.status}). Retry.`);
         return;
       }
-      return (await r.json()) as RoomRow[];
+      const rows = (await r.json()) as RoomRow[];
+      const n = Number(r.headers?.get("X-Rooms-Closed") ?? "");
+      closedSeen = r.headers?.has("X-Rooms-Closed") && Number.isInteger(n) && n >= 0 ? n : undefined;
+      return rows;
     } catch (e) {
       say(e instanceof SignInRequired ? "signing in again…"
         : `The room list is unavailable (reload to sign in again): ${e instanceof Error ? e.message : String(e)}`);
     }
   };
-  const first = await fetchRooms(filters, (m) => {
+  const first = await fetchRooms({ ...filters, closedCount: !filters.closed }, (m) => {
     const p = document.createElement("p");
     p.textContent = m;
     app.replaceChildren(p);
@@ -238,6 +246,9 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     app.append(retry);
   });
   if (!first) return;
+  // closedN is how many rooms the closed view holds for the page's repository filter: the default
+  // list reads live Room objects, and the factory deletes a task's Room once it ends.
+  let closedN = filters.closed ? first.length : closedSeen ?? 0;
 
   const header = document.createElement("header");
   header.className = "page-header";
@@ -329,6 +340,22 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   // page's one primary act, at the row's end.
   tools.append(mine.label, needsMe.label, needTypeFilter, closed.label, repo, notice);
 
+  // The closed hint: rooms that ended are not gone, they are on the closed view.
+  const hint = document.createElement("p");
+  hint.className = "closed-hint";
+  const hintText = document.createElement("span");
+  const showClosed = document.createElement("button");
+  showClosed.type = "button";
+  showClosed.dataset.act = "show-closed";
+  showClosed.textContent = "show closed";
+  showClosed.onclick = () => closed.input.click();
+  hint.append(hintText, " — ", showClosed);
+  const ended = (n: number) => `${n} ${n === 1 ? "room" : "rooms"} ended in the last ${closedDays} days`;
+  const showHint = () => {
+    hint.hidden = closed.input.checked || closedN <= 0;
+    hintText.textContent = ended(closedN);
+  };
+
   const table = document.createElement("table");
   table.className = "rooms";
   table.setAttribute("aria-label", "Rooms");
@@ -345,6 +372,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   let latestRows: RoomRow[] = first;
   const fill = (rows: RoomRow[]) => {
     latestRows = rows;
+    showHint();
     const needing = rows.filter((r) => (r.needsYou ?? 0) > 0).length;
     document.title = needing > 0 ? `(${needing}) Maku rooms` : "Maku rooms";
     const now = new Date();
@@ -352,7 +380,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     const visible = chosenType ? rows.filter((r) => rowNeedType(r) === chosenType) : rows;
     const sorted = sortRooms(visible);
     const filtered = mine.input.checked || needsMe.input.checked || !!chosenType || !!repo.value;
-    const key = JSON.stringify([filtered, closed.input.checked, chosenType, sorted.map((r) => [rowCells(r, now), r.status, rowNeedType(r)])]);
+    const key = JSON.stringify([filtered, closed.input.checked, chosenType, closedN, sorted.map((r) => [rowCells(r, now), r.status, rowNeedType(r)])]);
     if (key === shown) return;
     shown = key;
     const focused = document.activeElement instanceof HTMLAnchorElement && tbody.contains(document.activeElement)
@@ -364,7 +392,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     }
     // An empty table says why: a filter that leaves nothing, or no room at all.
     const td = cell("td", closed.input.checked ? `No room closed in the last ${closedDays} days`
-      : filtered ? "No rooms match" : "No rooms you can read yet");
+      : filtered ? "No rooms match" : closedN > 0 ? `No open rooms: ${ended(closedN)}, on the closed view` : "No rooms you can read yet");
     td.setAttribute("colspan", String(head.childElementCount));
     const tr = document.createElement("tr");
     tr.append(td);
@@ -373,13 +401,21 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   fill(first);
 
   let seq = 0; // a slow answer to an older filter never overwrites a newer one
-  // refetch reads the list under the filters the page shows; it resolves whether it read one.
+  let countFor = filters.repo ?? ""; // the repository filter closedN counts for
+  // refetch reads the list under the filters the page shows; it resolves whether it read one. The
+  // closed view's own rows are its count; the default view asks for one only on a new repository.
   const refetch = async (): Promise<boolean> => {
     const mark = ++seq;
     notice.textContent = "";
-    const rows = await fetchRooms({ mine: mine.input.checked, needsMe: needsMe.input.checked, repo: repo.value || undefined, closed: closed.input.checked },
-      (m) => { if (mark === seq) notice.textContent = m; });
-    if (rows && mark === seq) fill(rows);
+    const repoNow = repo.value;
+    const recount = !closed.input.checked && repoNow !== countFor;
+    const rows = await fetchRooms({ mine: mine.input.checked, needsMe: needsMe.input.checked, repo: repoNow || undefined, closed: closed.input.checked,
+      closedCount: recount }, (m) => { if (mark === seq) notice.textContent = m; });
+    if (rows && mark === seq) {
+      if (closed.input.checked) [closedN, countFor] = [rows.length, repoNow];
+      else if (recount) [closedN, countFor] = [closedSeen ?? 0, repoNow];
+      fill(rows);
+    }
     return !!rows;
   };
   mountAutoRefresh(tools, refetch, refresh);
@@ -391,7 +427,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   closed.input.addEventListener("click", () => { setAside(); void refetch(); });
   repo.addEventListener("change", () => void refetch());
 
-  app.replaceChildren(header, tools, taskForm, form, table, cliSetup(get));
+  app.replaceChildren(header, tools, taskForm, form, hint, table, cliSetup(get));
 }
 
 export const roomId = /^[a-z2-7]{8}$/;

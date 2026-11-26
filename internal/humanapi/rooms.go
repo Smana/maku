@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -485,8 +486,20 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set(accessHeader, access)
+	// closed_count=1 on the default view asks how many rooms the closed view would list (the page's
+	// first load, or a new repository filter, not every refresh: each costs the closed view's gates).
+	// A count that cannot be read is left out, never a failed list.
+	if q.Get("closed") != "1" && q.Get("closed_count") == "1" {
+		if n, err := s.closedCount(ctx, p, q.Get("repo")); err == nil {
+			w.Header().Set(closedHeader, strconv.Itoa(n))
+		}
+	}
 	writeJSON(w, rows)
 }
+
+// closedHeader is the default list's count of the rooms closed in the last closedWindow that the
+// caller may open, set when the request asks with closed_count=1.
+const closedHeader = "X-Rooms-Closed"
 
 // roomRows is the room list p reads under f, and the X-Rooms-Access value that says why it may be
 // short. Its one error is errRoomsUnavailable.

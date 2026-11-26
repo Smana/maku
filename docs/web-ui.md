@@ -28,7 +28,7 @@ Each row shows `Needs you`, `Task`, `Repository`, `Status` (computed with the sa
 
 The list refreshes every 10 s by default (`Off`, `5 s`, `10 s`, `30 s`, `1 min` before **Open a live session**, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
 
-Above the table, filters refetch the list from the API: **mine** (issues you filed or labelled, or PRs you authored or review), **needs me** (waiting on you, sorted and filterable by `question`, `plan`, `review`, `blocked`, `failed`), and a repository picker ([API](reference/api.md#8080--human-api)). **closed** (`closed=1`) lists rooms closed in the last 30 days (disabling **mine** and **needs me**); sealed rooms stay reachable at `/r/<id>` until retention purges the log. Empty results explain why (`No rooms match` or `No rooms you can read yet`).
+Above the table, filters refetch the list from the API: **mine** (issues you filed or labelled, or PRs you authored or review), **needs me** (waiting on you, sorted and filterable by `question`, `plan`, `review`, `blocked`, `failed`), and a repository picker ([API](reference/api.md#8080--human-api)). An ended task's room leaves the default list for **closed** (`closed=1`, the last 30 days, disabling **mine** and **needs me**), which the `N rooms ended … — show closed` line opens; `/r/<id>` works until retention purges the log. Empty results explain why (`No rooms match` or `No rooms you can read yet`).
 
 ### New task and Open a live session
 
