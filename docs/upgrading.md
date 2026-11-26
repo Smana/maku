@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [The OpenCode image runs repository checks](#the-opencode-image-runs-repository-checks)
 - [Early commands are held, refused input is answered](#early-commands-are-held-refused-input-is-answered)
 - [Queued notes reach the next run of any kind](#queued-notes-reach-the-next-run-of-any-kind)
 - [Web New task starts are broker-confirmed](#web-new-task-starts-are-broker-confirmed)
@@ -48,6 +49,16 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## The OpenCode image runs repository checks
+
+No value changes. `ghcr.io/smana/maku-opencode` had no `bash`, so `agent-checks` could not run a
+repository's declared checks before a push, and an OpenCode run spent its budget on workarounds.
+The image now meets the same userland contract as the OpenHands image: `bash`, GNU coreutils, findutils,
+grep, sed and diffutils, `make`, `xz`, `curl`, `jq`, PyYAML for the system `python3`, and `gcompat` with
+`libstdc++` for glibc-linked tools such as `hugo` extended. Pin the new image's digest in
+`runController.images.opencode.tag`. See
+[What the runner image carries](opencode-harness.md#what-the-runner-image-carries).
 
 ## Early commands are held, refused input is answered
 

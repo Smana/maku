@@ -18,6 +18,32 @@ runController:
 
 When `runController.images.opencode.tag` is empty (the default), the run-controller config omits `images.opencode` and the run-pod admission policy admits only the OpenHands harness, bridge, and run-controller repositories. Setting `tag` renders `images.opencode` into `run-controller-config` and adds `runController.images.opencode.repository` (still requiring `@sha256:` digests) to `ValidatingAdmissionPolicy/maku-<ns>-run-pods`.
 
+## What the runner image carries
+
+Both harness images meet one userland contract, so a repository's declared checks
+(`.github/agent-checks.yaml`) run the same way whichever harness a task gets. Each step is a `bash -c` line, and the scripts it
+calls expect GNU tools. The OpenCode image's Alpine base ships busybox only, so the image adds the rest:
+
+| Need | Packages (Alpine) |
+|---|---|
+| The shell agent-checks runs every step with | `bash` |
+| GNU userland, not busybox's | `coreutils`, `findutils`, `grep` (with `-P`), `sed`, `diffutils` |
+| Builds and archives | `make`, `tar`, `gzip`, `xz` |
+| Scripts behind the run's egress proxy | `curl`, `jq` |
+| The system `python3` the checks run imports `yaml` | `py3-yaml` |
+| glibc-linked tools mise installs | `gcompat`, `libstdc++` |
+
+`images/maku-harness/tests/userland-contract.sh` asserts the contract in both images' `test` stages.
+CI's `harness-checks` job also runs ai-native-ref's declared checks in the OpenCode image under gVisor.
+
+**musl.** mise installs the same release assets in both images. Go tools (`task`, `promtool`, `kustomize`,
+`go`) are static and run as they are. `pre-commit` is a Python zipapp that runs on the system `python3`.
+`hugo` extended links glibc and libstdc++: it runs through `gcompat`, and without it fails with
+`required file not found`. `gcompat` covers what these tools call, not all of glibc. A binary built
+against a recent glibc can still fail with `Error relocating ... symbol not found` (for example
+`__isoc23_strtol`). Such a tool runs on the OpenHands image only: declare a static or musl build of it
+in the repository's `mise.toml` instead.
+
 ## Selecting OpenCode
 
 Selection follows a strict precedence and is frozen onto `Task.status.profile` at triage so config changes never switch an in-flight task:
