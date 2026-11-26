@@ -1110,11 +1110,25 @@ func (r Maku) start(ctx context.Context, c maku.Client, args []string) error {
 	if outcomeNote != "" {
 		_, _ = fmt.Fprintln(r.Out, maku.SafeText(outcomeNote))
 	}
-	if checked.Title != "" {
-		_, _ = fmt.Fprintf(r.Out, "\n%s\n", maku.SafeText(checked.Title))
+	whole := maku.HandoffWholePlan(checked)
+	if n := maku.HandoffPlanIssues(checked); n > 1 {
+		if whole {
+			_, _ = fmt.Fprintf(r.Out, "\nThe plan holds %d issues: this files all %d, in order.\n", n, n)
+		} else {
+			_, _ = fmt.Fprintf(r.Out, "\nThe plan holds %d issues: this files the first.\n", n)
+		}
 	}
-	if checked.Body != "" {
-		_, _ = fmt.Fprintf(r.Out, "\n%s\n", maku.SafeText(checked.Body))
+	if whole {
+		for _, is := range maku.HandoffIssues(checked) {
+			_, _ = fmt.Fprintf(r.Out, "\n%s\n\n%s\n", maku.SafeText(is.Title), maku.SafeText(is.Body))
+		}
+	} else {
+		if checked.Title != "" {
+			_, _ = fmt.Fprintf(r.Out, "\n%s\n", maku.SafeText(checked.Title))
+		}
+		if checked.Body != "" {
+			_, _ = fmt.Fprintf(r.Out, "\n%s\n", maku.SafeText(checked.Body))
+		}
 	}
 
 	ask := r.asker()
@@ -1147,6 +1161,9 @@ func (r Maku) start(ctx context.Context, c maku.Client, args []string) error {
 	if repoName == "" {
 		repoName = card.Repository
 	}
+	if whole {
+		return r.startWholePlan(ctx, checked, repoName, fileIssue, addLabel, labelIssue)
+	}
 	issueURL, err := fileIssue(ctx, repoName, checked.Title, checked.Body)
 	if err != nil {
 		return fmt.Errorf("start: %w", err)
@@ -1168,6 +1185,38 @@ func (r Maku) start(ctx context.Context, c maku.Client, args []string) error {
 		return fmt.Errorf("start: filed %s without factory/ready: %w", maku.SafeText(issueURL), lerr)
 	}
 	_, err = fmt.Fprintf(r.Out, "Filed and started %s\n", maku.SafeText(issueURL))
+	return err
+}
+
+// startWholePlan files every issue of a confirmed multi-issue plan in order, as maku mcp's start
+// tool does when the factory has wholePlans enabled, then labels each one to start it.
+func (r Maku) startWholePlan(ctx context.Context, checked maku.HandoffCheckResponse, repo string,
+	fileIssue maku.IssueFiler, addLabel, labelIssue maku.Labeler) error {
+	filed, err := maku.HandoffFileWholePlan(ctx, checked, repo, fileIssue)
+	for _, f := range filed {
+		_, _ = fmt.Fprintf(r.Out, "Filed %s\n", maku.SafeText(f.URL))
+	}
+	if err != nil {
+		return fmt.Errorf("start: filed %d of %d issues: %w", len(filed), maku.HandoffPlanIssues(checked), err)
+	}
+	if !checked.CanStart {
+		_, err = fmt.Fprintf(r.Out, "Not started: %s\n", maku.SafeText(maku.StartWhy(checked.CanStartWhy)))
+		return err
+	}
+	for i, f := range filed {
+		if f.Issue <= 0 {
+			return fmt.Errorf("start: filed %s without labels: not an issue of %s", maku.SafeText(f.URL), repo)
+		}
+		for _, label := range maku.HandoffLabelsFor(checked, i) {
+			if lerr := addLabel(ctx, repo, f.Issue, label); lerr != nil {
+				return fmt.Errorf("start: filed %s without label %s: %w", maku.SafeText(f.URL), label, lerr)
+			}
+		}
+		if lerr := labelIssue(ctx, repo, f.Issue, "factory/ready"); lerr != nil {
+			return fmt.Errorf("start: filed %s without factory/ready: %w", maku.SafeText(f.URL), lerr)
+		}
+	}
+	_, err = fmt.Fprintf(r.Out, "Started %d issues\n", len(filed))
 	return err
 }
 

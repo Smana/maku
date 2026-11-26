@@ -3,6 +3,7 @@
 package roomview
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -193,5 +194,28 @@ func TestTheCardSaysAConfirmedCostCapsIt(t *testing.T) {
 		CeilingMicroUSD: 5_100_000, ConfirmedMicroUSD: 5_100_000, WorkflowCeilingMicroUSD: 13_600_000}}, "")
 	if got := CostLine(card); got != "capped at your confirmed $5.10 (careful's ceiling is $13.60)" {
 		t.Errorf("from facts: %q", got)
+	}
+}
+
+// A plan's ceiling sums its issues' task ceilings, so its step-up figure sums their step-ups: the
+// gcp-0 card read "up to $15.30 · up to $13.60 if it steps up" for three $5.10 issues.
+func TestPlanStepUpUSDIsOnThePlansBasis(t *testing.T) {
+	for _, c := range []struct {
+		name                     string
+		plan, task, stepUp, want float64
+		issues                   int
+	}{
+		{"three issues", 15.30, 5.10, 13.60, 40.80, 3},
+		{"one issue", 5.10, 5.10, 13.60, 13.60, 1},
+		{"no task ceiling", 15.30, 0, 13.60, 13.60, 3},
+		{"no step-up", 15.30, 5.10, 0, 0, 3},
+	} {
+		if got := PlanStepUpUSD(c.plan, c.task, c.stepUp, c.issues); math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("%s: PlanStepUpUSD = %v, want %v", c.name, got, c.want)
+		}
+		card := WorkflowCard{CeilingUSD: c.plan, StepUpUSD: PlanStepUpUSD(c.plan, c.task, c.stepUp, c.issues)}
+		if line := CostLine(card); strings.Contains(line, "steps up") && card.StepUpUSD <= card.CeilingUSD {
+			t.Errorf("%s: a step-up no higher than the ceiling is shown: %q", c.name, line)
+		}
 	}
 }

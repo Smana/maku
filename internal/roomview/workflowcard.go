@@ -247,6 +247,20 @@ func CardOfPlan(c catalogue.Catalogue, workflow, source, by, suggested string) W
 	}
 }
 
+// PlanStepUpUSD puts a workflow's step-up ceiling on the basis of a plan's ceiling. A plan's ceiling
+// sums its issues' task ceilings, while the workflow's step-up ceiling is one task's: a three-issue
+// plan at $5.10 a task shows "up to $15.30", and comparing that with one task's $13.60 step-up
+// printed a step-up below the base. With more than one issue, each issue may step up, so the plan
+// figure adds every issue's step-up headroom to the plan's ceiling. One issue, no task ceiling, or a
+// step-up no higher than the task ceiling: the step-up figure is returned as is (CostLine omits a
+// figure that is not above the base).
+func PlanStepUpUSD(planCeilingUSD, taskCeilingUSD, taskStepUpUSD float64, issues int) float64 {
+	if issues <= 1 || taskCeilingUSD <= 0 || taskStepUpUSD <= taskCeilingUSD {
+		return taskStepUpUSD
+	}
+	return planCeilingUSD + float64(issues)*(taskStepUpUSD-taskCeilingUSD)
+}
+
 // CostLine formats the Cost row's value: ceiling, optional step-up ceiling, optional typical cost.
 // A confirmed cost below the workflow's own ceiling caps the task, and the row says so rather than
 // show a workflow's ceiling it will not reach. Under a confirmed cost a step-up runs only when its

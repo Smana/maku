@@ -844,6 +844,8 @@ type HandoffCheckResponse struct {
 	Title           string                  `json:"title"`
 	Body            string                  `json:"body"`
 	Repository      string                  `json:"repository"`
+	// WholePlans is the factory's human.intake.wholePlans: start files every issue of the plan.
+	WholePlans bool `json:"wholePlans,omitempty"`
 }
 
 // HandoffStartRequest is the body of POST /api/handoffs/{id}/start.
@@ -986,10 +988,10 @@ func HandoffCard(checked HandoffCheckResponse) (roomview.WorkflowCard, string) {
 	for _, ch := range []*HandoffWorkflowChoice{checked.ActiveChoice, checked.DefaultChoice} {
 		if ch != nil && ch.Name == wf {
 			path = ch.Path
-			stepUpUSD = ch.StepUpCeilingUSD
 			if ceiling == 0 {
 				ceiling = ch.CeilingUSD
 			}
+			stepUpUSD = roomview.PlanStepUpUSD(ceiling, ch.CeilingUSD, ch.StepUpCeilingUSD, len(view.Issues))
 			break
 		}
 	}
@@ -1009,13 +1011,53 @@ func HandoffCard(checked HandoffCheckResponse) (roomview.WorkflowCard, string) {
 }
 
 // HandoffLabels returns the non-ready labels (workflow:<name>, outcome) to apply before factory/ready.
-func HandoffLabels(checked HandoffCheckResponse) []string {
+func HandoffLabels(checked HandoffCheckResponse) []string { return HandoffLabelsFor(checked, 0) }
+
+// HandoffLabelsFor returns the non-ready labels of the plan's issue i.
+func HandoffLabelsFor(checked HandoffCheckResponse, i int) []string {
 	var view planView
-	if json.Unmarshal(checked.Plan, &view) != nil || len(view.Issues) == 0 {
+	if json.Unmarshal(checked.Plan, &view) != nil || i < 0 || i >= len(view.Issues) {
 		return nil
 	}
 	g := &governed{planShape: planShape{Maintainer: checked.Maintainer}, view: view}
-	return g.planLabels()
+	return g.planLabelsFor(i)
+}
+
+// HandoffPlanIssues is the number of issues in the checked plan.
+func HandoffPlanIssues(checked HandoffCheckResponse) int {
+	var view planView
+	_ = json.Unmarshal(checked.Plan, &view)
+	return len(view.Issues)
+}
+
+// HandoffIssue is one issue of a checked plan, as the terminal shows it before filing.
+type HandoffIssue struct{ Title, Body string }
+
+// HandoffIssues lists the checked plan's issues in order.
+func HandoffIssues(checked HandoffCheckResponse) []HandoffIssue {
+	var view planView
+	_ = json.Unmarshal(checked.Plan, &view)
+	out := make([]HandoffIssue, 0, len(view.Issues))
+	for _, is := range view.Issues {
+		out = append(out, HandoffIssue{Title: is.Title, Body: is.Body})
+	}
+	return out
+}
+
+// HandoffWholePlan reports whether start files every issue of the checked plan: the factory has
+// wholePlans enabled and the plan holds more than one issue.
+func HandoffWholePlan(checked HandoffCheckResponse) bool {
+	return checked.WholePlans && HandoffPlanIssues(checked) > 1
+}
+
+// HandoffFileWholePlan files every issue of the checked plan on repo in order, the same way maku
+// mcp's start tool does. On an error it returns the issues filed before it.
+func HandoffFileWholePlan(ctx context.Context, checked HandoffCheckResponse, repo string, file IssueFiler) ([]FiledIssue, error) {
+	var view planView
+	if err := json.Unmarshal(checked.Plan, &view); err != nil {
+		return nil, fmt.Errorf("read the plan: %w", err)
+	}
+	return fileInOrder(ctx, repo, view, file)
 }
 
 // IssueNumber parses the issue number from a GitHub issue URL belonging to repo.
