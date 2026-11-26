@@ -315,10 +315,10 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA
 		if adoptedTask(t) {
 			t.Status.PullRequest.DecidedHeadSHA = pr.HeadSHA
-			narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArmAdopted(t, cl, d.Matched, pr.HeadSHA, d.Paused, d.Capped, d.Rows.Clean, d.Rows.Minimum), t, d, pr.HeadSHA))
+			narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArmAdopted(t, cl, r.sentence(cfg, t, d.Matched), d.Matched, pr.HeadSHA, d.Paused, d.Capped, d.Rows.Clean, d.Rows.Minimum), t, d, pr.HeadSHA))
 			return nil
 		}
-		narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArm(t, d.Matched, pr.HeadSHA, d.Paused, d.Capped, d.Rows.Clean, d.Rows.Minimum), t, d, pr.HeadSHA))
+		narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArm(t, r.sentence(cfg, t, d.Matched), d.Matched, pr.HeadSHA, d.Paused, d.Capped, d.Rows.Clean, d.Rows.Minimum), t, d, pr.HeadSHA))
 		return nil
 	}
 	if held, err := r.integrationRecheck(ctx, t, pr.HeadSHA, &d); held || err != nil { // MR9: the decision-to-call race
@@ -385,7 +385,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		r.grantUsed(ctx, cfg, t, ref, d, pr.HeadSHA)
 	}
 	r.to(t, v1alpha1.PhaseAutoMerging, "")
-	ev := r.withRecord(cfg, narrate.Armed(t, d.Matched), t, d, pr.HeadSHA)
+	ev := r.withRecord(cfg, narrate.Armed(t, r.sentence(cfg, t, cmp.Or(d.Matched, t.Spec.PredictedClass)), d.Matched), t, d, pr.HeadSHA)
 	if ref.MergedHow == "approved" {
 		ev = r.withRecord(cfg, narrate.ArmedByApproval(t, d.Approver, r.repo(cfg, t).Merge.UsesPolicyBot()), t, d, pr.HeadSHA)
 	}
@@ -497,6 +497,15 @@ func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha
 		}
 	}
 	return ev
+}
+
+// sentence is what the repository serves under policy name, in words (correctness signals CS7): the
+// decision messages print its signal line.
+func (r *Reconciler) sentence(cfg *config.Config, t *v1alpha1.Task, name string) meaning.Sentence {
+	if s := meaning.OfRepository(r.repo(cfg, t), name); s != nil {
+		return *s
+	}
+	return meaning.Build(meaning.Input{Name: name, Rules: meaning.InForce})
 }
 
 // signalOf is the record's signal= for a decision class held on (correctness signals CS1): what

@@ -23,6 +23,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
+	"github.com/Smana/maku/internal/factory/meaning"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 	summ "github.com/Smana/maku/internal/summary"
@@ -572,7 +573,7 @@ func TestAMonitorRegressionSaysWhatItCosts(t *testing.T) {
 	tk := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{PredictedClass: "dead-links"}}
 	on := MonitorVerdict(tk, 12, "regression", []string{"main CI: regression"}, false, true).Body
 	off := MonitorVerdict(tk, 12, "regression", []string{"main CI: regression"}, false, false).Body
-	if !strings.Contains(on, "demoted at its next decision") || strings.Contains(off, "demoted") || !strings.Contains(off, "not counted") {
+	if !strings.Contains(on, "goes back to a maintainer at its next decision") || strings.Contains(off, "goes back") || !strings.Contains(off, "not counted") {
 		t.Fatalf("on %q off %q", on, off)
 	}
 	if got := Reason("class_paused"); !strings.Contains(got, "follow-up") || !strings.Contains(got, "revert") {
@@ -651,7 +652,7 @@ func TestTheNewReturnReasonsReadAsProse(t *testing.T) {
 
 func TestTheWouldArmMarkerSaysWhatBlocked(t *testing.T) {
 	tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"}}
-	if k := WouldArm(tk, "docs-links", "abc", true, false).Key; k != "would-arm-0 head=abc paused=true capped=false" {
+	if k := WouldArm(tk, meaning.Sentence{}, "docs-links", "abc", true, false).Key; k != "would-arm-0 head=abc paused=true capped=false" {
 		t.Fatalf("%q", k)
 	}
 }
@@ -898,9 +899,9 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		"ContractReady":          {ContractReady(tk, &v1alpha1.ContractStatus{IDs: []string{"T1"}, Files: []string{"a_test.go"}}), ClassChanged},
 		"NoContract":             {NoContract(tk, "skipped"), ClassChanged},
 		"PROpened":               {PROpened(tk, 12, "https://github.com/Smana/x/pull/12", "r1"), ClassChanged},
-		"Armed":                  {Armed(tk, "docs-links"), ClassChanged},
-		"WouldArm":               {WouldArm(tk, "docs-links", "abcdef1", false, false), ClassNeedsYou},
-		"WouldArmAdopted":        {WouldArmAdopted(tk, config.Class{}, "renovate", "abcdef1", false, false), ClassNeedsYou},
+		"Armed":                  {Armed(tk, meaning.Sentence{}, "docs-links"), ClassChanged},
+		"WouldArm":               {WouldArm(tk, meaning.Sentence{}, "docs-links", "abcdef1", false, false), ClassNeedsYou},
+		"WouldArmAdopted":        {WouldArmAdopted(tk, config.Class{}, meaning.Sentence{}, "renovate", "abcdef1", false, false), ClassNeedsYou},
 		"WaitingForHuman":        {WaitingForHuman(tk, "file_protected"), ClassNeedsYou},
 		"WaitingForApproval":     {WaitingForApproval(tk, "class_unarmed"), ClassNeedsYou},
 		"ArmedByApproval":        {ArmedByApproval(tk, "smana"), ClassChanged},

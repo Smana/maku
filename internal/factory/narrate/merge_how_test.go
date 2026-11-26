@@ -8,6 +8,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/meaning"
 	summ "github.com/Smana/maku/internal/summary"
 )
 
@@ -63,8 +64,8 @@ func TestWaitingForHumanSaysHowToMerge(t *testing.T) {
 // WouldArmAdopted names a fence, sizes and a release age only when the class declares them.
 func TestWouldArmAdoptedNamesWhatIsDeclared(t *testing.T) {
 	tk := &v1alpha1.Task{}
-	bare := WouldArmAdopted(tk, config.Class{}, "deps-patch", "h", false, false).Body
-	full := WouldArmAdopted(tk, config.Class{AllowedFiles: []string{"x"}, ReleaseAgeCheck: "age"}, "deps-patch", "h", false, false).Body
+	bare := WouldArmAdopted(tk, config.Class{}, meaning.Sentence{}, "deps-patch", "h", false, false).Body
+	full := WouldArmAdopted(tk, config.Class{AllowedFiles: []string{"x"}, ReleaseAgeCheck: "age"}, meaning.Sentence{}, "deps-patch", "h", false, false).Body
 	if strings.Contains(bare, "files and sizes") || strings.Contains(bare, "release-age") ||
 		!strings.Contains(full, "files and sizes") || !strings.Contains(full, "release-age check") {
 		t.Fatalf("bare %q full %q", bare, full)
@@ -80,7 +81,7 @@ func TestWouldArmAdoptedNamesTheShape(t *testing.T) {
 		"semver-minor": {"the diff a semver bump", "added entry"},
 		"added-entry":  {"the diff one added entry with only appended lines in the class's companion files, its required label applied by a login the class adopts", "semver"},
 	} {
-		body := WouldArmAdopted(tk, config.Class{DiffShape: shape, AllowedFiles: []string{"x"}, RequiredLabel: "ready-to-merge"}, "c", "h", false, false).Body
+		body := WouldArmAdopted(tk, config.Class{DiffShape: shape, AllowedFiles: []string{"x"}, RequiredLabel: "ready-to-merge"}, meaning.Sentence{}, "c", "h", false, false).Body
 		if !strings.Contains(body, c.has) || strings.Contains(body, c.hasNot) {
 			t.Errorf("%s: %q", shape, body)
 		}
