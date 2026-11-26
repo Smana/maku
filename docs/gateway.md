@@ -132,7 +132,7 @@ disagree about [the clients](#the-planner-and-the-classifier).
 | `identity.jwks.allowAnonymousDiscovery` | `false` | Required with `source: apiserver`; see [the JWKS](#the-jwks) |
 | `runs` | `agents`, `run-` | The runs this gateway serves; must equal the factory's and the broker's |
 | `broker` | `room-broker` in the release namespace | The clients listener's only caller |
-| `providers.<name>` | none | `preset`, `existingSecret` (required), `key` (`apiKey`), `dataClasses` (`[public]`), `transformations`, `egress`; `host`, `port`, `path`, `tls` for `custom` only |
+| `providers.<name>` | none | `preset`, `existingSecret` (required, and refused for `vertex`), `key` (`apiKey`), `dataClasses` (`[public]`), `transformations`, `egress`; `host`, `port`, `path`, `tls` for `custom` only; `projectId` and `region` (`global`, `us`, `eu` or a region) for `vertex` only, and required there |
 | `aliases.public`, `aliases.internal` | none | `<alias>: {provider, model}`, with aliases from the AgentRun's model names; `internal` takes the four tiers only |
 | `clients.planner`, `clients.classifier` | off | `{enabled, provider, model}`: the planner's `tier-frontier`, the classifier's `tier-light` |
 | `modelCatalog.prices` | none; in the umbrella, `maku-factory.config.meter.prices` | The factory's `meter.prices` rows; each model must be served by an alias or a client. In the umbrella (`modelCatalog.umbrellaPrices: true`), an empty `prices` takes the factory's rows, those of a model an alias or a client serves, so a price has one source; `prices` set here wins |
@@ -169,11 +169,55 @@ sets it (<why>); use preset custom to own it`. No value can rewrite `model`: eac
 | `zai` | `api.z.ai`, `/api/paas/v4/chat/completions` | nothing | `glm-5.3` |
 | `mistral` | `api.mistral.ai`, `/v1/chat/completions` | `reasoning_effort: "none"`: agentgateway 1.6 and 1.7 cannot parse the list `content` Mistral's reasoning answers with (a 502) | no |
 | `moonshot` | `api.kimi.ai`, `/coding/v1/chat/completions` (the Kimi Code plan's host) | `temperature: 1` and no `top_p`: K3.1 Pro fixes both | every model: `reasoning_content` spends `max_tokens` first |
+| `gemini` | `generativelanguage.googleapis.com`, `/v1beta/openai/chat/completions` (the Gemini API, an AI Studio key) | nothing | every model: Gemini 4 cannot stop thinking |
+| `vertex` | native Vertex AI: `projectId` and `region`, no key ([Gemini on Vertex AI](#gemini-on-vertex-ai)) | `thinking_config` from `reasoning_effort`: agentgateway 1.6 sends Gemini 4 a `thinkingBudget`, which it refuses with a 400 | every model |
 | `custom` | your `host`, `port`, `path`, `tls` | only yours | no |
 
 A classifier mapped to a model that always reasons fails the render: its 64 tokens would be spent
 reasoning, and its reply would be empty. The planner may run on one, beside its `reasoningEffort: low`.
 Whether K3.1 Pro refuses `temperature: 0` or ignores it is unverified; the preset sets 1 either way.
+
+### Gemini on Vertex AI
+
+The `vertex` preset calls Gemini with the proxy's own Google identity, so no key exists in a Secret,
+in OpenBao or in a pod. Probe P7 established how agentgateway 1.6 does it:
+
+| Fact | What the probe saw |
+|---|---|
+| The path | `generateContent` on `/v1/projects/<projectId>/locations/<region>/publishers/google/models/<model>`: agentgateway translates Chat Completions itself, and never calls Vertex's `endpoints/openapi` |
+| The host | `global`: `aiplatform.googleapis.com`; `us`, `eu`: `aiplatform.<region>.rep.googleapis.com`; a region: `<region>-aiplatform.googleapis.com` |
+| The token | An access token from the metadata server, as `Authorization: Bearer` |
+| Thought signatures | Each tool call's id carries its signature (`<id>__thought__<signature>`), so a caller that sends the tool call id back round-trips it, whatever else it drops |
+| Effort | `reasoning_effort` low (and none, minimal) is `thinkingLevel: low`, medium is medium, anything else is high; without `reasoning_effort` no thinking config is sent |
+| Metering | Thinking tokens count as output and are priced at the output rate; the catalog key is `gcp.vertex_ai` |
+
+```yaml
+maku-gateway:
+  providers:
+    vertex: {preset: vertex, projectId: my-project, region: eu}   # no existingSecret
+  aliases:
+    public:
+      gemini-standard: {provider: vertex, model: gemini-4-neon}
+      gemini-light: {provider: vertex, model: gemini-4-hydrogen}
+```
+
+What the operator binds, on GKE with Workload Identity:
+
+- **The ServiceAccount:** the proxy runs as the Gateway's name, `model-gateway` (`name`), in the
+  release namespace. Bind that subject directly
+  (`principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<project>.svc.id.goog/subject/ns/<namespace>/sa/model-gateway`).
+- **The role:** `aiplatform.endpoints.predict` is all a call needs. Prefer a custom role holding only
+  it to `roles/aiplatform.user`, which can also create and delete Vertex resources.
+- **The API:** `aiplatform.googleapis.com` enabled on the project.
+- **The network:** the policy opens the region's host and the GKE metadata server
+  (`169.254.169.254` and `169.254.169.252`, ports 80 and 988).
+
+`max_tokens` counts thinking tokens: a small cap returns empty content, so a caller of Gemini sets
+none or a large one. The classifier refuses Gemini for the same reason.
+
+The `gemini` preset is the Gemini API's OpenAI-compatible endpoint. There the signature rides in
+`tool_calls[].extra_content.google.thought_signature`: the gateway passes it both ways, and a caller
+that drops `extra_content` gets a 400 on its second tool turn (P7).
 
 ## Identity
 
@@ -412,6 +456,7 @@ same calls to the broker's `jwt.sub` and the route, which is enough for dashboar
 | out | the cluster DNS | 53 |
 | out | the controller (`networkPolicy.controller`) | 9978 (xDS) |
 | out | each provider: its `egress.peers`, else its `egress.cidrs`, else any address outside `networkPolicy.exceptCIDRs` | the provider's port |
+| out | with a `vertex` provider, the GKE metadata server (`169.254.169.254/32`, `169.254.169.252/32`) | 80, 988 |
 
 `cilium` renders the same as a CiliumNetworkPolicy, with each provider by FQDN. Use it only for
 providers outside the cluster. `none` renders no policy. The JWKS is not on the list: the controller
@@ -426,7 +471,9 @@ fetches it, so the controller's own network policy must allow the JWKS source.
   - the exact paths, their rewrite and the forced model;
   - the presets on the wire;
   - the metrics labels;
-  - the Gateway API floor (v1.2.1, one HTTPRoute per alias).
+  - the Gateway API floor (v1.2.1, one HTTPRoute per alias);
+  - P7, the `gemini` and `vertex` presets against a fake Gemini that enforces thought signatures, with
+    a fake metadata server: the facts in [Gemini on Vertex AI](#gemini-on-vertex-ai).
 - `task chart:gateway:k3d` installs the demo, with its gateway, and the probe's echo
   provider. It checks three calls from a run-like pod: 200 on its alias, 403 on another alias, 401 with
   no token. Then it starts a run in `model.mode: gateway` and checks three things:
