@@ -75,6 +75,8 @@ spec:
           - serviceAccountToken: {audience: maku-gateway.public.tier-light, expirationSeconds: 3600, path: public-tier-light}
           - serviceAccountToken: {audience: maku-gateway.public.kimi-frontier, expirationSeconds: 3600, path: public-kimi-frontier}
           - serviceAccountToken: {audience: maku-gateway.public.mistral-light, expirationSeconds: 3600, path: public-mistral-light}
+          - serviceAccountToken: {audience: maku-gateway.public.gemini-standard, expirationSeconds: 3600, path: public-gemini-standard}
+          - serviceAccountToken: {audience: maku-gateway.public.gemini-light, expirationSeconds: 3600, path: public-gemini-light}
           - serviceAccountToken: {audience: maku-gateway.internal.tier-light, expirationSeconds: 3600, path: internal-tier-light}
           - serviceAccountToken: {audience: room-broker, expirationSeconds: 3600, path: room-broker}
 ---
@@ -137,6 +139,13 @@ spec:
     tag: v1.6.0
     digest: sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
   logging: {format: json}
+  # P7: the fake metadata server stands in for GKE's, which hands the proxy its Google token.
+  env:
+    - {name: GCE_METADATA_HOST, value: fake-gemini.maku.svc.cluster.local:80}
+  # P7: the chart's catalog (gemini-values.yaml), which prices the gemini aliases.
+  modelCatalog:
+    sources:
+      - configMap: {name: model-gateway-model-catalog}
   deployment:
     spec:
       replicas: 1
@@ -236,6 +245,7 @@ spec:
       attributes:
         add:
           - {name: x_ar_agent, expression: jwt.sub}
+          - {name: cost, expression: flatten(llm.cost)}
     metrics:
       attributes:
         add:

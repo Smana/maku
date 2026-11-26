@@ -1,0 +1,17 @@
+# Probe P7: the chart's own render of the gemini and vertex presets, whose backends, routes, route
+# policies and catalog probe.sh applies (with the probe CA added to each backend's TLS).
+enabled: true
+identity:
+  issuer: https://kubernetes.default.svc.cluster.local
+  jwks: {url: https://issuer.example.test/openid/v1/jwks}
+providers:
+  vertex: {preset: vertex, projectId: probe-project, region: eu}
+  gemini: {preset: gemini, existingSecret: probe-gemini-key}
+aliases:
+  public:
+    gemini-standard: {provider: vertex, model: gemini-4-neon}
+    gemini-light: {provider: gemini, model: gemini-4-hydrogen}
+modelCatalog:
+  prices:
+    gemini-4-neon: {input: 3.00, cacheRead: 0.30, output: 15.00}
+    gemini-4-hydrogen: {input: 1.50, cacheRead: 0.15, output: 7.50}
