@@ -9,6 +9,7 @@ import { patternDetails } from "./policy-words";
 import { FIELD_HELP, READ_ONLY, readOnlyWords } from "./policy-help";
 import { checkedByLine, meaningNode, sentenceNode, type Sentence } from "./sentence";
 import { policyExplainer } from "./policy-explainer";
+import { policyGuide } from "./policy-guide";
 import { settingsFrame } from "./settings";
 import type { ThemeController } from "./theme";
 
@@ -182,7 +183,11 @@ function bindingsTable(bs: BindingMeaning[]): HTMLTableElement {
 
 function presets(catalog: PolicyReport[], use: (p: PolicyReport) => void): HTMLElement {
   const box = el("section", undefined, "policy-presets");
-  box.append(el("h3", "Start from a shipped policy"));
+  // The guided flow first (guidance surface 2): it ends here, in the editor, pre-filled.
+  const guide = el("button", "Guide me: what kind of change?");
+  guide.type = "button";
+  guide.onclick = () => guide.replaceWith(policyGuide(catalog, (spec) => use({ name: "", spec, meaning: undefined } as unknown as PolicyReport)));
+  box.append(guide, el("h3", "Start from a shipped policy"));
   for (const p of catalog) {
     const item = el("details", undefined, "policy-preset");
     item.append(el("summary", p.name), meaningNode(p.meaning, "preset-sentence"));
@@ -206,7 +211,7 @@ export function policyEditor(p: PolicyReport, get: typeof fetch, catalog: Policy
   const sentence = el("div", undefined, "editor-sentence-box");
   let shown = p.meaning;
   const draw = () => {
-    sentence.replaceChildren(meaningNode(shown, "editor-sentence"), el("p", "Check the change to see the sentence of the edited policy.", "editor-meta"));
+    sentence.replaceChildren(...(shown ? [meaningNode(shown, "editor-sentence")] : []), el("p", "Check the change to see the sentence of the edited policy.", "editor-meta"));
     const changed = () => out.replaceChildren();
     const form = el("div", undefined, "policy-fields");
     for (const [key, label, kind] of [["description", "Purpose", "text"], ["allowedFiles", "Files it may change", "list"], ["maxPerDay", "Most merges a day", "number"]] as [string, string, FieldKind][]) {

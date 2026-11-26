@@ -122,6 +122,33 @@ Every field of the editor carries one help line:
 | Detector (`oracle`) | A scheduled workflow names the defects. The pull request must fix exactly those (`oracle_unrequested`, `oracle_finding_open`) |
 | Author (`author`) | Whose pull requests this policy takes: the factory's agents, or another bot's by login and branch |
 
+### A guided new policy
+
+**Guide me: what kind of change?**, above the shipped presets of a policy's editor, asks three
+questions and writes nothing: it ends in the editor, pre-filled, where **Check the change** returns
+the factory's sentence and the backtest is.
+
+1. **What kind of change?** A closed list, below.
+2. **What can check its meaning?** The suggested signal for that kind and what it takes.
+3. **Where, and how much?** Files, the most files and lines, the most merges a day, each with its
+   help line. **Open in the editor** starts from the served policy of the preset's name, or from
+   the template when the factory serves none.
+
+| Kind of change | Suggested signal | Preset | Says |
+|---|---|---|---|
+| Link targets in docs | `links-only` shape | `docs-links` | Can go live after 5 agreed decisions |
+| Dead links a scan finds | Oracle and `links-only` | `dead-links` | Needs a detector workflow in the repository |
+| Dependency patch updates | `semver-patch` shape | `deps-patch` | Checks the bump, not the release |
+| Dependency minor updates | `semver-minor` shape, shadow only | `deps-minor` | Stays in shadow until a rendered-manifest proof exists |
+| Prose | None | `docs` | Can go live after 20 agreed decisions |
+| Entries a bot adds | None: `added-entry` bounds the structure | `kb-entries` | As prose: 20 agreed decisions before it can go live |
+| Configuration (alerts, values, manifests) | Test contract: `requires: [plan, tests]` | `alert-rules` | Needs a test runner for this file type in the repository |
+| Generated or formatted files | Equivalence proof | none | Available when proofs ship |
+| Application code | none | none | No policy covers it. A maintainer merges |
+
+A card whose promotion is blocked keeps **Promote to live** visible and disabled, with one line per
+blocker and its next step: decisions still needed, wrong calls to read, the rollback drill to run.
+
 ## Theme
 
 Every page has a theme button, in the room page's dock and in the header elsewhere. Each press

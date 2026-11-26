@@ -70,7 +70,7 @@ const OLD_RE = /\b(clean|healthy)\b/i;
 const NEVER_RE = /\b(right|correct|safe|successful)\b/i;
 const WIRE = new Set(["clean", "healthy", "mergedUnchanged"]);
 const POLICY_PAGES = ["class-card.ts", "settings-api.ts", "policy-page.ts", "policy-help.ts", "policy-words.ts", "sentence.ts",
-  "decisions.ts", "binding-editor.ts", "policy-describe.ts", "backtest.ts", "settings.ts"];
+  "decisions.ts", "binding-editor.ts", "policy-describe.ts", "backtest.ts", "settings.ts", "policy-guide.ts", "promote-blockers.ts", "policy-explainer.ts"];
 
 test("merge-policy pages say agreed and quiet (W5)", () => {
   const dir = join(__dirname, "..", "src");
