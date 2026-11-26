@@ -613,7 +613,7 @@ func absorb(t *v1alpha1.Task, all []runs.Run) (runs.Run, bool) {
 		if x, ok := claims[rec.ID]; ok {
 			rec.Tokens = max(rec.Tokens, x.Tokens)
 			stamp(&rec.Provenance, x)
-			if rec.ID == cur.ID && (!pending(x.Phase) || pending(rec.Phase)) {
+			if advances(rec.Phase, x.Phase) {
 				rec.Phase = x.Phase
 			}
 		}
@@ -622,6 +622,61 @@ func absorb(t *v1alpha1.Task, all []runs.Run) (runs.Run, bool) {
 	t.Status.Usage.Tokens = sum
 	x, found := claims[cur.ID]
 	return x, found
+}
+
+// advances: a claim's phase moves its record forward, any record, not only the current run's, so
+// a run that ends after the task moved on still lands. Never backward: a recorded terminal phase
+// stays (closeRuns may have closed a run whose claim still reads Running), and a started record
+// never goes back to Pending.
+func advances(recorded, claim string) bool {
+	switch {
+	case runs.Terminal(recorded):
+		return false
+	case runs.Terminal(claim):
+		return true
+	}
+	return !pending(claim) || pending(recorded)
+}
+
+// closeRuns closes every record a live claim no longer holds when the task ends or escalates: its
+// claim is gone or being deleted (the stuck and Pending bounds, a stop, an out-of-band delete) or
+// ended, so no later observe can move it, and the room's facts and maku task would show it
+// running forever. A gone run that never reported a terminal phase takes gone ("Revoked" for a
+// stop, which revoked it, else "Failed"); its reason is its own, else its claim's, else the
+// task's. A run whose claim is still live is left to observe.
+func (r *Reconciler) closeRuns(ctx context.Context, t *v1alpha1.Task, gone, reason string) {
+	if !slices.ContainsFunc(t.Status.Runs, func(rec v1alpha1.RunRecord) bool { return rec.Finished == nil }) {
+		return
+	}
+	all, err := r.Runs.List(ctx)
+	if err != nil {
+		r.log().Warn("run records not closed; the settle observes them", "task.id", t.Name, "err", err)
+		return
+	}
+	claims := make(map[string]runs.Run, len(all))
+	for _, x := range all {
+		claims[x.ID] = x
+	}
+	now := metav1.NewTime(r.Now())
+	for i := range t.Status.Runs {
+		rec := &t.Status.Runs[i]
+		x, ok := claims[rec.ID]
+		if rec.Finished != nil || (ok && !x.Deleting && !runs.Terminal(x.Phase)) {
+			continue
+		}
+		rec.Finished = &now
+		switch {
+		case runs.Terminal(rec.Phase):
+		case ok && runs.Terminal(x.Phase):
+			rec.Phase = x.Phase
+		default:
+			rec.Phase = gone
+		}
+		if ok {
+			rec.Reason = cmp.Or(rec.Reason, x.Reason)
+		}
+		rec.Reason = cmp.Or(rec.Reason, reason)
+	}
 }
 
 // pending is a claim that exists but never started: not admitted, no phase written yet.
