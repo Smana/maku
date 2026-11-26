@@ -1,6 +1,6 @@
 # Merge policies: what checked the meaning of a change, and what the counts are allowed to say
 
-**Date:** 2026-11-26 · **Status:** design study, decisions CS1 to CS9 are proposals awaiting the owner · **Track:** v5 roadmap, track 4 (live auto-merge beyond `docs-links`) · **Builds on:** [merge policies review](2026-11-14-merge-policies-review-design.md) (MR1 to MR14) and [trust and usability](2026-11-24-merge-policies-trust-and-usability-design.md) (MT1 to MT4) · **Facts read on:** Maku `origin/main` `e9040a50` (v0.54.5), ai-native-ref `main` `209292a`, the served objects of gcp-0 on 2026-11-26
+**Date:** 2026-11-26 · **Status:** design, [owner decisions of 2026-11-26](#owner-decisions-2026-11-26) (1 to 10), which settle CS1 to CS9 · **Track:** v5 roadmap, track 4 (live auto-merge beyond `docs-links`) · **Builds on:** [merge policies review](2026-11-14-merge-policies-review-design.md) (MR1 to MR14) and [trust and usability](2026-11-24-merge-policies-trust-and-usability-design.md) (MT1 to MT4) · **Facts read on:** Maku `origin/main` `e9040a50` (v0.54.5), ai-native-ref `main` `209292a`, the served objects of gcp-0 on 2026-11-26
 
 ## The question
 
@@ -102,6 +102,8 @@ Rules for the words:
 
 ## Decisions
 
+CS1 to CS9 are the design. The owner settled each on 2026-11-26: [owner decisions](#owner-decisions-2026-11-26).
+
 | # | Decision | In one line |
 |---|---|---|
 | CS1 | **A policy's correctness signal is derived from fields it already has**, from a closed list | No new "signal" field to fill in |
@@ -161,7 +163,7 @@ A correctness signal is derived from the resolved policy. Nobody declares it twi
 
 | Signal | Derived from | Establishes | Leaves open | Can it pass without reading the change? | `evidence` |
 |---|---|---|---|---|---|
-| **Determining shape** | `diffShape: links-only`, `semver-patch`, `semver-minor` | Every changed line has one mechanical meaning | The target: the new page's words, the upstream release | No: computed from the diff | `low` (`semver-minor`: `standard`, as today) |
+| **Determining shape** | `diffShape: links-only`, `semver-patch`, `semver-minor` | Every changed line has one mechanical meaning | The target: the new page's words, the upstream release | No: computed from the diff | `low` (`semver-minor`: `standard`, as today, and a signal for a live binding only beside a `rendered` proof) |
 | **Oracle** | `oracle` | A detector outside the pull request named the defect, and the diff removes exactly that | The detector's own errors | No: computed from the findings and the diff, and run again after the merge | `low` |
 | **Equivalence proof** (MT2, not built) | `proof.kind: formatter`, `generator`, `rendered` | The head equals something already trusted | The proof workflow's bugs | No: it reproduces the diff | `low` |
 | **Contract** | `requires` holds `plan` and `tests`, and the task has a contract | A test written before the change, from a plan a maintainer approved, is red at the base and green at the head, and the implementer did not touch it | Behaviour the plan did not name | No: red at the base | `standard` |
@@ -200,6 +202,7 @@ A decision records what judged it: `signal=links-only:ok`, `signal=contract:ok`,
 - Prose suffixes are a closed list: `\.md$`, `\.mdx$`, `\.mdx?$`, `\.rst$`, `\.txt$`, `\.adoc$`. The gate checks each changed file's extension again at decision time.
 - `Unchecked` is a binding reason beside `Unbounded`. It follows the existing rule: never above the mode the binding asks for, so it falls to shadow and keeps gathering agreed decisions.
 - `MergePolicy.status` gains `signal` (`links-only`, `oracle`, `contract`, `none`) and a printer column `CHECKED BY`.
+- A `semver-minor` policy bound `live` without a `rendered` proof (MT2) also resolves `Unchecked`: the shape checks the bump, not what the new chart renders. `semver-patch` is not held to this.
 - `evidence: low` still needs a signal that cannot pass unread: a determining shape, an oracle or an equivalence proof. `added-entry` no longer qualifies ([migration](#migration)).
 
 This narrows MR12, and says so: a reviewer's verdict still lets an unchecked policy **hold**, in shadow and for prose. It no longer lets one merge configuration alone. No served decision changes at upgrade: the one live binding today is `docs-links`.
@@ -209,7 +212,7 @@ This narrows MR12, and says so: a reviewer's verdict still lets an unchecked pol
 | Alternative | Why not |
 |---|---|
 | Warn only | The warning is read once. The gap stays open |
-| Refuse live for every unchecked policy, prose included | Defensible, and simpler. It reverses MR12 and MR4 for `docs`. Kept as [question 1](#open-questions-for-the-owner) |
+| Refuse live for every unchecked policy, prose included | Simpler, but it reverses MR12 and MR4 for `docs`. The owner ruled for prose under audit ([decision 1](#owner-decisions-2026-11-26)) |
 | Cap the evidence weight of unchecked decisions (count half) | A number nobody can explain. The 2026-11-24 anti-goal: no number without a list behind it |
 | Require more agreed decisions (50) instead | More silence is still silence. After promotion nobody looks |
 
@@ -270,7 +273,7 @@ A fixed-base row, read with the diff, before any policy is evaluated.
 | Direction | Any change refuses, a tightening too. Telling wider from narrower needs a model of each kind |
 | A file that does not parse | Refuses `sensitive_unreadable`. A template is not judged by guessing |
 | A maintainer's approval | Merges it, as for a gate path. The hand-off names the kind |
-| Optional, second step | `sensitiveFields` in any document: `securityContext`, `hostNetwork`, `hostPID`, `hostPath`, `privileged`, `serviceAccountName` |
+| Second step ([decision 5](#owner-decisions-2026-11-26)) | `sensitiveFields` in any document: `securityContext`, `hostNetwork`, `hostPID`, `hostPath`, `privileged`, `serviceAccountName` |
 | With a `rendered` proof (MT2) | The proof's workflow reports the kinds that changed in the rendered output. The same list applies. This is the only way a Helm value that widens a rendered NetworkPolicy is seen |
 
 Known limit: HCL is not read. A policy that admits `.tf` files gets no such row; it is unchecked and not prose, so it cannot go live without a contract.
@@ -292,7 +295,7 @@ Known limit: HCL is not read. A policy that admits `.tf` files gets no such row;
 | Revert, regression, follow-up in the window | The factory | `followUpWindow`, `revertWindow` | Exists |
 | Audit disagreement | A maintainer | At the audit | CS4 |
 | **`factory/wrong`** on the merged pull request | A maintainer. The actor is checked, as for `factory/hold` | Any time | New. Also `maku policy wrong owner/name#PR --reason "…"` and a "Report a wrong call" button on the decision's page |
-| **Late follow-up candidate** | The factory proposes, a maintainer confirms | `merge.latentWindow`, default 30 days | New, optional second step |
+| **Late follow-up candidate** | The factory proposes, a maintainer confirms | `merge.latentWindow`, default 30 days | New, second step |
 | RunLore names the merge as an incident's root cause | An internal principal with `verification: true` | Any time | Optional. No new mechanism on Maku's side: the verification endpoint takes it |
 
 Late follow-up candidates:
@@ -411,9 +414,9 @@ Seven policies are served on gcp-0. One binding is live.
 | `docs-links` (catalog; live on cloud-native-ref) | `links-only` | Yes | `low` | None. Stays live |
 | `dead-links` | Oracle and `links-only`; the detector runs again after the merge | Yes | `low` | None |
 | `deps-patch` (catalog) | `semver-patch` | Yes | `low` | Words only: "Not checked: the release itself" |
-| `deps-minor` | `semver-minor` | Yes | `standard` | Words only. A minor release can change a chart's RBAC; see [question 6](#open-questions-for-the-owner) |
+| `deps-minor` | `semver-minor`, for shadow only | **No**, until the `rendered` proof (MT2) reports the kinds a bump changes ([decision 6](#owner-decisions-2026-11-26)) | `standard` | A live binding would resolve `Unchecked`. It is in shadow today. A minor release can change a chart's RBAC, which the shape does not see |
 | `docs` (catalog) | None, prose | Yes, audited 1 in 5 | `standard` | Gains the audit once live. Runbooks deserve `requiresApproval` in each repository's binding |
-| `kb-entries` | None: `added-entry` is structure, the entry is prose | Yes, audited 1 in 5 | `low` to `standard` | **Reverses finding A2 of the 2026-11-24 design.** See [question 2](#open-questions-for-the-owner) |
+| `kb-entries` | None: `added-entry` is structure, the entry is prose | Yes, audited 1 in 5 | `low` to `standard` | **Reverses finding A2 of the 2026-11-24 design** ([decision 2](#owner-decisions-2026-11-26)), at the cost of 15 more agreed decisions |
 | `alert-rules` | None, not prose | **No**, until `requires: [plan, tests]` and a rule-test runner in cloud-native-ref | `standard` | A live binding would resolve `Unchecked`. It is in shadow today, so nothing served changes. RunLore's verdict stays, as supporting evidence |
 
 Upgrade behaviour:
@@ -427,12 +430,12 @@ Upgrade behaviour:
 
 ## Sequence
 
-One spec, three plans, written after the owner's rulings. Each plan is a pull request series behind `task check`.
+One spec, three plans, in the order of [decision 10](#owner-decisions-2026-11-26). Each plan is a pull request series behind `task check`.
 
 | Plan | Repository | Holds | Changes a served decision |
 |---|---|---|---|
-| 1. Words | Maku | The vocabulary, the sentence, `signal=` in the record, the card, the editor's read-only fields, `explain` and `list` | No |
-| 2. Rules | Maku | `Unchecked`, the audit, `factory/wrong`, sensitive kinds, CS8. Then late candidates | Yes: only toward a maintainer |
+| 1. Words, right after the 2026-11-24 usability plan | Maku | The vocabulary, the sentence, `signal=` in the record, the card, the editor's read-only fields, `explain` and `list` | No |
+| 2. Rules, before any second policy goes live | Maku | `Unchecked`, the audit, `factory/wrong`, sensitive kinds, CS8. Then `sensitiveFields` and late candidates | Yes: only toward a maintainer |
 | 3. Adoption | ai-native-ref, cloud-native-ref | `alert-rules` requires tests, the rule-test runner, `kb-entries` evidence, runbooks under `requiresApproval` | With each Maku pin |
 
 Plan 1 can ship before the 2026-11-24 proofs. Plan 2's contract signal needs nothing from them. The `rendered` row of CS5 waits for them.
@@ -453,7 +456,7 @@ Plan 1 can ship before the 2026-11-24 proofs. Plan 2's contract signal needs not
 |---|---|---|
 | A contract that tests the wrong intent | The maintainer approved a plan that said the wrong thing | A human's decision, recorded as theirs |
 | A maintainer who agrees without reading | No machine reads a mind | The audit keeps asking; a wrong call lands on the policy |
-| Four in five live prose merges nobody reads | The price of unattended prose | 5 files, 100 lines, 2 a day; `factory/wrong`; [question 1](#open-questions-for-the-owner) |
+| Four in five live prose merges nobody reads | The price of unattended prose | 5 files, 100 lines, 2 a day; `factory/wrong`; accepted by [decision 1](#owner-decisions-2026-11-26) |
 | A bad upstream release inside a correct bump | The shape checks the bump | Release age, Flux, auto-revert, the open ledger |
 | A wrong call nobody ever reports | Unknowable | Said on the page, in those words |
 
@@ -463,15 +466,19 @@ Plan 1 can ship before the 2026-11-24 proofs. Plan 2's contract signal needs not
 - **Non-goals:** proving correctness; a policy for application code; a canary controller; a per-tool test field; reading HCL.
 - **Anti-goals:** a risk score; a weighted evidence count; a signal a workflow grades for itself; a sensitive-kind list a repository can shorten.
 
-## Open questions for the owner
+## Owner decisions, 2026-11-26
 
-1. **May an unchecked policy ever merge alone?** Recommended: prose only, audited one in five (CS2, CS4). The strict alternative is "never", which keeps `docs` and `kb-entries` on approve-to-merge and reverses MR12 and MR4 for them. The recommendation narrows MR12 for configuration and keeps it for prose.
-2. **Is `added-entry` a correctness signal?** Recommended: no. `kb-entries` moves from `evidence: low` to `standard` and is audited once live. This reverses finding A2 of 2026-11-24, at the cost of 15 more agreed decisions. The alternative keeps 5 as a named exception, on the ground that an entry is additive and RunLore labelled it ready.
-3. **Do "clean" and "healthy" leave every surface?** Recommended: yes, for "agreed" and "quiet". JSON, metric and record names stay. "Verified" is never shown alone.
-4. **Does the contract count without an approved plan?** Recommended: no. `requires` must hold `plan` and `tests`. Without the plan, tester and implementer share one reading of the task.
-5. **Sensitive kinds: is any change a maintainer's, tightening included, and is the default list additive only?** Recommended: yes to both. Confirm the default list in CS5, and whether `sensitiveFields` ships in the first step or the second.
-6. **`deps-minor` live.** Recommended: no live binding until the `rendered` proof (MT2) reports the kinds a bump changes, so a chart's new ClusterRole reaches a maintainer. `deps-patch` keeps its eligibility as is.
-7. **The latent window.** Recommended: one `merge.latentWindow` of 30 days per repository, late follow-ups as candidates that block promotion and never the breaker, and `factory/wrong` with no window. Per-policy windows are deferred until a repository shows it needs two.
-8. **An audited pull request a maintainer changes before merging.** Recommended: a wrong call, whatever the size of the change. The alternative counts only a close.
-9. **Mutation probing.** Recommended: not now (CS9). Revisit at the first wrong call under a contract.
-10. **Order against the 2026-11-24 plans.** Recommended: plan 1 (words) right after the usability plan, since it corrects what those pages say; plan 2 before any second policy goes live.
+Each is an owner decision of 2026-11-26, given on the ten questions this study closed with. Each took the recommendation.
+
+| # | Owner decision, 2026-11-26 | Settles |
+|---|---|---|
+| 1 | **An unchecked policy merges alone only when it changes prose, audited one in five.** Anything else stays in shadow. MR12 is narrowed for configuration and kept for prose | CS2, CS4 |
+| 2 | **`added-entry` is not a correctness signal.** `kb-entries` moves from `evidence: low` to `standard` and is audited once live. Finding A2 of 2026-11-24 is reversed | CS1, migration |
+| 3 | **"Clean" and "healthy" leave every human surface** for "agreed" and "quiet". JSON, metric and record names stay. "Verified" is never shown alone | CS7 |
+| 4 | **The contract counts only with `requires: [plan, tests]`.** Without an approved plan it is not a signal | CS3 |
+| 5 | **Any change to a sensitive kind goes to a maintainer**, a tightening included. The default list is additive only. `sensitiveFields` ships in the second step | CS5 |
+| 6 | **`deps-minor` has no live binding until MT2's `rendered` proof** reports the kinds a bump changes. `deps-patch` keeps its eligibility | CS1, CS2, migration |
+| 7 | **One `merge.latentWindow` of 30 days per repository.** Late follow-ups are candidates: they block promotion, never the breaker. `factory/wrong` has no window. No per-policy window | CS6 |
+| 8 | **Any change a maintainer makes to an audited pull request before merging is a wrong call**, whatever its size. So is a close | CS4 |
+| 9 | **No mutation probing now.** Revisit at the first wrong call under a contract | CS9 |
+| 10 | **Order:** the words plan right after the 2026-11-24 usability plan; the rules plan before any second policy goes live; then adoption in ai-native-ref and cloud-native-ref | Sequence |
