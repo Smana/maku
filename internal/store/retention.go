@@ -24,8 +24,8 @@ const purgeStatementTimeout = 10 * time.Minute
 // transaction, so each stays bounded by the room limits (100 000 events). Each
 // transaction runs under its own purgeStatementTimeout (SET LOCAL), not the
 // session's statement_timeout. It runs as rooms_retention; the broker's role
-// holds no DELETE and fails. Every table referencing rooms
-// (queue, approvals, and webhook_cursors and output_bundles when their migrations ran) is deleted
+// holds no DELETE and fails. Every table referencing rooms (queue, approvals, and
+// webhook_cursors, output_bundles and run_screenshots when their migrations ran) is deleted
 // before the room's row.
 func (s *Store) PurgeExpired(ctx context.Context) (rooms, events int64, err error) {
 	ids, err := s.expiredRooms(ctx)
@@ -81,13 +81,18 @@ func (s *Store) purge(ctx context.Context, roomID string) (int64, error) {
 			return 0, err
 		}
 	}
-	// output_bundles likewise, from 20261113120000_output_bundles.sql.
-	var bundles bool
-	if err := tx.QueryRow(ctx, `SELECT to_regclass('public.output_bundles') IS NOT NULL`).Scan(&bundles); err != nil {
-		return 0, err
-	}
-	if bundles {
-		if _, err := tx.Exec(ctx, `DELETE FROM output_bundles WHERE room_id = $1
+	// output_bundles and run_screenshots likewise, from 20261113120000_output_bundles.sql and
+	// 20261126120000_run_screenshots.sql.
+	for _, table := range []string{"output_bundles", "run_screenshots"} {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			return 0, err
+		}
+		if !exists {
+			continue
+		}
+		// table is one of the two constants above, never input.
+		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE room_id = $1
 		AND room_id IN (SELECT room_id FROM rooms WHERE `+expired+`)`, roomID); err != nil {
 			return 0, err
 		}

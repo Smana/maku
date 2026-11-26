@@ -49,10 +49,11 @@ type Actor struct {
 	Role string    `json:"role,omitempty"`
 }
 
-// Type is an event's kind, one of the ten C4 types.
+// Type is an event's kind, one of the eleven C4 types.
 type Type string
 
-// The ten C4 event types.
+// The C4 event types: the ten of v1, and screenshot (harness screenshots phase B), whose payload
+// is a ScreenshotPayload.
 const (
 	Message           Type = "message"
 	Turn              Type = "turn"
@@ -64,13 +65,14 @@ const (
 	Driver            Type = "driver"
 	Handoff           Type = "handoff"
 	StateChanged      Type = "state_changed"
+	Screenshot        Type = "screenshot"
 )
 
-// Valid reports whether t is one of the ten C4 types.
+// Valid reports whether t is one of the eleven C4 types.
 func (t Type) Valid() bool {
 	switch t {
 	case Message, Turn, ToolCall, ToolResult, ApprovalRequested, ApprovalDecided,
-		Participant, Driver, Handoff, StateChanged:
+		Participant, Driver, Handoff, StateChanged, Screenshot:
 		return true
 	}
 	return false

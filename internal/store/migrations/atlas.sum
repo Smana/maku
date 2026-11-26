@@ -1,4 +1,4 @@
-h1:blENZTLwlJ4nVgxhNZjgo/rdpY5qhvaOtQzT3yzopGY=
+h1:rE8x2Z/bRRDJDxaa76tGLqbgOb9MJsfQijfN1OV8XNM=
 20260927120000_rooms.sql h1:2iHh9ofAjF9QEjy2L4Nk4qPz6GPfyTyceOP/Lg2nitE=
 20260929120000_verdicts.sql h1:aat8qDZyfEMLP7P/FyvK90fwdXTcVbUIJte49wiEWNg=
 20261001120000_driver_queue.sql h1:nT+Seb7xn/lYr9A+WtDkWtuGeuR/5Qw7YvrF5ueKQ+k=
@@ -21,3 +21,4 @@ h1:blENZTLwlJ4nVgxhNZjgo/rdpY5qhvaOtQzT3yzopGY=
 20261123120000_query_indexes.sql h1:7Bjmt8mqsQQIwMkfSYOd9UomoIdlHftfLxpAvQxQR34=
 20261124120000_policy_promotion_pull_requests.sql h1:4QwS1PUUV9nZDDjHHpCcGoQFK8sbEe5snC78qb+kaTE=
 20261125120000_handoff_starts.sql h1:JhM9K0jDHtVAaEBS3H7lpzPsKHqsHQkCDO2A+QhgXHw=
+20261126120000_run_screenshots.sql h1:9FfNtnR0KhYi0xHDByJ3X0RNstV3tEux1OhcZx4ZfC4=

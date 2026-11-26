@@ -116,6 +116,9 @@ type Bridge struct {
 	MaxBuffer int
 	// FlushGrace bounds the drain after SIGTERM; zero means 25 s.
 	FlushGrace time.Duration
+	// Shots, when set, relays the browser gate's screenshots to the room while the bridge holds
+	// it, and is flushed by a final read and the shutdown drain (harness screenshots Task 15).
+	Shots *ShotRelay
 	// MinBackoff and MaxBackoff bound the retry of a failed call; zero means
 	// 250 ms and 30 s.
 	MinBackoff, MaxBackoff time.Duration
@@ -268,6 +271,11 @@ func (b *Bridge) init() error {
 	if b.FlushGrace <= 0 {
 		b.FlushGrace = defaultFlushGrace
 	}
+	if b.Shots != nil {
+		if err := ValidGateURL(b.Shots.Gate); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -295,6 +303,13 @@ func (b *Bridge) Run(ctx context.Context) error {
 		b.OnResume(ctx, resume)
 	}
 	wg.Go(func() { b.consume(ctx) })
+	if b.Shots != nil {
+		wg.Go(func() {
+			if err := b.Shots.Run(ctx); err != nil {
+				b.log().Error("the screenshot relay stopped", "err", err)
+			}
+		})
+	}
 	for {
 		b.step(ctx)
 		if !b.idle(ctx) {
@@ -753,6 +768,7 @@ func (b *Bridge) shutdown() {
 		b.pollStatus(ctx)
 		b.drain(ctx)
 	}
+	b.flushShots(ctx)
 	if len(b.buf) > 0 && !b.sealed.Load() {
 		b.log().Warn("shutdown left items unmirrored; a restarted bridge resumes from the log",
 			"items", len(b.buf), "leaseLost", b.leaseLost)

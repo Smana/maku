@@ -80,7 +80,16 @@ func refuse(w http.ResponseWriter, rp reply) {
 // start serves the fake over TLS and writes its CA where the bridge reads it.
 func (b *fakeBroker) start(t *testing.T) (srv *httptest.Server, caFile string) {
 	t.Helper()
+	return b.startWith(t, nil)
+}
+
+// startWith is start, with more routes added by extra.
+func (b *fakeBroker) startWith(t *testing.T, extra func(*http.ServeMux)) (srv *httptest.Server, caFile string) {
+	t.Helper()
 	mux := http.NewServeMux()
+	if extra != nil {
+		extra(mux)
+	}
 	mux.HandleFunc("POST /v1/bridge/hello", func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		defer b.mu.Unlock()

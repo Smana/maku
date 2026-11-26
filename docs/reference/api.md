@@ -61,6 +61,7 @@ that ends, is revoked or is deleted has its streams cut on the watch event.
 | `POST /v1/bridge/events` | Bridge | Appends a batch of harness items |
 | `GET /v1/bridge/stream` | Bridge | One SSE stream down: pings; `deliver`, `interrupt` and `decision` |
 | `POST /v1/bridge/approvals` | Bridge | Asks for a human decision on a pending action |
+| `POST /v1/bridge/screenshots` | Bridge | Stores a screenshot its browser gate kept, re-encoded, and appends a `screenshot` event |
 | `GET /v1/rooms/{id}/events` | System | Reads a room's log |
 | `POST /v1/rooms/{id}/messages` | System | Appends `message{kind: task_state}` |
 | `POST /v1/rooms/{id}/task` | System | Appends the task's facts, `state_changed{kind: task}` |
@@ -209,6 +210,34 @@ bridge. An expiry is decided `allow: false` with `reason: "expired"`: at the fir
 | `410` | `sealed` | The room is sealed |
 | `429` | `rate_limited` | Over the run's limits |
 | `503` | `log_unavailable`, `timed_out` | The log or the run's prompters could not be read or written |
+
+### `POST /v1/bridge/screenshots`
+
+Query: `run` (the token's own run), `n` (1 to the run's `agents.ogenki.io/screenshots` cap), `url`
+(the page shown) and `vision` (`0` or `1`, whether the run's model could see it). Body: the image,
+at most 1 MiB. Only a run whose claim carries the annotation may upload. The broker reads the
+image's header first (PNG or JPEG only, at most 1920×1080), decodes it and re-encodes it (PNG, or
+JPEG at quality 80 when the PNG is over 1 MiB): no metadata or trailing byte survives. It keeps the
+result under `(room, run, n)` and appends one `screenshot` event, actor `agent:<run>`, whose payload
+is `{"run", "n", "digest", "mime", "width", "height", "bytes", "source", "pageUrl", "vision"}`:
+`bytes` is the stored size, never the image. `pageUrl` keeps only a loopback `http` URL's origin
+and path, and is dropped if the redactor finds a secret in it. A run keeps at most 25 screenshots
+and a room 100 and 64 MiB; they go with the room at retention. Response `201` with that payload,
+`200` for a repeat of the same image.
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `bad_screenshot` | `n` outside 1 to the cap, or a `vision` other than `0` or `1` |
+| `401`, `403` | as for `hello` | |
+| `403` | `not_permitted` | `run` is not the token's run |
+| `403` | `screenshots_off` | The run carries no screenshots annotation |
+| `409` | `screenshot_conflict` | Another image is stored under that `n` |
+| `409` | `lease_lost` | Another run holds the room's bridge lease |
+| `410` | `sealed` | The room is sealed |
+| `413` | `too_large` | The body is over 1 MiB |
+| `422` | `not_an_image`, `dimensions`, `too_large` | Not a whole PNG or JPEG; over 1920×1080; still over 1 MiB as JPEG |
+| `429` | `screenshot_quota`, `rate_limited` | The run or room holds all it may; over the run's limits |
+| `501` | `no_screenshots` | This broker stores no screenshots |
 
 ### `GET /v1/rooms/{id}/events`
 

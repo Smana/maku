@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"log/slog"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -202,6 +203,21 @@ func TestBridgeConfigReadsTheClassifierInputs(t *testing.T) {
 	}
 	if c, _ = loadBridgeConfig(func(string) string { return "" }); c.branch != "" || len(c.egress) != 0 || len(c.readOnlyMCP) != 0 {
 		t.Fatalf("unset: branch %q egress %v readOnlyMCP %v", c.branch, c.egress, c.readOnlyMCP)
+	}
+}
+
+// Harness screenshots Task 15: BROWSER_GATE_URL turns the relay on, and only a loopback gate is
+// taken.
+func TestBridgeConfigReadsTheBrowserGate(t *testing.T) {
+	base := map[string]string{"ROOM_ID": "3kq7x2ma", "RUN_ID": "7f3cq2xz", "CONVERSATION_ID": "c", "BROKER_URL": "https://b",
+		"ROOM_TOKEN_FILE": "/t"}
+	for v, ok := range map[string]bool{"": true, "http://127.0.0.1:9223": true, "http://10.0.0.1:9223": false, "https://127.0.0.1:9223": false} {
+		env := maps.Clone(base)
+		env["BROWSER_GATE_URL"] = v
+		c, err := loadBridgeConfig(func(k string) string { return env[k] })
+		if (err == nil) != ok || (ok && c.browserGate != v) {
+			t.Errorf("BROWSER_GATE_URL %q: gate %q, err %v", v, c.browserGate, err)
+		}
 	}
 }
 

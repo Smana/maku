@@ -97,6 +97,7 @@ func (b *Bridge) serveFinalRead(ctx context.Context, end string) FinalReadResult
 		b.readLog(ctx)
 		b.pollStatus(ctx)
 		b.drain(ctx)
+		b.flushShots(ctx)
 	}
 	return FinalReadResult{Events: b.cursor.Count, Unmirrored: len(b.buf), Sealed: b.sealed.Load()}
 }
@@ -109,4 +110,15 @@ func (b *Bridge) recordEnd(ctx context.Context, end string) {
 	}
 	b.endSent = end
 	b.pushStatus(ctx, b.status.Emit(state(envelope.HarnessEnd, map[string]string{"reason": end})))
+}
+
+// flushShots uploads the screenshots the gate kept since the relay's last poll, after the log: the
+// events come first in what is left of ctx.
+func (b *Bridge) flushShots(ctx context.Context) {
+	if b.Shots == nil || b.sealed.Load() || ctx.Err() != nil {
+		return
+	}
+	if err := b.Shots.Flush(ctx); err != nil {
+		b.log().Warn("screenshots left unrelayed", "err", err)
+	}
 }

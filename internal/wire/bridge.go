@@ -104,6 +104,16 @@ const (
 	ReasonNoDrill         = "no_drill"          // 404: no drill passed for that version and configuration hash
 	ReasonBadHandoffStart = "bad_handoff_start" // 400: a handoff start read without an owner/name repository and a positive issue
 	ReasonNoHandoffStart  = "no_handoff_start"  // 404: the broker filed no web start for that issue
+
+	// The screenshot upload's refusals (harness screenshots phase B).
+	ReasonScreenshotsOff     = "screenshots_off"     // 403: the run carries no screenshots annotation
+	ReasonBadScreenshot      = "bad_screenshot"      // 400: no n from 1 to the run's cap, or a bad vision or run
+	ReasonNotAnImage         = "not_an_image"        // 422: not a whole PNG or JPEG
+	ReasonDimensions         = "dimensions"          // 422: wider or taller than 1920x1080, or empty
+	ReasonScreenshotTooLarge = "too_large"           // 413: a body over 1 MiB; 422: still over once re-encoded
+	ReasonScreenshotQuota    = "screenshot_quota"    // 429: the run or room holds all the screenshots it may
+	ReasonScreenshotConflict = "screenshot_conflict" // 409: another image is stored under that run and n
+	ReasonNoScreenshots      = "no_screenshots"      // 501: this broker stores no screenshots
 )
 
 // SSE event names, broker → bridge.
