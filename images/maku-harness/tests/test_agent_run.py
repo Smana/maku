@@ -94,7 +94,9 @@ class BuildRequestTest(unittest.TestCase):
     def test_browser_sidecar_is_a_second_mcp_server_with_vision(self):
         env = dict(ENV, BROWSER_MCP_URL="http://127.0.0.1:9223/mcp", SCREENSHOTS_VISION="1")
         agent = agent_run.build_request(env, "t", "r")["agent"]
-        self.assertEqual(agent["mcp_config"]["browser"], {"url": "http://127.0.0.1:9223/mcp", "transport": "http"})
+        browser = agent["mcp_config"]["browser"]
+        self.assertEqual((browser["url"], browser["transport"]), ("http://127.0.0.1:9223/mcp", "http"))
+        self.assertNotIn("headers", browser, "the browser gate gets no credential")
         self.assertIn("platform", agent["mcp_config"])
         # Without the override the SDK drops a tool's image (screenshots ledger L2).
         self.assertTrue(agent["llm"]["capability_overrides"]["supports_vision"])
