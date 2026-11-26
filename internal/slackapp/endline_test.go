@@ -144,6 +144,39 @@ func TestGatePartNamesPolicy(t *testing.T) {
 			want: "merged automatically by policy docs",
 		},
 		{
+			name: "signal-checked: the shape named (correctness signals W10)",
+			sum: func() summary.Summary {
+				var s summary.Summary
+				s.Status.Phase = "Merged"
+				s.Status.PR = pr
+				s.Status.Policy = &summary.PolicyView{PolicyFact: envelope.PolicyFact{Name: "docs-links", Mode: envelope.PolicyLive, MergedHow: "class", Signal: "links-only"}}
+				return s
+			}(),
+			want: "merged automatically by policy docs-links (meaning checked by links-only)",
+		},
+		{
+			name: "unchecked: said so",
+			sum: func() summary.Summary {
+				var s summary.Summary
+				s.Status.Phase = "Merged"
+				s.Status.PR = pr
+				s.Status.Policy = &summary.PolicyView{PolicyFact: envelope.PolicyFact{Name: "docs", Mode: envelope.PolicyLive, MergedHow: "class", Signal: "none"}}
+				return s
+			}(),
+			want: "merged automatically by policy docs (meaning not checked)",
+		},
+		{
+			name: "a signal outside the closed list is dropped",
+			sum: func() summary.Summary {
+				var s summary.Summary
+				s.Status.Phase = "Merged"
+				s.Status.PR = pr
+				s.Status.Policy = &summary.PolicyView{PolicyFact: envelope.PolicyFact{Name: "docs", Mode: envelope.PolicyLive, MergedHow: "class", Signal: "<@U1>"}}
+				return s
+			}(),
+			want: "merged automatically by policy docs",
+		},
+		{
 			name: "maintainer approval",
 			sum: func() summary.Summary {
 				var s summary.Summary

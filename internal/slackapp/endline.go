@@ -165,6 +165,19 @@ func gateHoldReason(code, policy string) string {
 	return reasonwords.For(code).Short
 }
 
+// signalWords is what checked the meaning of a policy merge (correctness signals, guidance surface
+// 6), " (meaning checked by links-only)" or " (meaning not checked)"; "" for a fact without a
+// signal (an older room log) or one outside the closed list, so no free text reaches a thread.
+func signalWords(signal string) string {
+	switch {
+	case signal == "none":
+		return " (meaning not checked)"
+	case envelope.ValidSignal(signal):
+		return " (meaning checked by " + signal + ")"
+	}
+	return ""
+}
+
 // gatePart builds the one Slack gate sentence from the summary's closed policy name, merge mode,
 // validated approver login and closed reason code (UX7, UX11), or "" before the gate has decided.
 func gatePart(sum summary.Summary) string {
@@ -175,7 +188,7 @@ func gatePart(sum summary.Summary) string {
 	switch p.MergedHow {
 	case "class":
 		if name := gatePolicyName(p); name != "" {
-			return "merged automatically by policy " + name
+			return "merged automatically by policy " + name + signalWords(p.Signal)
 		}
 		return "merged automatically"
 	case "approved":

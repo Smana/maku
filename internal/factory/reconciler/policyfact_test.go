@@ -89,8 +89,8 @@ func TestPolicyOf(t *testing.T) {
 			}},
 		{"the policy the diff matched is named (MR1)", repo(false, map[string]config.Class{"docs-links": {Live: true}}), matched,
 			func(t *testing.T, p *envelope.PolicyFact) {
-				if p.Name != "docs-links" || p.Class != "review" {
-					t.Fatalf("policy = %+v, want docs-links named for a review task", *p)
+				if p.Name != "docs-links" || p.Class != "review" || p.Signal != "links-only" { // CS1: and what checks its meaning
+					t.Fatalf("policy = %+v, want docs-links named for a review task, signal links-only", *p)
 				}
 			}},
 		{"a repository without classes and a task without a class has no policy", &config.Config{Repositories: []config.Repository{{Name: "o/r"}}}, task(""),

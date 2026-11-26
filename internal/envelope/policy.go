@@ -49,7 +49,19 @@ type PolicyFact struct {
 	// Decision is the factory's readable decision: measured values and every candidate's refusal.
 	Decision  string `json:"decision,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// Signal is what checks the meaning of the policy the gate decided under (correctness signals
+	// CS1): one of Signals, "" before a decision named one.
+	Signal string `json:"signal,omitempty"`
 }
+
+// Signals are the correctness signals a policy fact may name, the closed list of
+// internal/factory/meaning (a test holds the two equal).
+func Signals() []string {
+	return []string{"links-only", "semver-patch", "semver-minor", "oracle", "contract", "none"}
+}
+
+// ValidSignal reports whether s is one of Signals.
+func ValidSignal(s string) bool { return slices.Contains(Signals(), s) }
 
 // ProfileFact is the harness profile a task runs under, its evaluation cohort and the scoper's
 // recommendation. It is the Task status projected into the room, never a fresh decision.
@@ -213,6 +225,8 @@ func (p PolicyFact) validate() error {
 		return errors.New("name is a policy name")
 	case p.MergedHow != "" && p.MergedHow != "class" && p.MergedHow != "approved":
 		return errors.New("mergedHow is class or approved")
+	case p.Signal != "" && !ValidSignal(p.Signal):
+		return errors.New("signal is a correctness signal")
 	case utf8.RuneCountInString(p.Decision) > 2048:
 		return errors.New("decision is at most 2048 characters")
 	}
