@@ -44,6 +44,9 @@ var ErrUnconfirmable = errors.New("the broker serves no handoff start records to
 // Refusal reasons of the broker-confirmed path.
 const (
 	reasonUnauthorisedLabeller = "unauthorised_labeller"
+	// ReasonAccessStartInactive: the repository sets access.start: write, but per-person daily caps
+	// are not enforced, so only its maintainers start tasks (developer review gap 1, D1).
+	ReasonAccessStartInactive = "access_start_inactive"
 	// reasonHandoffUnconfirmed: the App's label could not be checked against the broker's record,
 	// for its configuration or past handoffGiveUp of unanswered checks.
 	reasonHandoffUnconfirmed = "handoff_unconfirmed"
@@ -122,7 +125,7 @@ func (p *IssuePoller) confirmedHandoff(ctx context.Context, cfg *config.Config, 
 		return refuse()
 	case err != nil:
 		return unanswered(fmt.Errorf("the handoff starter's login on %d: %w", n, err))
-	case login == "" || !p.repo(cfg).IsMaintainer(login):
+	case login == "" || !p.repo(cfg).MayStart(login, cfg.Budgets):
 		p.log().Info("a handoff start for a non-maintainer: not confirmed", "issue", n, "handoff", h.Handoff, "login", login)
 		return refuse()
 	}

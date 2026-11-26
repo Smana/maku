@@ -421,7 +421,7 @@ func merge(base map[string]any, set []candidate, policies, routines []Object, op
 			continue
 		}
 		entry := map[string]any{"name": str(c.repo.Spec, "repository")}
-		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "workflow", "classAuthority", "privateCode", "screenshots"} {
+		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "workflow", "classAuthority", "privateCode", "screenshots", "access"} {
 			if v, ok := c.repo.Spec[k]; ok {
 				entry[k] = v
 			}

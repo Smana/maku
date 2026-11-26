@@ -66,6 +66,21 @@ spec:
               RepositorySpec is one repository served (D3): today's repositories[] entry, with its merge
               settings and the MergePolicies it binds (reusable merge policies B2, B3).
             properties:
+              access:
+                description: |-
+                  Access is who may start a task: maintainers (the default), or write, which lets anyone with
+                  write access start one where the factory enforces per-person daily caps.
+                properties:
+                  start:
+                    description: |-
+                      Start is maintainers (the default) or write. Write takes effect only where per-person daily
+                      caps are enforced (budgets.perPerson.enabled and budgets.enforcePrincipal): every start is then
+                      charged to the developer who made it, within their own day (owner decision D1).
+                    enum:
+                    - maintainers
+                    - write
+                    type: string
+                type: object
               checks:
                 description: |-
                   Checks is what a check-enabled run of the repository requests beyond github (v3 feature 3,

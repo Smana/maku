@@ -366,9 +366,19 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 	if err != nil || !ok {
 		return err
 	}
-	gen, last, ok := Generation(evs, p.repo(cfg).IsMaintainer)
+	rc := p.repo(cfg)
+	// A maintainer's label, or, with access.start: write in effect, anyone's but a bot's: the write
+	// check below then decides (developer review gap 1, D1).
+	gen, last, ok := Generation(evs, func(login string) bool {
+		return rc.MayStart(login, cfg.Budgets) && !forge.SameLogin(login, cfg.FactoryLogin)
+	})
 	requester := last.Actor
 	var handoff *handoffConfirmation
+	if !ok && rc.WriteStartsConfigured() && !rc.WriteStarts(cfg.Budgets) && !rc.IsMaintainer(last.Actor) &&
+		!forge.SameLogin(last.Actor, cfg.FactoryLogin) {
+		// Set but not in effect: say why rather than refuse as for any labeller.
+		return p.refuse(ctx, cfg, n, last, ReasonAccessStartInactive)
+	}
 	if ok {
 		switch w, err := p.writer(ctx, last.Actor); {
 		case err != nil:

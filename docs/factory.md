@@ -22,7 +22,7 @@ Every label below is read once a minute (`poll.issues`). Labels applied by non-m
 
 | Trigger | Effect | Who |
 |---|---|---|
-| Label `factory/ready` (`triggerLabel`) on an issue | Creates a `Task` from a sanitised snapshot and SHA-256 of the issue's title and body, then removes the label (ignored on PRs; re-labelling supersedes an escalated task). Apply `plan-first` or `report` beforehand to choose that outcome; two outcome labels at once refuse with `outcome_conflict` and run `change` | Maintainer |
+| Label `factory/ready` (`triggerLabel`) on an issue | Creates a `Task` from a sanitised snapshot and SHA-256 of the issue's title and body, then removes the label (ignored on PRs; re-labelling supersedes an escalated task). Apply `plan-first` or `report` beforehand to choose that outcome; two outcome labels at once refuse with `outcome_conflict` and run `change` | Maintainer; with `access.start: write` and per-person caps enforced, anyone with write access ([config](reference/config.md)) |
 | Label `factory/review` on a pull request | Creates a read-only `review` `Task` on that pull request, runs one `reviewer` with a read-only token, posts its verdict comment, and ends `Done` (`review_posted`); never pushes, merges, or opens a second run | Maintainer with `write`, or PR author |
 | Comment `/factory fix` alone on a line on a completed `report` issue | Files a `change` `Task` on the same issue with the investigation's findings as its scope | Maintainer with `write` |
 | Label `factory/stop` on the issue or its PR | Revokes and deletes active runs and ends the task `Stopped` (kept if no task is running yet so a later start stops immediately; removed and answered if applied by a non-maintainer) | Maintainer |
@@ -43,7 +43,7 @@ Every label below is read once a minute (`poll.issues`). Labels applied by non-m
 
 A `factory/ready` applied by the factory App counts only on an issue the broker filed from a web **New task** start and recorded: the task is then the recorded maintainer's ([broker-confirmed handoff](security.md#authorization)). The label waits up to two minutes for the broker's record.
 
-Refused `factory/ready` labels are removed and answered once (`unauthorised_labeller`, `edited_after_label`, `task_active`, `unsanitisable`); a maintainer re-applying `factory/ready` while the issue's task is still running is answered `task_active`. The factory applies `factory/class:<class>`, `factory/stale` (closed after 14 quiet days), `factory/orphaned` (PR whose `Task` was lost, human-only thereafter), `factory/needs-author`, `factory/proposed`, `factory/split-proposed`, and `factory/child-of:#p`.
+Refused `factory/ready` labels are removed and answered once (`unauthorised_labeller`, `access_start_inactive`, `edited_after_label`, `task_active`, `unsanitisable`); a maintainer re-applying `factory/ready` while the issue's task is still running is answered `task_active`. The factory applies `factory/class:<class>`, `factory/stale` (closed after 14 quiet days), `factory/orphaned` (PR whose `Task` was lost, human-only thereafter), `factory/needs-author`, `factory/proposed`, `factory/split-proposed`, and `factory/child-of:#p`.
 
 ### Commands posted early, and input that is not acted on
 

@@ -480,3 +480,16 @@ func TestFileWorkflowsIsReplacedByTheFactory(t *testing.T) {
 		t.Fatalf("warnings: %v", r.Warnings)
 	}
 }
+
+// Developer review gap 1: a Repository's access.start reaches its config entry.
+func TestAssembleCarriesAccess(t *testing.T) {
+	r0 := served(t, "maku", "Smana/maku")
+	r0.Spec["access"] = map[string]any{"start": "write"}
+	r, err := Assemble(file(t), with(t, r0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := r.Config.RepositoryFor("Smana/maku").Access; a.Start != "write" {
+		t.Fatalf("access dropped: %+v %+v", a, r.Refused)
+	}
+}
