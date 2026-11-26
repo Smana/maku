@@ -19,7 +19,12 @@
 #   P5  metrics: the token-usage histogram carries ar_agent (the sub), the mapped model and its token
 #       types; a 429 shows on a request counter carrying ar_agent.
 #   P6  the Gateway API floor: the controller programs the Gateway and its routes on GATEWAY_API.
-# Usage: probe.sh   (docker, k3d, helm, kubectl, jq). KEEP=1 keeps the cluster for a look around.
+#   P7  gemini and vertex (Gemini design G1, G5, G8): the chart's own backends against fake-gemini.py,
+#       which enforces thought signatures. vertex: which Vertex path the native provider calls, the
+#       metadata server's token and no key, reasoning_effort as a thinking level, a two-tool loop
+#       from a caller that drops unknown fields, the catalog key and the cost. gemini: the
+#       OpenAI-compatible path and key, and what a caller must echo for the signature.
+# Usage: probe.sh   (docker, k3d, helm, kubectl, jq, yq, openssl). KEEP=1 keeps the cluster for a look around.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 NAME=maku-gw-probe
@@ -63,8 +68,34 @@ kubectl -n agentgateway-system rollout status deploy/agentgateway --timeout=180s
 echo "==> the probe's objects"
 for ns in maku agents; do
   kubectl create namespace "$ns" >/dev/null
-  kubectl -n "$ns" create configmap probe-scripts --from-file=echo-llm.py --from-file=client.py >/dev/null
+  kubectl -n "$ns" create configmap probe-scripts --from-file=echo-llm.py --from-file=client.py \
+    --from-file=fake-gemini.py --from-file=tool-loop.py >/dev/null
 done
+# P7: a CA of the probe's own signs fake-gemini's certificate for Google's hostnames.
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=probe-ca -keyout "$work/ca.key" -out "$work/ca.crt" 2>/dev/null
+openssl req -newkey rsa:2048 -nodes -subj /CN=fake-gemini -keyout "$work/tls.key" -out "$work/tls.csr" 2>/dev/null
+printf 'subjectAltName=DNS:aiplatform.eu.rep.googleapis.com,DNS:generativelanguage.googleapis.com\n' >"$work/san.ext"
+openssl x509 -req -in "$work/tls.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" -CAcreateserial -days 1 \
+  -extfile "$work/san.ext" -out "$work/tls.crt" 2>/dev/null
+kubectl -n maku create secret tls fake-gemini-tls --cert="$work/tls.crt" --key="$work/tls.key" >/dev/null
+kubectl -n maku create configmap probe-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
+kubectl -n maku create secret generic probe-gemini-key --from-literal=apiKey=probe-gemini-key-value >/dev/null # pragma: allowlist secret
+kubectl apply -f gemini.yaml >/dev/null
+# The chart's own gemini and vertex objects; each backend trusts the probe CA for its host.
+helm template model-gateway ../.. -n maku -f gemini-values.yaml \
+  | yq e 'select((.kind == "AgentgatewayBackend" and (.metadata.name | test("^(vertex|gemini)-"))) or (.kind == "HTTPRoute" and (.metadata.name | test("gemini"))) or (.kind == "AgentgatewayPolicy" and (.spec.targetRefs[0].name // "" | test("gemini"))) or .kind == "ConfigMap")
+      | (select(.metadata.name == "vertex-gemini-standard") | .spec.policies.tls) = {"sni": "aiplatform.eu.rep.googleapis.com", "caCertificateRefs": [{"name": "probe-ca"}]}
+      | (select(.metadata.name == "gemini-gemini-light") | .spec.policies.tls.caCertificateRefs) = [{"name": "probe-ca"}]' - \
+  | kubectl -n maku apply -f - >/dev/null
+kubectl -n maku rollout status deploy/fake-gemini --timeout=180s >/dev/null
+ip="$(kubectl -n maku get svc fake-gemini -o jsonpath='{.spec.clusterIP}')"
+kubectl -n kube-system create configmap coredns-custom --from-literal=gemini.server="aiplatform.eu.rep.googleapis.com:53 generativelanguage.googleapis.com:53 {
+    hosts {
+        $ip aiplatform.eu.rep.googleapis.com generativelanguage.googleapis.com
+    }
+}" >/dev/null
+kubectl -n kube-system rollout restart deploy/coredns >/dev/null
+kubectl -n kube-system rollout status deploy/coredns --timeout=180s >/dev/null
 issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
 sed "s#__ISSUER__#$issuer#" manifests.yaml | kubectl apply -f - >/dev/null
 kubectl -n agents wait --for=condition=Ready pod/caller pod/bystander --timeout=180s >/dev/null
@@ -162,6 +193,53 @@ bad="$(tr , '\n' <<<"$types" | grep -vxE 'input|output|input_cache_read|input_ca
 throttled="$(grep -E '^agentgateway_requests_total\{' <<<"$metrics" | grep -F "$sub" | grep -F 'status="429"' || true)"
 [[ -n $throttled ]] && pass "P5 a 429 shows on agentgateway_requests_total{status=\"429\"}, carrying ar_agent" \
   || fail "P5 agentgateway_requests_total has no status 429 series with $sub"
+
+echo "==> P7: gemini and vertex"
+# loop ALIAS MODE: the two-tool loop's JSON line, retried while the route is not yet programmed.
+loop() {
+  local out=''
+  for _ in $(seq 20); do
+    out="$(kubectl -n agents exec caller -- python3 /app/tool-loop.py "$PUB/m/$1/v1/chat/completions" "/tokens/public-$1" "$1" "$2")"
+    jq -e '.statuses[0] != 404 and .statuses[0] != 503' <<<"$out" >/dev/null 2>&1 && break
+    sleep 3
+  done
+  printf '%s' "$out"
+}
+v="$(loop gemini-standard drop)"
+echo "    vertex: $v"
+r="$(jq -c '.report // {}' <<<"$v")"
+[[ $(jq -c .statuses <<<"$v") == '[200,200,200]' ]] && pass "P7 vertex: a two-tool loop from a caller that drops unknown fields succeeds (the signature rides in the tool call id)" \
+  || fail "P7 vertex: the tool loop: $v"
+[[ $(jq -r .path <<<"$r") == /v1/projects/probe-project/locations/eu/publishers/google/models/gemini-4-neon:generateContent ]] \
+  && pass "P7 vertex: the native provider calls generateContent on the publisher model, not endpoints/openapi" || fail "P7 vertex path: $r"
+[[ $(jq -r .host <<<"$r") == aiplatform.eu.rep.googleapis.com ]] && pass "P7 vertex: region eu dials aiplatform.eu.rep.googleapis.com" || fail "P7 vertex host: $r"
+[[ $(jq -r .auth <<<"$r") == fake-wi-token ]] && pass "P7 vertex: the proxy sends the metadata server's access token, and holds no key" || fail "P7 vertex auth: $r"
+jq -e '.thinkingConfig == {"thinkingLevel": "low"}' <<<"$r" >/dev/null \
+  && pass "P7 vertex: reasoning_effort low arrives as thinkingLevel low, no thinkingBudget (Gemini 4 refuses a budget)" || fail "P7 vertex thinkingConfig: $r"
+jq -e '.signatures == ["sig-1", "sig-2"]' <<<"$r" >/dev/null && pass "P7 vertex: both signatures came back on their function calls" || fail "P7 vertex signatures: $r"
+jq -e '[.ids[] | contains("__thought__sig-")] | all' <<<"$v" >/dev/null && pass "P7 vertex: each tool call id carries its signature (<id>__thought__<sig>)" || fail "P7 vertex ids: $v"
+jq -e '.usage.completion_tokens == 30 and .usage.prompt_tokens == 100' <<<"$v" >/dev/null \
+  && pass "P7 vertex: thinking tokens count as output (10 candidates + 20 thoughts = 30)" || fail "P7 vertex usage: $v"
+hits="$(kubectl -n maku exec deploy/fake-gemini -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/report").read().decode())')"
+jq -e '[.mds[] | select(.path | contains("/service-accounts/default/token"))] | length > 0' <<<"$hits" >/dev/null \
+  && pass "P7 vertex: the token came from the metadata server" || fail "P7 vertex metadata server hits: $hits"
+sa="$(kubectl -n maku get deploy model-gateway -o jsonpath='{.spec.template.spec.serviceAccountName}')"
+[[ $sa == model-gateway ]] && pass "P7 the proxy runs as ServiceAccount model-gateway (the Gateway's name): the one Workload Identity binds" || fail "P7 proxy ServiceAccount: $sa"
+pod="$(kubectl -n maku get pod -l gateway.networking.k8s.io/gateway-name=model-gateway -o jsonpath='{.items[0].metadata.name}')"
+costs="$(kubectl -n maku logs "$pod" | jq -Rrc 'fromjson? | select(."gen_ai.provider.name" == "gcp.vertex_ai" and ."http.status" == 200) | ."cost.total"' | sort -u | paste -sd' ' -)"
+# 100 input at 3.00 and 30 output (thinking included) at 15.00 per million: 0.00075 a call.
+[[ $costs == 0.00075 ]] && pass "P7 vertex: each call's cost.total is 0.00075, priced under gcp.vertex_ai, thinking at the output rate" \
+  || fail "P7 vertex cost: the gcp.vertex_ai calls' cost.total are '$costs'"
+g="$(loop gemini-light echo)"
+echo "    gemini, echo: $g"
+r="$(jq -c '.report // {}' <<<"$g")"
+[[ $(jq -c .statuses <<<"$g") == '[200,200,200]' ]] && pass "P7 gemini: a caller that echoes extra_content round-trips the signature through the gateway" || fail "P7 gemini echo: $g"
+jq -e '.path == "/v1beta/openai/chat/completions" and .host == "generativelanguage.googleapis.com" and .model == "gemini-4-hydrogen" and .reasoning_effort == "low" and .auth == "bearer len=22"' <<<"$r" >/dev/null \
+  && pass "P7 gemini: the OpenAI-compatible path, the mapped model, reasoning_effort as sent, the key from the Secret" || fail "P7 gemini request: $r"
+g="$(loop gemini-light drop)"
+echo "    gemini, drop: $g"
+[[ $(jq -c .statuses <<<"$g") == '[200,400]' ]] && pass "P7 gemini: a caller that drops extra_content gets the 400 on its second turn (the caller's job, not the gateway's)" \
+  || fail "P7 gemini drop: $g"
 
 echo "==> $fails failure(s); agentgateway $AGW, Gateway API $GATEWAY_API, $(kubectl version -o json | jq -r .serverVersion.gitVersion)"
 [[ -z ${nobinding:-} ]] || echo "NOTE source: apiserver needs identity.jwks.allowAnonymousDiscovery (the controller's JWKS fetch is anonymous)"

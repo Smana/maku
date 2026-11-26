@@ -1,11 +1,14 @@
 {{/*
 The provider presets (plan v4 step 4, GW7; docs/gateway.md, "Presets"): what each provider needs on
 the wire, held here so a values file cannot silently undo it. Each preset is
-  provider       the AgentgatewayBackend's ai.provider kind: openai, anthropic (native) or custom
+  provider       the AgentgatewayBackend's ai.provider kind: openai, anthropic, vertexai (native) or custom
   host/port/path the custom provider's Chat Completions endpoint, over TLS
+  auth           secret (the default: the key from existingSecret) or gcp (the proxy's own Google
+                 identity, ambient credentials: no Secret at all)
   fields         the transformations always rendered: {field: {expression, why}}
   alwaysReasons  the models that reason on every call ("*": every model of the provider)
-Probe P4 (charts/maku-gateway/tests/probe) checks the mistral and moonshot transformations on the wire.
+Probe P4 (charts/maku-gateway/tests/probe) checks the mistral and moonshot transformations on the wire,
+and P7 the gemini and vertex presets.
 */}}
 {{- define "mgw.presets" -}}
 openai:
@@ -54,6 +57,29 @@ moonshot:
       expression: "null"
       why: K3.1 Pro fixes top_p
   # reasoning_content spends max_tokens before any content.
+  alwaysReasons: ["*"]
+gemini:
+  # The Gemini API's OpenAI-compatible endpoint, with an AI Studio key. A tool call's thought
+  # signature rides in tool_calls[].extra_content, which the caller must send back (probe P7).
+  provider: custom
+  host: generativelanguage.googleapis.com
+  port: 443
+  path: /v1beta/openai/chat/completions
+  fields: {}
+  # Gemini 4 cannot stop thinking.
+  alwaysReasons: ["*"]
+vertex:
+  # Vertex AI, native: agentgateway turns Chat Completions into generateContent on the region's host
+  # (mgw.vertexHost) and carries each thought signature inside the tool call's id, so any caller that
+  # echoes tool_call ids round-trips it (probe P7). The proxy authenticates as its own Google identity
+  # (GKE Workload Identity): no key exists.
+  provider: vertexai
+  port: 443
+  auth: gcp
+  fields:
+    thinking_config:
+      expression: '{"thinkingLevel": llmRequest.reasoning_effort in ["none", "minimal", "low"] ? "low" : llmRequest.reasoning_effort == "medium" ? "medium" : "high"}'
+      why: agentgateway 1.6 turns reasoning_effort into a thinkingBudget for every model but gemini-3, and Gemini 4 answers 400 to a budget; without reasoning_effort the expression fails and no thinking config is sent
   alwaysReasons: ["*"]
 custom:
   provider: custom

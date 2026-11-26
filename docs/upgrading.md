@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Gemini: the gemini and vertex presets](#gemini-the-gemini-and-vertex-presets)
 - [The OpenCode image runs repository checks](#the-opencode-image-runs-repository-checks)
 - [Early commands are held, refused input is answered](#early-commands-are-held-refused-input-is-answered)
 - [Queued notes reach the next run of any kind](#queued-notes-reach-the-next-run-of-any-kind)
@@ -49,6 +50,19 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## Gemini: the gemini and vertex presets
+
+No default changes, and no value changes for an existing install. The AgentRun CRD's `model` and
+`judgeModel` admit two new provider aliases, `gemini-standard` and `gemini-light` (public runs only):
+upgrade the CRDs (`agent-factory-crds`) before the factory. `maku-gateway` gains two presets:
+
+| Preset | What it needs |
+|---|---|
+| `gemini` | `existingSecret` with an AI Studio key, like any other provider |
+| `vertex` | `projectId` and `region` (`global`, `us`, `eu` or a region), and no `existingSecret`: the proxy authenticates as its own ServiceAccount through GKE Workload Identity |
+
+See [Gemini on Vertex AI](gateway.md#gemini-on-vertex-ai) for the binding an operator makes.
 
 ## The OpenCode image runs repository checks
 

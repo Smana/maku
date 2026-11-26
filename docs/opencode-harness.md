@@ -73,7 +73,7 @@ A plain `/factory retry` keeps the task's frozen cohort and harness unchanged.
 ## Provider, security, and tracing contract
 
 - **Role permissions:** `implementer`, `reviewer`, `tester`, and `triager` receive least-privilege OpenCode V2 permission rules generated per run (`update: "disable"`, `share: "disabled"`, `OPENCODE_DISABLE_CLAUDE_CODE=1`, no subagents/skills/webfetch/websearch/external directories).
-- **Providers & effort:** OpenAI-compatible provider config maps Maku's logical aliases (`agent-default`, `tier-light`, `tier-standard`, `tier-frontier`, `kimi-frontier`, `mistral-standard`, `mistral-light`) with `low`/`medium`/`high` effort variants (`reasoning_effort`). Internal runs set `compatibility.cacheFormat: "anthropic"`; public runs omit it.
+- **Providers & effort:** OpenAI-compatible provider config maps Maku's logical aliases (`agent-default`, `tier-light`, `tier-standard`, `tier-frontier`, `kimi-frontier`, `mistral-standard`, `mistral-light`, plus the run's own alias, such as `gemini-standard`) with `low`/`medium`/`high` effort variants (`reasoning_effort`). Internal runs set `compatibility.cacheFormat: "anthropic"`; public runs omit it.
 - **Rotating MCP credentials:** a loopback credential proxy re-reads `MCP_TOKEN_FILE` on every call, strips redirects, and forwards W3C `traceparent`.
 - **Loop guard & search:** Maku's own `loop_guard` detects stuck sessions and interrupts owned shell jobs; bounded synchronous search uses an independent read-only `search` session.
 - **Metadata-only tracing:** `OTEL_*` variables are stripped from the OpenCode server environment so OpenCode never exports native OTLP logs or prompt/command payloads; Maku emits metadata-only model and tool spans under the run span.

@@ -14,7 +14,9 @@ Off by default (`enabled: false`): an install that does not turn it on renders n
 - The agentgateway controller and its CRDs, v1.6: the umbrella's `agentgateway` subchart and the
   vendored CRDs in `config/agentgateway` (`kubectl apply --server-side`), or your own.
 - One Secret per provider in the release namespace, holding its API key. The chart names it
-  (`providers.<name>.existingSecret`, `key`) and never renders it.
+  (`providers.<name>.existingSecret`, `key`) and never renders it. A `vertex` provider takes none:
+  the proxy calls Vertex AI as its own ServiceAccount, `<name>`, which the operator binds to a Google
+  role holding `aiplatform.endpoints.predict` ([Gemini on Vertex AI](../../docs/gateway.md#gemini-on-vertex-ai)).
 
 ## What it renders
 
@@ -23,7 +25,7 @@ Off by default (`enabled: false`): an install that does not turn it on renders n
 | Gateway | `<name>` | listeners `public` (8080), `internal` (8081), `clients` (8082), routes from the release namespace only |
 | AgentgatewayParameters | `<name>` | the proxy's image by digest, replicas, hardening, the catalog |
 | AgentgatewayPolicy | `<name>-strip-identity-headers`, `<name>-listener-{public,internal,clients}`, `<name>-frontend` | each caller's token verified, the identity headers set from it |
-| AgentgatewayBackend | `<provider>-<alias>`, `<provider>-planner`, `<provider>-classifier` | one per alias and client, the model forced, the key by Secret name |
+| AgentgatewayBackend | `<provider>-<alias>`, `<provider>-planner`, `<provider>-classifier` | one per alias and client, the model forced, the key by Secret name (or, for `vertex`, the proxy's Google identity) |
 | HTTPRoute + AgentgatewayPolicy | `maku-models-<class>-<alias>`, `maku-clients-<client>` | one route per alias, the alias's audience required |
 | ConfigMap | `<name>-model-catalog` | the prices the access log's `cost` uses |
 | NetworkPolicy | `<name>` | default deny for the proxy pods |

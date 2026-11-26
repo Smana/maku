@@ -369,7 +369,7 @@
     "alias": {
       "description": "A model alias an AgentRun's spec.model or spec.loop.judgeModel may name.",
       "type": "string",
-      "enum": ["agent-default", "tier-light", "tier-standard", "tier-frontier", "kimi-frontier", "mistral-standard", "mistral-light"]
+      "enum": ["agent-default", "tier-light", "tier-standard", "tier-frontier", "kimi-frontier", "mistral-standard", "mistral-light", "gemini-standard", "gemini-light"]
     },
     "cidr": {
       "description": "An IPv4 CIDR, such as 10.0.0.0/8.",
