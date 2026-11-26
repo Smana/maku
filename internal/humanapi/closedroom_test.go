@@ -126,3 +126,48 @@ func TestTheClosedListShowsWhatItsURLWouldOpen(t *testing.T) {
 		})
 	}
 }
+
+// The default list's X-Rooms-Closed counts what the closed view would list the caller, asked for with
+// closed_count=1: a room the caller cannot open is never counted, so the count tells no room's existence.
+func TestTheClosedCountIsOnlyRoomsTheCallerMayOpen(t *testing.T) {
+	factory := envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"}
+	withFactory := func(s *Server, _ *fanout.Hub, _ *hubView) { s.FactoryPrincipal = "system:factory" }
+	for _, c := range []struct {
+		name  string
+		actor envelope.Actor
+		path  string
+		h     http.Header
+		want  string // "" is no header
+	}{
+		{"a reader of the repository", factory, "/api/rooms?closed_count=1", header("dev1"), "1"},
+		{"an admin", factory, "/api/rooms?closed_count=1", admin("boss"), "1"},
+		{"a reader of nothing", factory, "/api/rooms?closed_count=1", header("dev2"), "0"},
+		{"facts another writer forged", envelope.Actor{Kind: envelope.ActorSystem, ID: "system:runlore"}, "/api/rooms?closed_count=1", header("dev1"), "0"},
+		{"another repository's filter", factory, "/api/rooms?closed_count=1&repo=Smana/b", header("dev1"), "0"},
+		{"the same repository's filter", factory, "/api/rooms?closed_count=1&repo=smana/a", header("dev1"), "1"},
+		{"not asked: a refresh pays no closed gates", factory, "/api/rooms", header("dev1"), ""},
+		{"the closed view itself", factory, "/api/rooms?closed=1&closed_count=1", header("dev1"), ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := world(map[string][]string{"Smana/a": {"dev1"}})
+			e := setup(t, abc(t), w.option(), withFactory)
+			closedLog(e.log, c.actor, "Smana/a")
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, e.ts.URL+c.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header = c.h
+			r, err := e.ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = r.Body.Close()
+			if r.StatusCode != http.StatusOK {
+				t.Fatalf("list: %d", r.StatusCode)
+			}
+			if got := r.Header.Get(closedHeader); got != c.want {
+				t.Fatalf("%s = %q, want %q", closedHeader, got, c.want)
+			}
+		})
+	}
+}

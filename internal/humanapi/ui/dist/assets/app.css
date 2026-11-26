@@ -893,6 +893,10 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
 .list-tools label { display: inline-flex; gap: 6px; align-items: center; }
 .list-tools .notice { color: var(--destructive-text); }
 .list-tools .notice:empty { display: none; }
+/* The closed hint (view.ts): the rooms that ended are on the closed view, one click away. */
+.closed-hint { margin: 0; padding: 0 16px 8px; color: var(--muted-foreground); font-size: var(--text-small); }
+.closed-hint button { min-height: 0; padding: 0; border: 0; background: transparent; color: var(--link); font: inherit; font-weight: 700; }
+.closed-hint button:hover { box-shadow: none; text-decoration: underline; }
 .list-tools label, .list-tools select, .list-tools button { min-height: var(--hit); }
 .list-tools [data-act="new-room"] { margin-left: auto; padding: 0 14px; font-weight: 400; }
 /* The auto-refresh: when it last read the list, the interval and the pause, before New room. */

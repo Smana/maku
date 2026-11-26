@@ -101,7 +101,7 @@ func (c Client) policyDo(ctx context.Context, method, path string, body []byte, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return refusal("policy", resp)
+		return c.refused("policy", resp)
 	}
 	raw, err := httpx.ReadBody(resp.Body, maxFrame)
 	if err != nil {

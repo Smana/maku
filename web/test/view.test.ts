@@ -125,7 +125,7 @@ describe("the room table", () => {
     const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("closed=1") ? [closed] : rows), { status: 200 }));
     const root = app();
     await listRooms(root, get as unknown as typeof fetch);
-    expect(get).toHaveBeenLastCalledWith("/api/rooms", expect.anything()); // the default view is unchanged
+    expect(get).toHaveBeenLastCalledWith("/api/rooms?closed_count=1", expect.anything()); // the default view, counting the closed
     const box = root.querySelector('input[name="closed"]') as HTMLInputElement;
     expect(box.checked).toBe(false);
     box.click();
@@ -146,6 +146,62 @@ describe("the room table", () => {
     (root.querySelector('input[name="closed"]') as HTMLInputElement).click();
     await vi.waitFor(() => expect(root.querySelector("tbody")?.textContent).toBe("No room closed in the last 30 days"));
   });
+  // The factory deletes a task's Room once it ends: the default list says how many ended, and where.
+  describe("the closed hint", () => {
+    const answer = (open: RoomRow[], closedRows: RoomRow[], count?: string) => vi.fn(async (url: string) =>
+      new Response(JSON.stringify(url.includes("closed=1") ? closedRows : open),
+        { status: 200, headers: count !== undefined && url.includes("closed_count=1") ? { "X-Rooms-Closed": count } : {} }));
+    const hint = (root: HTMLElement) => root.querySelector(".closed-hint") as HTMLElement;
+    const done: RoomRow = { id: "w3hq7c2a", phase: "Closed", owner: "", driver: "", dataClass: "", lastSeq: 40, repository: "o/a" };
+    it("counts the rooms that ended, and opens the closed view", async () => {
+      const get = answer(rows, [done], "3");
+      const root = app();
+      await listRooms(root, get as unknown as typeof fetch);
+      expect(hint(root).hidden).toBe(false);
+      expect(hint(root).textContent).toBe("3 rooms ended in the last 30 days — show closed");
+      (root.querySelector('button[data-act="show-closed"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(root.querySelectorAll("tbody tr").length).toBe(1));
+      expect((root.querySelector('input[name="closed"]') as HTMLInputElement).checked).toBe(true);
+      expect(get).toHaveBeenLastCalledWith("/api/rooms?closed=1", expect.anything());
+      expect(hint(root).hidden).toBe(true); // the closed view is on
+    });
+    it("says one room in the singular", async () => {
+      const root = app();
+      await listRooms(root, answer(rows, [], "1") as unknown as typeof fetch);
+      expect(hint(root).textContent).toBe("1 room ended in the last 30 days — show closed");
+    });
+    it("is hidden when none ended, or the broker sent no count", async () => {
+      for (const count of ["0", undefined]) {
+        const root = app();
+        await listRooms(root, answer(rows, [], count) as unknown as typeof fetch);
+        expect(hint(root).hidden).toBe(true);
+      }
+    });
+    it("is hidden on a page opened on the closed view", async () => {
+      const get = answer(rows, [done], "1");
+      const root = app();
+      await listRooms(root, get as unknown as typeof fetch, { closed: true });
+      expect(get).toHaveBeenCalledWith("/api/rooms?closed=1", expect.anything());
+      expect(hint(root).hidden).toBe(true);
+    });
+    it("an empty default list points at the closed rooms", async () => {
+      const root = app();
+      await listRooms(root, answer([], [done], "2") as unknown as typeof fetch);
+      expect(root.querySelector("tbody")?.textContent).toBe("No open rooms: 2 rooms ended in the last 30 days, on the closed view");
+    });
+    it("counts again for a new repository, not on a refresh", async () => {
+      const get = answer(rows, [], "4");
+      const root = app();
+      await listRooms(root, get as unknown as typeof fetch);
+      (root.querySelector('input[name="mine"]') as HTMLInputElement).click();
+      await vi.waitFor(() => expect(get).toHaveBeenLastCalledWith("/api/rooms?mine=1", expect.anything()));
+      expect(hint(root).textContent).toContain("4 rooms");
+      const sel = root.querySelector('select[name="repo"]') as HTMLSelectElement;
+      sel.value = "o/b";
+      sel.dispatchEvent(new Event("change"));
+      await vi.waitFor(() => expect(get).toHaveBeenLastCalledWith("/api/rooms?mine=1&closed_count=1&repo=o%2Fb", expect.anything()));
+    });
+  });
   it("filters by repository with the API's repo param", async () => {
     const get = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
     const root = app();
@@ -154,7 +210,7 @@ describe("the room table", () => {
     expect([...sel.options].map((o) => o.value)).toEqual(["", "o/a", "o/b"]);
     sel.value = "o/a";
     sel.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(get).toHaveBeenLastCalledWith("/api/rooms?repo=o%2Fa", expect.anything()));
+    await vi.waitFor(() => expect(get).toHaveBeenLastCalledWith("/api/rooms?closed_count=1&repo=o%2Fa", expect.anything()));
   });
   it("opens the new-room form above the table, which has a name", async () => {
     const root = app();
@@ -166,7 +222,7 @@ describe("the room table", () => {
   });
   it("never lets an older filter answer overwrite a newer one", async () => {
     const waiting: ((r: Response) => void)[] = [];
-    const get = vi.fn((url: string) => url === "/api/rooms"
+    const get = vi.fn((url: string) => url === "/api/rooms?closed_count=1"
       ? Promise.resolve(new Response(JSON.stringify(rows)))
       : new Promise<Response>((res) => waiting.push(res)));
     const root = app();

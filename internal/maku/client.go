@@ -83,9 +83,12 @@ type Refusal struct {
 	Reason string // the broker's reason, when it names one maku explains
 	// Refused is the code a JSON refusal body names ({"error":"not_found"}), when it is a bounded code.
 	Refused string
-	// Repository is the repository the request asked about, and Broker the broker's URL: set, a
-	// not_found refusal names the repository and how to make it readable, never "no such room".
+	// Repository is the repository the request asked about: set, a not_found refusal names it and
+	// how to make it readable, never "no such room". Broker is the broker's URL, which a not_linked
+	// or a repository's not_found sends the developer to (<broker>/link/github).
 	Repository, Broker string
+	// Room is a refusal of a room's own route (its socket): only there is a bare 404 "no such room".
+	Room bool
 }
 
 // userInactive is the broker's 401 for a ZITADEL user no longer active (#126).
@@ -109,11 +112,26 @@ func refusal(op string, resp *http.Response) *Refusal {
 	return r
 }
 
+// refused is resp as a Refusal from this broker, so a not_linked can name where to link.
+func (c Client) refused(op string, resp *http.Response) *Refusal {
+	r := refusal(op, resp)
+	r.Broker = c.URL
+	return r
+}
+
 // repoRefusal is resp as a Refusal of a request about repository, which a not_found explains.
 func (c Client) repoRefusal(op, repository string, resp *http.Response) *Refusal {
-	r := refusal(op, resp)
-	r.Repository, r.Broker = repository, c.URL
+	r := c.refused(op, resp)
+	r.Repository = repository
 	return r
+}
+
+// linkURL is where the developer links GitHub on this broker, or "the rooms page" without one.
+func (r *Refusal) linkURL() string {
+	if r.Broker == "" {
+		return "the rooms page"
+	}
+	return strings.TrimRight(r.Broker, "/") + "/link/github"
 }
 
 func (r *Refusal) Error() string {
@@ -123,17 +141,24 @@ func (r *Refusal) Error() string {
 		why = userInactive + ": your ZITADEL user is not active; an admin must reactivate it"
 	case r.Code == http.StatusUnauthorized:
 		why = "the token was refused: run maku login"
-	case r.Code == http.StatusForbidden:
-		why = "not in an agents group, or not allowed in this room"
+	// The factory's reasons name the real cause: said before the status's generic words.
+	case r.Refused == "not_linked":
+		why = "not_linked: your Maku account is not linked to GitHub: open " + r.linkURL()
+	case r.Refused == "unknown_task":
+		why = "unknown_task: no such task"
 	case r.Repository != "" && r.Refused == "not_found":
 		why = "not_found: repository " + r.Repository + " not found, or not readable by your linked GitHub account: run maku doctor, or link GitHub at " +
-			strings.TrimRight(r.Broker, "/") + "/link/github"
+			r.linkURL()
 	case r.Repository != "" && r.Refused == reasonLinkUnverified:
 		why = reasonLinkUnverified + ": the factory could not check your GitHub link to " + r.Repository + ": run maku doctor, then retry"
+	case r.Code == http.StatusForbidden && (r.Refused == "" || r.Refused == "forbidden"):
+		why = "not in an agents group, or not allowed in this room"
+	case r.Code == http.StatusNotFound && r.Room && (r.Refused == "" || r.Refused == "not_found"):
+		why = "no such room"
 	case r.Refused != "":
 		why = r.Refused
 	case r.Code == http.StatusNotFound:
-		why = "no such room"
+		why = "not found: this broker serves no such route, or nothing of that name you can read"
 	}
 	return fmt.Sprintf("%s: %d: %s", r.Op, r.Code, why)
 }
@@ -174,7 +199,7 @@ func (c Client) roomsBody(ctx context.Context, f RoomFilter) (body []byte, acces
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", refusal("rooms", resp)
+		return nil, "", c.refused("rooms", resp)
 	}
 	body, err = httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
@@ -250,7 +275,7 @@ func (c Client) needsBody(ctx context.Context, f NeedsFilter) (body []byte, acce
 		msg, _ := httpx.ReadBody(resp.Body, 1<<10)
 		return nil, "", fmt.Errorf("needs: %s", OneLine(string(msg)))
 	default:
-		return nil, "", refusal("needs", resp)
+		return nil, "", c.refused("needs", resp)
 	}
 	body, err = httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
@@ -333,7 +358,7 @@ func (c Client) Summary(ctx context.Context, room string, after int64) (json.Raw
 		}
 		return nil, errors.New("status: room unavailable")
 	default:
-		return nil, refusal("status", resp)
+		return nil, c.refused("status", resp)
 	}
 	body, err := httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
@@ -431,7 +456,7 @@ func (c Client) Brief(ctx context.Context, room, since string) (string, error) {
 		if text := OneLine(string(msg)); text != "" {
 			return "", fmt.Errorf("brief: %s", text)
 		}
-		return "", refusal("brief", resp)
+		return "", c.refused("brief", resp)
 	}
 	body, err := httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
@@ -456,7 +481,8 @@ func (c Client) dial(ctx context.Context, hello wire.ClientFrame) (*websocket.Co
 		&websocket.DialOptions{HTTPClient: c.Stream, HTTPHeader: h})
 	var refused *Refusal
 	if err != nil && resp != nil && resp.StatusCode >= 400 && resp.StatusCode < 500 {
-		refused = refusal("room "+hello.RoomID, resp)
+		refused = c.refused("room "+hello.RoomID, resp)
+		refused.Room = true
 	}
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
@@ -527,7 +553,7 @@ func (c Client) CreateRoom(ctx context.Context, repository, dataClass string) (s
 	switch resp.StatusCode {
 	case http.StatusCreated:
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "", refusal("create room", resp)
+		return "", c.refused("create room", resp)
 	default:
 		msg, _ := httpx.ReadBody(resp.Body, 1<<10)
 		return "", fmt.Errorf("create room: %d: %s", resp.StatusCode, OneLine(string(msg)))
@@ -677,7 +703,7 @@ func (c Client) CoordinationCheckout(ctx context.Context, parent string) (coordi
 	case http.StatusConflict:
 		return d, errors.New("coordination checkout: not every child is at one commit yet (checkout_not_ready)")
 	default:
-		return d, refusal("coordination checkout", resp)
+		return d, c.refused("coordination checkout", resp)
 	}
 	body, err := httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
@@ -903,7 +929,7 @@ func (c Client) postHandoff(ctx context.Context, op, path string, in, out any) e
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return refusal(op, resp)
+		return c.refused(op, resp)
 	}
 	raw, err := httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
