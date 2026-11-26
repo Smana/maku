@@ -259,3 +259,24 @@ func TestFoldFlowHumanMessages(t *testing.T) {
 		})
 	}
 }
+
+// A run's node counts its screenshot events (harness screenshots phase B), and only its own.
+func TestFoldFlowCountsScreenshots(t *testing.T) {
+	const a, b = "aaaa1111", "bbbb2222"
+	shot := func(seq int64, run string, n int) envelope.Event {
+		return fev(seq, run, envelope.Screenshot, fAgent, envelope.ScreenshotPayload{Run: run, N: n, Digest: fmt.Sprintf("%064d", seq),
+			Mime: "image/png", Width: 1280, Height: 800, Bytes: 100, Source: "browser"})
+	}
+	var st State
+	for _, ev := range []envelope.Event{fjoin(1, a, "implementer"), shot(2, a, 1), shot(3, a, 2), fjoin(4, b, "tester"),
+		shot(5, b, 1), shot(6, a, 3), shot(7, "cccc3333", 1)} {
+		foldFlow(&st, ev)
+	}
+	got := []int{}
+	for i := range st.flow.runs {
+		got = append(got, joinRun(&st.flow, nil, &st.flow.runs[i]).node.Screenshots)
+	}
+	if fmt.Sprint(got) != "[3 1]" {
+		t.Fatalf("screenshots per run %v, want [3 1]", got)
+	}
+}

@@ -137,11 +137,14 @@ type Server struct {
 	FactoryPrincipal string
 	Namespace        string
 	Log              Log
-	Hub              Hub
-	Runs             Runs
-	Metrics          *metrics.Set
-	UI               fs.FS  // Task 2.5; nil serves 404
-	Actor            *Actor // serves act frames (phase 4); nil refuses every one
+	// Screenshots reads the images runs' bridges relayed (harness screenshots phase B); nil serves
+	// neither screenshot route.
+	Screenshots ScreenshotReader
+	Hub         Hub
+	Runs        Runs
+	Metrics     *metrics.Set
+	UI          fs.FS  // Task 2.5; nil serves 404
+	Actor       *Actor // serves act frames (phase 4); nil refuses every one
 	// Identity and Access are D7's GitHub check: who the caller is on GitHub, and
 	// whether they may read a room's repository. Either nil shows rooms to admins only.
 	// StartDefault and StartExcept configure human.mcp.start (UX3): StartDefault offers start on
@@ -310,6 +313,10 @@ func (s *Server) Routes() http.Handler {
 		}
 	}
 	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)
+	if s.Screenshots != nil {
+		mux.HandleFunc("GET /api/rooms/{id}/screenshots", s.screenshotList)
+		mux.HandleFunc("GET /api/rooms/{id}/screenshots/{digest}", s.screenshotImage)
+	}
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
 	mux.HandleFunc("GET /api/install", s.install)
 	mux.HandleFunc("GET /.well-known/maku", s.publicSetup)

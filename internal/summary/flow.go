@@ -71,6 +71,7 @@ type flowRun struct {
 	at, leftAt                 time.Time
 	tools                      ToolCount
 	judge                      JudgeMark
+	shots                      int // its screenshot events (harness screenshots phase B)
 	scoped, split              bool
 }
 
@@ -181,6 +182,8 @@ func foldFlow(st *State, ev envelope.Event) {
 			r.judge.Count++
 			r.judge.Last = m.Verdict
 		}
+	case envelope.Screenshot:
+		r.shots++
 	case envelope.Handoff:
 		var h envelope.HandoffPayload
 		if json.Unmarshal(ev.Payload, &h) != nil {
@@ -288,6 +291,8 @@ type FlowNode struct {
 	Reason    string `json:"reason,omitempty"`
 	// Handoff is the agent's own words, redacted at append: the page labels it as their claim.
 	Handoff string `json:"handoff,omitempty"`
+	// Screenshots counts the run's screenshot events: images the broker keeps for the room's readers.
+	Screenshots int `json:"screenshots,omitempty"`
 }
 
 // maxFlowModels bounds a node's served models: the Task CRD's own bound.
@@ -664,6 +669,7 @@ func joinRun(human *flowState, rf *envelope.RunFact, r *flowRun) flowJoin {
 		n.Effort = r.effort
 		n.Tools, n.StartedBy, n.Reason, n.Handoff = r.tools, r.startedBy, r.reason, r.handoff
 		n.Steered, n.Chat = human.countHuman(n.FromSeq, n.ToSeq)
+		n.Screenshots = r.shots
 		j.scoped, j.split = r.scoped, r.split
 	}
 	// The fold reads the log unvalidated. The model, effort, judge, persona and handoff are bounded
