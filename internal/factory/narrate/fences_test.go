@@ -181,3 +181,39 @@ func TestFindingsPostedWithheldFallsBackWrapped(t *testing.T) {
 		}
 	}
 }
+
+// Bug (v0.54.8 drill): the comment offered /factory plan split for a plan that proposed no parts,
+// and each check's description sat in its code block, so a long one scrolled. The split is offered
+// only beside proposed parts, and the description follows its block as inert prose.
+func TestPlanProposedOffersSplitOnlyForPartsAndWrapsWhatAChecksProves(t *testing.T) {
+	tk := task()
+	tk.Spec.DataClass = "public"
+	long := "the intro paragraph links the gcp-0 results file and nothing else in the runbook changes " +
+		strings.Repeat("and more words ", 10) + "@octocat see #12 https://evil.example/x"
+	sc := &envelope.Scope{Task: "Add one sentence.", Acceptance: []envelope.Acceptance{{Check: "task docs", Proves: long}}}
+
+	body := PlanProposed(tk, sc, nil, "https://rooms.example").Body
+	if strings.Contains(body, "/factory plan split") {
+		t.Fatalf("split offered for a plan without parts:\n%s", body)
+	}
+	html := render(t, body)
+	for _, c := range preBlock.FindAllStringSubmatch(html, -1) {
+		if strings.Contains(c[1], "nothing else in the runbook") {
+			t.Fatalf("the description is inside a code block:\n%s", html)
+		}
+	}
+	prose := outsideCode(html)
+	if !strings.Contains(prose, "Proves: the intro paragraph links") {
+		t.Fatalf("the description does not follow its check as prose:\n%s", html)
+	}
+	for _, live := range []string{"@octocat", "#12", "evil.example"} {
+		if strings.Contains(prose, live) {
+			t.Fatalf("%q is live outside a code span:\n%s", live, html)
+		}
+	}
+
+	sp := &envelope.Split{Children: []envelope.Scope{{Task: "part one"}, {Task: "part two"}}}
+	if body := PlanProposed(tk, sc, sp, "https://rooms.example").Body; !strings.Contains(body, "/factory plan split") {
+		t.Fatalf("split not offered beside proposed parts:\n%s", body)
+	}
+}

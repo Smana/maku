@@ -1821,9 +1821,13 @@ func (r *Reconciler) startConsuming(ctx context.Context, cfg *config.Config, t *
 	if t.Status.Phase == v1alpha1.PhaseEscalated || len(refs) == 0 { // the cluster refused the loop claim: no run exists
 		return nil
 	}
-	if err := r.Rooms.Consume(ctx, t.Status.RoomRef, refs, current(t).ID); err != nil {
-		r.log().Warn("queue consume failed", "task.id", t.Name, "run.id", current(t).ID, "err", err)
+	run := current(t).ID
+	if err := r.Rooms.Consume(ctx, t.Status.RoomRef, refs, run); err != nil {
+		r.log().Warn("queue consume failed: the next brief quotes these notes again", "task.id", t.Name,
+			"room", t.Status.RoomRef, "run.id", run, "refs", refs, "err", err)
+		return nil
 	}
+	r.log().Info("queued notes consumed", "task.id", t.Name, "room", t.Status.RoomRef, "run.id", run, "refs", refs)
 	return nil
 }
 

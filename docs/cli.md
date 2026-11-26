@@ -159,7 +159,7 @@ Each command sends its room act over the room's connection, prints one line sayi
 next, and prints the refusal's sentence on a refusal (such as `act_not_enabled` when the broker's
 `human.roomActs` does not include the act):
 
-- `maku answer <task> "<one line>"` — answers a task's open question. Multi-line answers are refused locally before sending; the factory appends the decision record to `## Decisions` on the issue and restarts the task for a maintainer (or waits for a maintainer for an issue author).
+- `maku answer <task> "<one line>"` — answers a task's open question. Multi-line answers are refused locally before sending; the factory appends the decision record to `## Decisions` on the issue (an answer to the intake acceptance question also becomes the issue's `## Acceptance check` section, so the restarted task does not ask it again) and restarts the task for a maintainer (or waits for a maintainer for an issue author).
 - `maku split accept|decline <task>` — accepts a proposed split (parts open one at a time, charged to you) or declines it to run the task whole (maintainers with write only).
 - `maku plan approve|split <task>` — approves a proposed plan to start implementation, or splits it into parts (issue author or maintainer with write).
 - `maku plan revise <task> "<one comment>"` — asks the planner to revise a proposed plan once with a single-line comment (issue author or maintainer with write).

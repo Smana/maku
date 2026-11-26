@@ -436,7 +436,13 @@ func PlanProposed(t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, room
 		if len(sc.Acceptance) > 0 {
 			b.WriteString("\n**Acceptance checks:**\n")
 			for _, a := range sc.Acceptance {
-				fmt.Fprintf(&b, "- %s\n", item(summary(a.Check+" — "+a.Proves, 240)))
+				// The check stays in its code block; what it proves follows as inert prose, so a long
+				// description wraps instead of scrolling inside the block.
+				entry := summary(a.Check, 240)
+				if p := strings.TrimSpace(a.Proves); p != "" {
+					entry += "\n\nProves: " + prose(strings.Join(strings.Fields(p), " "), 240)
+				}
+				fmt.Fprintf(&b, "- %s\n", item(entry))
 			}
 		}
 		if sp != nil && len(sp.Children) > 0 {
@@ -446,11 +452,13 @@ func PlanProposed(t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, room
 			}
 		}
 	}
-	fmt.Fprintf(&b, "\n\n**Answer on this issue** (the issue author or a maintainer):\n"+
-		"- `/factory plan approve` — run this task as a pull request on the approved scope\n"+
-		"- `/factory plan revise <comment>` — run the scoper once more with your note\n"+
-		"- `/factory plan split` — approve the proposed split into parts\n\n"+
-		"Room: [the room](%s).", room)
+	b.WriteString("\n\n**Answer on this issue** (the issue author or a maintainer):\n" +
+		"- `/factory plan approve` — run this task as a pull request on the approved scope\n" +
+		"- `/factory plan revise <comment>` — run the scoper once more with your note\n")
+	if sp != nil && len(sp.Children) > 0 { // split is an answer only to a plan that proposes parts
+		b.WriteString("- `/factory plan split` — approve the proposed split into parts\n")
+	}
+	fmt.Fprintf(&b, "\nRoom: [the room](%s).", room)
 	// Plan commands held before this plan existed answer no plan: named, never applied to this one.
 	var early []string
 	for _, h := range t.Status.Held {

@@ -23,6 +23,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/issuebody"
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
 )
@@ -217,7 +218,8 @@ func (s *Server) answerTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newBody, err := appendIssueDecision(iss.Body, fmt.Sprintf("%s (@%s)", text, login))
+	newBody, err := answerIssueBody(iss.Body, fmt.Sprintf("%s (@%s)", text, login),
+		t.Status.Scope == nil && issuebody.Acceptance(iss.Body) == "")
 	if err != nil {
 		refuse(w, http.StatusConflict, "invalid_decisions")
 		return
@@ -245,6 +247,23 @@ func cleanAnswerText(s string) (string, bool) {
 		return "", false
 	}
 	return strings.Join(strings.Fields(clean), " "), true
+}
+
+// answerIssueBody writes one answer into body as the maku CLI's confirmed answer does
+// (maku.AnswerBody). An answer to the intake acceptance guard's question (the task bounced with no
+// status.scope, so the scoper never ran, and the issue states no acceptance) goes into the ## Acceptance check section first, so the next
+// generation's guard and the judge read the issue as stating its acceptance; every answer is then
+// recorded as the next D<n> decision. Without the section the guard asked the same question again.
+func answerIssueBody(body, answer string, acceptance bool) (string, error) {
+	if acceptance {
+		mainBody, footer := splitFiledFooter(body)
+		placed, err := issuebody.PlaceAcceptance(mainBody, answer)
+		if err != nil {
+			return "", err
+		}
+		body, answer = placed+footer, "Acceptance check: "+answer
+	}
+	return appendIssueDecision(body, answer)
 }
 
 // appendIssueDecision appends one single-line D<n>: record to body's ## Decisions section using the

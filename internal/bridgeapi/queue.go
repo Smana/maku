@@ -163,5 +163,9 @@ func (s *Server) consume(w http.ResponseWriter, r *http.Request, principal, room
 		s.logFailure(w, err, "consume queued messages", "room", room, "run", in.RunID)
 		return
 	}
+	// Every consume is logged, a move or none: without it a note the room still shows queued
+	// cannot be told apart from a consume that never arrived.
+	s.log().Info("queued messages consumed", "room", room, "run", in.RunID, "principal", principal,
+		"refs", in.Refs, "moved", moved)
 	reply(w, http.StatusOK, map[string]int{"consumed": len(moved)})
 }

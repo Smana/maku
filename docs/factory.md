@@ -1005,7 +1005,7 @@ A note queued in a task's room (`answer` with no question open, `maku post --que
 | Revision after Request changes, CI fix | Yes |
 | Tester, reviewer and verifier runs | No: the notes wait for the next of the runs above |
 
-The notes are quoted after the brief, in the untrusted `QUEUED-DATA` fence, oldest first, within the revision brief's 13 KiB bound. A note that does not fit is clipped with a marker naming its `seq`, or waits whole for a later run with every note after it. A run consumes exactly the notes its brief quoted, once the run exists; the room then records `queued_consumed` and shows `queued #<seq> used by run <id>`, and the note leaves **Queued for the next run**.
+The notes are quoted after the brief, in the untrusted `QUEUED-DATA` fence, oldest first, within the revision brief's 13 KiB bound. A note that does not fit is clipped with a marker naming its `seq`, or waits whole for a later run with every note after it. A run consumes exactly the notes its brief quoted, once the run exists; the room then records `queued_consumed` and shows `queued #<seq> used by run <id>`, and the note leaves **Queued for the next run**. Both sides log every consume: the factory `queued notes consumed` (or `queue consume failed`, with the refs left queued for the next brief), the broker `queued messages consumed` with the refs it moved.
 
 | Condition | Factory action |
 |---|---|

@@ -5,59 +5,23 @@ package reconciler
 import (
 	"context"
 	"errors"
-	"regexp"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/issuebody"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/intake"
 )
 
-// The acceptance the issue states, read as the judge reads it (loop_policy.acceptance, HR3): a heading
-// starting with "acceptance", its body running to the next heading or fence line; else a paragraph whose
-// first line starts "Acceptance:" (any case, optionally bold: "**Acceptance**:", "**Acceptance:**"),
-// running to the next blank line or fence line. The paragraph may start on the label's line or on the
-// line after it, so a label followed by a list states the list. The two readers share
-// images/maku-harness/tests/acceptance.
-var (
-	acceptanceHeading = regexp.MustCompile(`(?im)^#{1,6}[ \t]*acceptance\b[^\n]*$`)
-	sectionEnd        = regexp.MustCompile(`(?m)^(?:#{1,6}[ \t]|TASK-DATA-)`)
-	inlineAcceptance  = regexp.MustCompile(`(?im)^[ \t]*(?:\*\*|__)?acceptance(?:\*\*|__)?[ \t]*:(?:\*\*|__)?[ \t]*(.*)$`)
-	paragraphEnd      = regexp.MustCompile(`(?m)\n[ \t]*\n|^TASK-DATA-\S+$`)
-)
-
-// acceptanceText is the acceptance the issue states: the heading's section when non-empty, else the
-// inline paragraph, else "". Pure text matching: nothing in the issue is followed or run.
-func acceptanceText(text string) string {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	if m := acceptanceHeading.FindStringIndex(text); m != nil {
-		rest := text[m[1]:]
-		if n := sectionEnd.FindStringIndex(rest); n != nil {
-			rest = rest[:n[0]]
-		}
-		if s := strings.TrimSpace(rest); s != "" {
-			return s
-		}
-	}
-	for _, m := range inlineAcceptance.FindAllStringSubmatchIndex(text, -1) {
-		rest := text[m[2]:]
-		if n := paragraphEnd.FindStringIndex(rest); n != nil {
-			rest = rest[:n[0]]
-		}
-		if s := strings.TrimSpace(rest); s != "" {
-			return s
-		}
-	}
-	return ""
-}
+// acceptanceText is the acceptance the issue states, read as the judge reads it (issuebody.Acceptance).
+func acceptanceText(text string) string { return issuebody.Acceptance(text) }
 
 // statesAcceptance: the issue text carries a non-empty acceptance section or an inline Acceptance:
 // paragraph (HR3).
-func statesAcceptance(text string) bool { return acceptanceText(text) != "" }
+func statesAcceptance(text string) bool { return issuebody.Acceptance(text) != "" }
 
 const (
 	intakeAcceptanceQuestion   = "The issue states no acceptance check. Which command or observation proves it is done?"
