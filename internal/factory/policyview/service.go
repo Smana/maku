@@ -13,6 +13,7 @@ import (
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
+	"github.com/Smana/maku/internal/factory/meaning"
 )
 
 // RecentTTL is how long a repository's recent decisions are served from memory. Every settings
@@ -114,7 +115,16 @@ func (s *Service) Timeline(ctx context.Context, repository string, pr int) (Time
 	if err != nil {
 		return Timeline{}, fmt.Errorf("policyview: %w", err)
 	}
-	return Decisions(rc.Name, pr, cfg.FactoryLogin, cs), nil
+	tl := Decisions(rc.Name, pr, cfg.FactoryLogin, cs)
+	for _, d := range tl.Decisions {
+		if s := meaning.OfRepository(rc, d.Class); s != nil {
+			if tl.Meanings == nil {
+				tl.Meanings = map[string]meaning.Sentence{}
+			}
+			tl.Meanings[d.Class] = *s
+		}
+	}
+	return tl, nil
 }
 
 // Recent is a repository's per-policy decisions since a GitHub merged:>= date. Only the pull

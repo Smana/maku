@@ -13,6 +13,7 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
+	"github.com/Smana/maku/internal/factory/meaning"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/resources"
 )
@@ -48,6 +49,8 @@ type PolicyPreview struct {
 	Consumers    []ConsumerImpact `json:"consumers,omitempty"`
 	Manifest     string           `json:"manifest,omitempty"`
 	ManifestPath string           `json:"manifestPath,omitempty"`
+	// Meaning is the edited policy's sentence, read alone (correctness signals CS7).
+	Meaning *meaning.Sentence `json:"meaning,omitempty"`
 }
 
 func policyContext(cfg *config.Config) config.PolicyContext {
@@ -138,7 +141,8 @@ func CheckPolicy(cfg *config.Config, name string, spec config.PolicySpec, ns str
 	if err != nil {
 		return PolicyPreview{Errors: []string{err.Error()}}
 	}
-	pv := PolicyPreview{Valid: true, Manifest: string(m), ManifestPath: "mergepolicy-" + name + ".yaml"}
+	words := meaning.OfPolicy(name, spec)
+	pv := PolicyPreview{Valid: true, Manifest: string(m), ManifestPath: "mergepolicy-" + name + ".yaml", Meaning: &words}
 	for _, rc := range cfg.Repos() {
 		i := slices.IndexFunc(rc.Bindings, func(b config.Binding) bool { return b.Name == name })
 		if i < 0 || !readable(rc.Name) {

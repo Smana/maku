@@ -10,6 +10,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/meaning"
 )
 
 // policyOf is the merge policy that governs t, for its room (merge policy view D1): its class, the
@@ -43,6 +44,9 @@ func policyOf(cfg *config.Config, rc *config.Repository, t *v1alpha1.Task) *enve
 		} else if pr.MergedHow == "class" && envelope.ValidClassName(class) {
 			p.Name = class
 		}
+	}
+	if p.Name != "" { // CS1: what checks the meaning of the policy decided under
+		p.Signal = string(meaning.Of(p.Name, gateOf(rc, p.Name)))
 	}
 	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
 		if len(p.Classes) == envelope.MaxPolicyClasses || !envelope.ValidClassName(name) {

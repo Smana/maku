@@ -37,7 +37,10 @@ type RecentDecision struct {
 	Reason      string       `json:"reason"`
 	Rows        DecisionRows `json:"rows"`
 	Considered  string       `json:"considered,omitempty"`
-	CommentURL  string       `json:"commentURL"`
+	// Signal is the record's signal=: what judged the meaning of a decision that held
+	// (correctness signals CS1), "" on a refusal or a record from before it.
+	Signal     string `json:"signal,omitempty"`
+	CommentURL string `json:"commentURL"`
 }
 
 // Recent is a repository's recorded decisions, newest first.
@@ -66,6 +69,7 @@ func ReadRecent(repository, since, factory string, prs []evidence.PR) Recent {
 				}
 				d.Rows = recentRows(fields)
 				d.Considered = fields["considered"]
+				d.Signal = fields["signal"]
 				out.Decisions = append(out.Decisions, d)
 			}
 		}

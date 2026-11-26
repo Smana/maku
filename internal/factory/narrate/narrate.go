@@ -22,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/finding"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/meaning"
 	reasonwords "github.com/Smana/maku/internal/factory/reasons"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -712,24 +713,33 @@ func PROpened(t *v1alpha1.Task, number int, url, runID string) Event {
 	return Event{Key: "pr-opened", Class: ClassChanged, Body: fmt.Sprintf("Run `%s` of task `%s` opened #%d: %s", runID, t.Name, number, url)}
 }
 
+// DocsLink is where every decision message sends a reader for the words it uses (correctness
+// signals, guidance surface 6).
+const DocsLink = "[How merge policies decide](https://github.com/Smana/maku/blob/main/docs/merge-policies.md#holds-agreed-signal-checked)"
+
+// signalLine is the one line a decision message carries: what checked the meaning, or that nothing
+// did, and where the words are explained.
+func signalLine(s meaning.Sentence) string { return "\n\n" + s.SignalLine() + " " + DocsLink }
+
 // Armed announces the merge the gate issued on the decision (§5.1), naming the policy the diff
-// matched rather than the task's predicted class.
-func Armed(t *v1alpha1.Task, matched ...string) Event {
+// matched rather than the task's predicted class, and what checked the meaning (s).
+func Armed(t *v1alpha1.Task, s meaning.Sentence, matched ...string) Event {
 	policy := cmp.Or(append(matched, t.Spec.PredictedClass)[0], t.Spec.PredictedClass)
 	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Class: ClassChanged, Body: fmt.Sprintf("Agent factory task `%s`: Merged automatically by policy `%s`, "+
-		"at the decided head: GitHub re-checks that head at merge time and refuses a moved one. main's CI is watched after the merge.", t.Name, policy)}
+		"at the decided head: GitHub re-checks that head at merge time and refuses a moved one. main's CI is watched after the merge.", t.Name, policy) + signalLine(s)}
 }
 
 // WouldArm is the shadow gate's record (R32): the same decision as Armed, without arming. Its key
-// carries the judged head (v2 D2). Optional progress is clean, minimum: a merge unchanged by a
-// maintainer earns the next clean decision toward promotion.
-func WouldArm(t *v1alpha1.Task, class, head string, paused, capped bool, progress ...int) Event {
+// carries the judged head (v2 D2). Optional progress is agreed, minimum: a merge unchanged by a
+// maintainer earns the next agreed decision toward promotion. s says what checked the meaning.
+func WouldArm(t *v1alpha1.Task, s meaning.Sentence, class, head string, paused, capped bool, progress ...int) Event {
 	body := fmt.Sprintf("Agent factory task `%s`: Policy `%s` would have merged this. It is in shadow here. Merge it unchanged if you agree", t.Name, class)
 	if len(progress) == 2 && progress[0] > 0 && progress[1] > 0 {
-		body += fmt.Sprintf(": that makes %d of %d clean decisions toward going live.", progress[0], progress[1])
+		body += fmt.Sprintf(": that makes %d of %d agreed decisions toward going live.", progress[0], progress[1])
 	} else {
 		body += "."
 	}
+	body += signalLine(s)
 	return Event{Key: fmt.Sprintf("would-arm-%d head=%s paused=%t capped=%t", len(t.Status.Runs), head, paused, capped), Class: ClassNeedsYou, Body: body}
 }
 
@@ -737,8 +747,8 @@ func WouldArm(t *v1alpha1.Task, class, head string, paused, capped bool, progres
 // the shadow tally reads, and no claim of a verdict, since no agent reviewed Renovate's change. It
 // names a file fence, sizes and a release age only when the class declares them, and the added-entry
 // shape by what it checks rather than as a semver bump.
-func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paused, capped bool, progress ...int) Event {
-	e := WouldArm(t, class, head, paused, capped, progress...)
+func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, s meaning.Sentence, class, head string, paused, capped bool, progress ...int) Event {
+	e := WouldArm(t, s, class, head, paused, capped, progress...)
 	what := "the diff a semver bump"
 	if cl.DiffShape == "added-entry" {
 		// What the shape checks, not a bump: one added entry, additions only to the companions, and the label.
@@ -754,7 +764,7 @@ func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paus
 		age = ", released long enough ago for the class's release-age check"
 	}
 	e.Body = fmt.Sprintf("Agent factory: would auto-merge: `%s`, checks green, %s%s. The class is in shadow: nothing is merged by the factory.",
-		class, what, age)
+		class, what, age) + signalLine(s)
 	return e
 }
 
@@ -924,10 +934,15 @@ func MonitorVerdict(t *v1alpha1.Task, n int, verdict string, why []string, contr
 	if control {
 		key = fmt.Sprintf("monitor-%d control verdict=%s", n, verdict)
 	}
-	body := fmt.Sprintf("Agent factory monitor of #%d (`%s`): **%s**. %s", n, t.Spec.PredictedClass, verdict, strings.Join(why, " · "))
+	// The wire value healthy reads quiet: the window ended with nothing loud, which is not "right".
+	word := verdict
+	if verdict == "healthy" {
+		word = "quiet"
+	}
+	body := fmt.Sprintf("Agent factory monitor of #%d (`%s`): **%s**. %s", n, t.Spec.PredictedClass, word, strings.Join(why, " · "))
 	if verdict == "regression" {
 		if demotes {
-			body += "\n\nThe class is demoted at its next decision (breaker.maxFollowUps); nothing is reverted (MC7)."
+			body += "\n\nThe policy goes back to a maintainer at its next decision (breaker.maxFollowUps); nothing is reverted (MC7)."
 		} else {
 			body += "\n\nbreaker.maxFollowUps is 0: this regression is recorded but not counted toward the breaker; nothing is reverted (MC7)."
 		}

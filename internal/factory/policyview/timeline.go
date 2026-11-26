@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Smana/maku/internal/factory/meaning"
 )
 
 // Comment is one comment of a pull request, as the timeline reads it.
@@ -41,6 +43,8 @@ type Decision struct {
 	// PolicyGeneration is the MergePolicy generation the decision used (policygen=), 0 for a
 	// record without it (a file policy, or an older record).
 	PolicyGeneration int64 `json:"policyGeneration"`
+	// Signal is the record's signal= (correctness signals CS1), "" on a refusal or an older record.
+	Signal string `json:"signal,omitempty"`
 	// CommentURL is the PR comment that holds the record; PolicyURL the policy file's history.
 	CommentURL string `json:"commentURL"`
 	PolicyURL  string `json:"policyURL"`
@@ -51,6 +55,9 @@ type Timeline struct {
 	Repository  string     `json:"repository"`
 	PullRequest int        `json:"pullRequest"`
 	Decisions   []Decision `json:"decisions"`
+	// Meanings is the sentence of each policy the decisions name, as the repository serves it now
+	// (correctness signals CS7).
+	Meanings map[string]meaning.Sentence `json:"meanings,omitempty"`
 }
 
 var (
@@ -115,6 +122,7 @@ func Decisions(repository string, pr int, factory string, comments []Comment) Ti
 		}
 		d.Steps, d.Revisions = steps(d, rows), revisions(rows)
 		d.PolicyGeneration, _ = strconv.ParseInt(rows["policygen"], 10, 64)
+		d.Signal = rows["signal"]
 		t.Decisions = append(t.Decisions, d)
 	}
 	return t

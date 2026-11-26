@@ -3,8 +3,10 @@
 package meaning_test
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/meaning"
 )
@@ -74,5 +76,16 @@ func TestFiles(t *testing.T) {
 	}
 	if got := meaning.Files(nil); got != "" {
 		t.Errorf("no pattern: %q", got)
+	}
+}
+
+// The envelope carries a signal to the room and Slack from its own copy of the closed list.
+func TestTheEnvelopeKnowsEverySignal(t *testing.T) {
+	var want []string
+	for _, s := range meaning.Signals() {
+		want = append(want, string(s))
+	}
+	if got := envelope.Signals(); !slices.Equal(got, want) {
+		t.Fatalf("envelope %v, meaning %v", got, want)
 	}
 }

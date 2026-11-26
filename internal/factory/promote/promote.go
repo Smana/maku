@@ -16,6 +16,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/meaning"
 )
 
 // Git is the repository connection needed for a promotion, status check, or drill.
@@ -119,7 +120,7 @@ func (s *Service) Open(ctx context.Context, repository, class string, minimum in
 	}
 	branch := branchName(repository, class)
 	if len(cfg.GitOps) == 0 {
-		body := bodyFor(repository, class, c, rep)
+		body := bodyFor(cfg, repository, class, c, rep)
 		return Result{Proposal: *c.Proposal, Command: fmt.Sprintf("gh pr create --repo %s --base main --head %s --title %q --body %q",
 			repository, branch, titleFor(repository, class), body)}, nil
 	}
@@ -164,7 +165,7 @@ func (s *Service) Open(ctx context.Context, repository, class string, minimum in
 	if err := git.UpdateFile(ctx, target.Path, branch, message, updated, blob); err != nil {
 		return Result{}, err
 	}
-	pr, err := git.CreatePR(ctx, base, branch, message, bodyFor(repository, class, c, rep), false)
+	pr, err := git.CreatePR(ctx, base, branch, message, bodyFor(cfg, repository, class, c, rep), false)
 	if err != nil {
 		return Result{}, err
 	}
@@ -265,14 +266,23 @@ func titleFor(repository, class string) string {
 	return fmt.Sprintf("Promote %s to live in %s", class, repository)
 }
 
-func bodyFor(repository, class string, c evidence.ClassReport, rep evidence.Report) string {
+// bodyFor is the promotion pull request's body: what the policy will do once live and what checks
+// its meaning (correctness signals CS7), then the evidence with its judge, never "clean".
+func bodyFor(cfg *config.Config, repository, class string, c evidence.ClassReport, rep evidence.Report) string {
 	e := c.Evidence
 	var body strings.Builder
 	fmt.Fprintf(&body, "%s.\n\n", titleFor(repository, class))
+	in, ok := meaning.For(cfg.RepositoryFor(repository), class)
+	if !ok {
+		in = meaning.Input{Name: class, Rules: meaning.InForce}
+	}
+	in.Mode = config.ModeLive
+	fmt.Fprintf(&body, "Once merged: %s\n\n", meaning.Build(in).Text)
 	fmt.Fprintf(&body, "Evidence read at %s:\n\n", rep.EvidenceAt.UTC().Format("2006-01-02 15:04 UTC"))
-	fmt.Fprintf(&body, "- %d clean decisions (minimum %d)\n- %d bad outcomes\n- rollback drill %s\n", e.Clean, e.Minimum, e.Bad, e.Drill)
+	fmt.Fprintf(&body, "- %d agreed decisions (minimum %d): shadow decisions a maintainer merged unchanged\n- %d wrong calls\n- rollback drill %s\n",
+		e.Clean, e.Minimum, e.Bad, meaning.DrillWords(e.Drill))
 	if len(e.Shadow.Judged) > 0 {
-		body.WriteString("\nSupporting pull requests:\n")
+		body.WriteString("\nAgreed decisions:\n")
 		for _, n := range e.Shadow.Judged {
 			fmt.Fprintf(&body, "- https://github.com/%s/pull/%d\n", repository, n)
 		}

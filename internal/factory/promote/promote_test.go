@@ -14,6 +14,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/meaning"
 )
 
 type fakeGit struct {
@@ -81,7 +82,8 @@ spec:
 func promotionRig(mode string) (*Service, *fakeGit) {
 	at := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 	cfg := &config.Config{GitOps: json.RawMessage(`{"repository":"Smana/ai-native-ref","path":"factory/repository-ai-native-ref.yaml"}`),
-		Repositories: []config.Repository{{Name: "Smana/ai-native-ref", Merge: config.Merge{MergerLogin: "ogenki-agent-merger[bot]"}}}}
+		Repositories: []config.Repository{{Name: "Smana/ai-native-ref", Merge: config.Merge{MergerLogin: "ogenki-agent-merger[bot]"},
+			Classes: map[string]config.Class{"docs": {Shadow: true, AllowedFiles: []string{`^.+\.md$`}, MaxPatchFiles: 5}}}}}
 	git := &fakeGit{raw: manifest, blob: "blob1"}
 	return &Service{Cfg: config.NewLive(cfg), Git: func(string) (Git, bool) { return git, true },
 		Merger: func(string) (Reverter, bool) { return git, true }, Reports: reportFunc(func(context.Context, string) (evidence.Report, error) {
@@ -106,9 +108,20 @@ func TestOpenPromotesOneLineWithItsEvidence(t *testing.T) {
 		!strings.Contains(string(git.updated), "name: docs\n      mode: live") || git.createBase != "main" || git.draft {
 		t.Fatalf("unexpected manifest or PR: %s %+v", git.updated, git)
 	}
-	for _, want := range []string{"20 clean decisions (minimum 20)", "0 bad outcomes", "rollback drill passed", "/pull/42", "/pull/43", "never merges it"} {
+	// Correctness signals CS7: the body says what the policy will merge and what checks it, and
+	// names the judge of every count.
+	// W1: the sentence is meaning.Build's, for the binding the pull request turns live.
+	in, _ := meaning.For(s.Cfg.Current().RepositoryFor("Smana/ai-native-ref"), "docs")
+	in.Mode = config.ModeLive
+	for _, want := range []string{"Once merged: " + meaning.Build(in).Text, "**Meaning checked by** nothing: this is prose", "20 agreed decisions (minimum 20)",
+		"0 wrong calls", "rollback drill done", "Agreed decisions:", "/pull/42", "/pull/43", "never merges it"} {
 		if !strings.Contains(git.createBody, want) {
 			t.Errorf("body lacks %q:\n%s", want, git.createBody)
+		}
+	}
+	for _, old := range []string{"clean", "bad outcome"} {
+		if strings.Contains(git.createBody, old) {
+			t.Errorf("body says %q:\n%s", old, git.createBody)
 		}
 	}
 }
@@ -126,7 +139,7 @@ func TestOpenWithoutGitOpsPrintsTheCommand(t *testing.T) {
 	s, _ := promotionRig("shadow")
 	s.Cfg = config.NewLive(&config.Config{})
 	got, err := s.Open(t.Context(), "Smana/ai-native-ref", "docs", 0)
-	if err != nil || !strings.Contains(got.Command, "gh pr create") || !strings.Contains(got.Command, "20 clean decisions") {
+	if err != nil || !strings.Contains(got.Command, "gh pr create") || !strings.Contains(got.Command, "20 agreed decisions") {
 		t.Fatalf("%+v %v", got, err)
 	}
 }

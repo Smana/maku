@@ -134,8 +134,12 @@ const makuUsage = `usage: maku <command>
                                   --base prints each changed policy's consumers, a guardrail: line names
                                   each binding over a guardrail, a binding: line each one refused
   policy list --repository owner/name [--since DATE]
-                                  list recent per-policy decisions through the broker
-  policy explain owner/name#PR     explain one pull request's decision timeline
+                                  each policy, what checks its meaning and its progress, then the
+                                  recent per-policy decisions, through the broker
+  policy explain owner/name#PR     explain one pull request's decisions: holds or not, and what
+                                  checked the meaning
+  policy explain owner/name POLICY what the policy merges, what checks it, its progress and blockers
+                                  (the words: docs/merge-policies.md#holds-agreed-signal-checked)
   policy pause --repository owner/name --reason TEXT
                                   print the merge.paused edit, or open its GitOps PR
   policy resume --repository owner/name

@@ -1844,7 +1844,7 @@ func TestShadowCommentCarriesEvidenceProgress(t *testing.T) {
 	g.r.CleanDecisions = func(context.Context, string, string) (int, bool) { return 3, true }
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.reconcile(t, "3buqdlot", 1)
-	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, "4 of 5 clean decisions toward going live") {
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, "4 of 5 agreed decisions toward going live") || !strings.Contains(c, "Meaning checked by the `links-only` shape.") {
 		t.Fatalf("%q", c)
 	}
 }

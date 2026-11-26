@@ -209,6 +209,10 @@ func TestServiceFallsBackToTheCentralClasses(t *testing.T) {
 		r.Classes[0].Unproposed != "not_in_repository_policy" {
 		t.Fatalf("%+v %v", r, err)
 	}
+	// CS7: each class carries the sentence of what this repository serves.
+	if m := r.Classes[0].Meaning; m == nil || m.Text == "" || m.Signal == "" {
+		t.Fatalf("no sentence: %+v", r.Classes[0])
+	}
 	if _, err := s.Report(t.Context(), "Smana/elsewhere"); !errors.Is(err, ErrUnknownRepository) {
 		t.Fatal(err)
 	}
@@ -525,6 +529,9 @@ func TestPolicies(t *testing.T) {
 	objs, err := resources.Decode([]byte(p.Manifest))
 	if err != nil || len(objs) != 1 || objs[0].Kind != resources.KindMergePolicy || objs[0].Spec["repositoryRef"] != nil || objs[0].Spec["description"] != "Retargets dead links." {
 		t.Fatalf("%v %+v\n%s", err, objs, p.Manifest)
+	}
+	if p.Meaning.Signal != "none" || !strings.HasPrefix(p.Meaning.Text, "**Would merge without you when**") {
+		t.Fatalf("the policy read alone carries its sentence: %+v", p.Meaning)
 	}
 	if _, err := s.Policy(t.Context(), "nope"); !errors.Is(err, ErrUnknownPolicy) {
 		t.Fatalf("an unknown policy: %v", err)

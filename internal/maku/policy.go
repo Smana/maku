@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/factory/promote"
 	"github.com/Smana/maku/internal/httpx"
@@ -32,6 +33,16 @@ func (c Client) PolicyTimeline(ctx context.Context, repository string, pr int) (
 	var out policyview.Timeline
 	path := fmt.Sprintf("/api/policy/repositories/%s/decisions/%d", policyRepositoryPath(repository), pr)
 	return out, c.policyGet(ctx, path, &out)
+}
+
+// PolicyRepository is a repository's policy report through the broker: each policy's mode,
+// evidence and sentence.
+func (c Client) PolicyRepository(ctx context.Context, repository string) (evidence.Report, error) {
+	var out struct {
+		Report evidence.Report `json:"report"`
+	}
+	err := c.policyGet(ctx, "/api/policy/repositories/"+policyRepositoryPath(repository), &out)
+	return out.Report, err
 }
 
 // PolicyBacktest replays an edited policy file through the broker.

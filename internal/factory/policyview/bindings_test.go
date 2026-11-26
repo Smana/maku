@@ -47,7 +47,8 @@ func TestPolicyPreviewListsItsConsumers(t *testing.T) {
 	spec := *p.Spec.DeepCopy()
 	spec.MaxModifiedLines = 40
 	pv := CheckPolicy(cfg, "docs", spec, "factory", func(string) bool { return true })
-	if !pv.Valid || len(pv.Consumers) != 2 || pv.ManifestPath != "mergepolicy-docs.yaml" {
+	// CS7: the edited policy's sentence, read alone, comes with the check.
+	if !pv.Valid || len(pv.Consumers) != 2 || pv.ManifestPath != "mergepolicy-docs.yaml" || pv.Meaning == nil || pv.Meaning.Text == "" {
 		t.Fatalf("%+v", pv)
 	}
 	for _, c := range pv.Consumers {
