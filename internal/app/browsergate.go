@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/browsergate"
+	"github.com/Smana/maku/internal/httpx"
 )
 
 // The screenshot cap's default and hard ceiling (spec §5.3).
@@ -28,20 +29,24 @@ const (
 
 // browserGate is maku-browser-gate's configuration: its flags, MAX_SCREENSHOTS and VISION.
 type browserGate struct {
-	listen, upstream, count, shots string
-	max                            int
-	vision                         bool
+	listen, upstream, count, shots, probe string
+	max                                   int
+	vision                                bool
 }
 
 // RunBrowserGate runs maku-browser-gate, the loopback MCP gate in front of the run's Playwright MCP
 // server, until ctx ends. args are its flags: -listen (a loopback IP literal and port), -upstream
 // (Playwright MCP's http loopback URL), -count (the screenshot count file) and -shots (the
 // screenshot keep). MAX_SCREENSHOTS (1 to 25, default 10) is the run's cap and VISION (0 or 1)
-// whether its model sees images.
+// whether its model sees images. With -probe <url> it only checks that loopback URL answers 200: the
+// kubelet's exec probe, since an httpGet probe dials the pod IP the gate never listens on.
 func RunBrowserGate(ctx context.Context, log *slog.Logger, args []string, getenv func(string) string) error {
 	cfg, err := browserGateConfig(args, getenv)
 	if err != nil {
 		return fmt.Errorf("maku-browser-gate: %w", err)
+	}
+	if cfg.probe != "" {
+		return probeBrowserGate(ctx, cfg.probe)
 	}
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", cfg.listen)
@@ -59,8 +64,15 @@ func browserGateConfig(args []string, getenv func(string) string) (browserGate, 
 	fs.StringVar(&cfg.upstream, "upstream", "http://127.0.0.1:9224/mcp", "Playwright MCP's loopback URL")
 	fs.StringVar(&cfg.count, "count", "/tmp/gate/count", "the run's screenshot count file")
 	fs.StringVar(&cfg.shots, "shots", "/tmp/gate/shots", "the directory the gate keeps screenshots in")
+	fs.StringVar(&cfg.probe, "probe", "", "check that this loopback URL answers 200, then exit")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
+	}
+	if cfg.probe != "" {
+		if err := browsergate.CheckURL(cfg.probe); err != nil {
+			return cfg, fmt.Errorf("-probe %q: %w", cfg.probe, err)
+		}
+		return cfg, nil
 	}
 	// A literal loopback IP only: a name could resolve elsewhere, and an empty host is every interface.
 	host, _, err := net.SplitHostPort(cfg.listen)
@@ -126,6 +138,25 @@ func serveBrowserGate(ctx context.Context, log *slog.Logger, cfg browserGate, ln
 func mkdirFor(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("maku-browser-gate: %w", err)
+	}
+	return nil
+}
+
+// probeBrowserGate GETs url within 3 s and succeeds on 200 only.
+func probeBrowserGate(ctx context.Context, url string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("maku-browser-gate probe: %w", err)
+	}
+	resp, err := httpx.New(3*time.Second, nil).Do(req)
+	if err != nil {
+		return fmt.Errorf("maku-browser-gate probe: %w", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("maku-browser-gate probe: %s answered %d", url, resp.StatusCode)
 	}
 	return nil
 }

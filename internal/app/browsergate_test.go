@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,5 +84,22 @@ func TestServeBrowserGateStopsWithItsContext(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("did not stop")
+	}
+}
+
+func TestBrowserGateProbe(t *testing.T) {
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer ok.Close()
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer bad.Close()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := RunBrowserGate(t.Context(), log, []string{"-probe", ok.URL + "/healthz"}, func(string) string { return "" }); err != nil {
+		t.Fatalf("a healthy gate: %v", err)
+	}
+	if err := RunBrowserGate(t.Context(), log, []string{"-probe", bad.URL + "/healthz"}, func(string) string { return "" }); err == nil {
+		t.Fatal("a 503 fails the probe")
+	}
+	if err := RunBrowserGate(t.Context(), log, []string{"-probe", "http://10.0.0.1:9223/healthz"}, func(string) string { return "" }); err == nil {
+		t.Fatal("the probe dials loopback only")
 	}
 }
