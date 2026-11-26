@@ -114,6 +114,8 @@ type Applier struct {
 	// AgentsLogin and FactoryLogin are the publisher's and the factory App's logins: the
 	// applier recognises its own writes only by them.
 	AgentsLogin, FactoryLogin string
+	// RoomsURL is config.roomsURL: the room link a pull request body's facts carry ("" leaves it out).
+	RoomsURL string
 	// Interval is the poll (DefaultInterval). AnswerWait is how long after a run ends its requests
 	// are still applied (DefaultAnswerWait); for as long again, what is still unanswered is
 	// refused output_expired, and then the run is no longer read.

@@ -1032,3 +1032,24 @@ func TestTheParentCommentListsEveryPart(t *testing.T) {
 		t.Fatalf("unopened part missing:\n%s", unopened)
 	}
 }
+
+// Developer review gap 6: the closing comment leads with dollars, as every other surface does.
+func TestEndedSaysTheSpendInDollars(t *testing.T) {
+	tk := task()
+	tk.Status.Usage = v1alpha1.Usage{Tokens: 650_000, CostMicroUSD: 420_000}
+	e := Ended(tk, v1alpha1.PhaseDone, "merged")
+	if !strings.Contains(e.Body, "Spent: $0.42 (650 k tokens).") || strings.Contains(e.Body, "Tokens used") {
+		t.Errorf("got:\n%s", e.Body)
+	}
+	tk.Status.Usage.CostMicroUSD = 0
+	if e := Ended(tk, v1alpha1.PhaseDone, "merged"); !strings.Contains(e.Body, "Spent: 650 k tokens.") {
+		t.Errorf("without a cost:\n%s", e.Body)
+	}
+	if got := Retotal(e.Body, 700_000, 500_000, true); !strings.Contains(got, "Spent: at least $0.50 (700 k tokens; a run's usage was not read).") {
+		t.Errorf("retotal:\n%s", got)
+	}
+	legacy := "Agent factory task `x` is done.\n\nTokens used: 600 k."
+	if got := Retotal(legacy, 700_000, 500_000, false); !strings.HasSuffix(got, "\n\nSpent: $0.50 (700 k tokens).") {
+		t.Errorf("a body queued before this release:\n%s", got)
+	}
+}

@@ -223,7 +223,7 @@ func TestASplitIsProposedAndWaits(t *testing.T) {
 	}
 	c := g.f.Comments(7)[before:]
 	if len(c) != 1 || !strings.Contains(c[0], "Part 1:") || !strings.Contains(c[0], "on page 2") ||
-		!strings.Contains(c[0], "/factory split") || !strings.Contains(c[0], "/factory retry") || strings.Contains(c[0], "Tokens used") {
+		!strings.Contains(c[0], "/factory split") || !strings.Contains(c[0], "/factory retry") || strings.Contains(c[0], "\n\nSpent") {
 		t.Fatalf("comments %q", c)
 	}
 	if !slices.Equal(g.f.Added(7), []string{"factory/split-proposed"}) || len(g.f.Created()) != 0 {

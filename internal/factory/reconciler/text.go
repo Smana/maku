@@ -104,6 +104,7 @@ func firstBrief(t *v1alpha1.Task, nonce string, sc *Scoped) string {
 		fmt.Fprintf(&b, "Source: %s %s.\n", t.Spec.Source.Kind, t.Spec.Source.Ref)
 	}
 	fmt.Fprintf(&b, "%s\n", brief.ProgressInstruction)
+	b.WriteString(prBodyInstruction)
 	extra := steeringBlock(t, nonce) + scopeBlock(sc, nonce)
 	if t.Spec.Parent != nil { // a part's scope first: the judge reads the part's checks before the whole issue's (loop_policy.acceptance)
 		extra = scopeBlock(sc, nonce) + steeringBlock(t, nonce)
@@ -111,6 +112,12 @@ func firstBrief(t *v1alpha1.Task, nonce string, sc *Scoped) string {
 	extra += contractBlock(t.Status.Contract, nonce) + overlapEvidenceBlock(t.Status.Overlap)
 	return fit(b.String(), extra, snapshotBlock(t, fence), t)
 }
+
+// prBodyInstruction is the pull request body's contract (developer review gap 6): four headings a
+// tech lead reads in a fixed order. The factory appends how to try the change (applier.prBody).
+const prBodyInstruction = "Write the pull request body under four headings, in this order: \"## What changed\", \"## Why\", " +
+	"\"## How it was verified\" (the commands you ran and their result, and which checks you could not run and why), " +
+	"\"## What was left out\". The factory adds how to try the change below them.\n"
 
 // fit is a first brief: head, then extra (the steering note, the scope), then the snapshot, which
 // becomes a pointer to the room's copy when the three exceed firstCap. With no extra it is today's

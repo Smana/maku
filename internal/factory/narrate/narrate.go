@@ -1029,10 +1029,11 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 		}
 		b.WriteString("\n\n" + h)
 	}
+	u := t.Status.Usage
 	if v1alpha1.TerminalPhase(phase) {
-		b.WriteString(usageLine + ": " + Tokens(t.Status.Usage.Tokens) + ".")
+		b.WriteString(usageLine + ": " + spent(u.CostMicroUSD, u.Tokens, "") + ".")
 	} else { // a retry can still spend: this is the total so far
-		b.WriteString(usageLine + " so far: " + Tokens(t.Status.Usage.Tokens) + ".")
+		b.WriteString(usageLine + " so far: " + spent(u.CostMicroUSD, u.Tokens, "") + ".")
 	}
 	key := fmt.Sprintf(closingPrefix+"%s-%d", strings.ToLower(phase), len(t.Status.Runs))
 	class := ClassDone
@@ -1059,8 +1060,26 @@ func MergedUnverified(t *v1alpha1.Task, revertUntil time.Time) Event {
 
 const (
 	closingPrefix = "end-"
-	usageLine     = "\n\nTokens used"
+	usageLine     = "\n\nSpent"
+	// legacyUsageLine is the line a closing comment queued by an earlier release carries.
+	legacyUsageLine = "\n\nTokens used"
 )
+
+// spent is a task's spend as a developer reads it everywhere else (developer review gap 6): the
+// dollars first, the tokens beside them; the tokens alone when no cost was priced. note, when set,
+// goes inside the parenthesis.
+func spent(micro, tokens int64, note string) string {
+	if micro <= 0 {
+		if note != "" {
+			return Tokens(tokens) + " tokens (" + note + ")"
+		}
+		return Tokens(tokens) + " tokens"
+	}
+	if note != "" {
+		return fmt.Sprintf("%s (%s tokens; %s)", USD(micro), Tokens(tokens), note)
+	}
+	return fmt.Sprintf("%s (%s tokens)", USD(micro), Tokens(tokens))
+}
 
 // Closing reports whether key is an ending's: its token total is only final once the usage settles.
 func Closing(key string) bool { return strings.HasPrefix(key, closingPrefix) }
@@ -1071,15 +1090,20 @@ func Pending(key string) bool {
 	return strings.HasPrefix(key, "profile-chosen-") || strings.HasPrefix(key, "profile-escalated-") || key == "profile-refused"
 }
 
-// Retotal rewrites an ending's "Tokens used" line with the settled total (#42).
-func Retotal(body string, tokens int64, incomplete bool) string {
-	if i := strings.LastIndex(body, usageLine); i >= 0 {
-		if incomplete { // a run the meter never read: the total is a floor
-			return body[:i] + usageLine + ": at least " + Tokens(tokens) + " (a run's usage was not read)."
-		}
-		return body[:i] + usageLine + ": " + Tokens(tokens) + "."
+// Retotal rewrites an ending's "Spent" line with the settled total (#42), and the "Tokens used" line
+// of a comment an earlier release queued.
+func Retotal(body string, tokens, micro int64, incomplete bool) string {
+	i := strings.LastIndex(body, usageLine)
+	if i < 0 {
+		i = strings.LastIndex(body, legacyUsageLine)
 	}
-	return body
+	if i < 0 {
+		return body
+	}
+	if incomplete { // a run the meter never read: the total is a floor
+		return body[:i] + usageLine + ": at least " + spent(micro, tokens, "a run's usage was not read") + "."
+	}
+	return body[:i] + usageLine + ": " + spent(micro, tokens, "") + "."
 }
 
 // StopIgnored answers a factory/stop the poller will not act on, once per label.

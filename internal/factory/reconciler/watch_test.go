@@ -790,7 +790,7 @@ func TestAMaintainerRestartsTheWait(t *testing.T) {
 	}
 	g.r.Now = func() time.Time { return now.Add(24*time.Hour + time.Minute + g.r.settleWindow(g.r.Cfg.Current())) }
 	g.reconcile(t, "3buqdlot", 1)
-	if c := eventCommentBodies(g.f, 7); len(c) != 2 || !strings.Contains(c[1], "Tokens used") {
+	if c := eventCommentBodies(g.f, 7); len(c) != 2 || !strings.Contains(c[1], "\n\nSpent") {
 		t.Fatalf("the close is posted once the usage settles: %q", c)
 	}
 }
