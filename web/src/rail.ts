@@ -276,9 +276,9 @@ export function mountRail(h: RailHandlers): Rail {
     return li;
   }
 
-  // The room's activity on a node: the steers, then the chat, each absent at zero.
+  // The room's activity on a node: the steers, the chat, then the screenshots, each absent at zero.
   function activity(n: FlowNode): HTMLElement | undefined {
-    if (!n.steered && !n.chat) return undefined;
+    if (!n.steered && !n.chat && !n.screenshots) return undefined;
     const row = el("span", { className: "rail-activity" });
     if (n.steered) row.append(el("span", { className: "rail-steered", textContent: `↪ steered ×${n.steered}` }));
     if (n.chat) {
@@ -287,6 +287,9 @@ export function mountRail(h: RailHandlers): Rail {
       c.setAttribute("aria-label", `${n.chat} chat message${n.chat === 1 ? "" : "s"} during this run`);
       c.append(glyph("chat"), String(n.chat));
       row.append(c);
+    }
+    if (n.screenshots) {
+      row.append(el("span", { className: "rail-shots", textContent: `${n.screenshots} screenshot${n.screenshots === 1 ? "" : "s"}` }));
     }
     return row;
   }

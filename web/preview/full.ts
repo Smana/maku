@@ -12,6 +12,8 @@
 //   ?briefs       the factory's task snapshot and a run's brief, as the live room posts them (folded)
 //   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
 //   ?long         unbreakable lines (long-fixtures.ts): a sed command, a gh api needs card, a served model behind an alias
+//   ?shots        three screenshots by the live implementer (shot-fixtures.ts), the last one unseen by a text-only model;
+//                 add #screenshots to open its gallery, as the link GitHub gets does
 // One rail fixture (flow-fixtures.ts), the first of:
 //   ?finished     every run ended, a reviewer, the milestones to Done
 //   ?split        a scoper whose handoff split into three parts
@@ -26,6 +28,7 @@ import { flowFixture, flowName } from "./flow-fixtures";
 import { NEED_FIXTURES } from "./needs-fixtures";
 import { LONG_NEED, longEvents, longFlow } from "./long-fixtures";
 import { mountPreviewPage } from "./page";
+import { shotEvents, withShots } from "./shot-fixtures";
 
 const get = async <T>(path: string): Promise<T> => (await fetch(path)).json() as Promise<T>;
 
@@ -65,8 +68,11 @@ async function run() {
     { ...first, approvalId: "01M4B", callId: "call_-7231403244767930901", class: "forge.push", seq: 15, expiresAt: new Date(Date.now() - 5 * 60_000).toISOString() }];
   const long = params.has("long");
   const fx0 = flowFixture(flowName(params));
-  const fx = long ? { ...fx0, flow: longFlow(fx0.flow) } : fx0;
+  const fx1 = long ? { ...fx0, flow: longFlow(fx0.flow) } : fx0;
   if (long) longEvents(events);
+  const shots = params.has("shots");
+  const fx = shots ? { ...fx1, flow: withShots(fx1.flow) } : fx1;
+  if (shots) events.push(...shotEvents(events[events.length - 1]));
   const finished = params.has("finished") || params.has("split");
   const phase = params.has("escalated") ? status.phase : fx.phase;
   // The fixture's events are weeks old: the rail's clock starts at the last one.

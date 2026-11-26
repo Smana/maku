@@ -16,6 +16,7 @@ import { mountRailPane } from "../src/railpane";
 import { RoomState } from "../src/room-state";
 import { mountViews } from "../src/roomview";
 import { mountRunView, mountScrollIndex } from "../src/runview";
+import { shotFromPayload, type Shot } from "../src/shots";
 import { mountStrip } from "../src/strip";
 import { renderNotes, type Summary } from "../src/summary";
 import { mountThemeButton, type ThemeController } from "../src/theme";
@@ -118,6 +119,9 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
     load: async (after, limit) => log.filter((e) => e.seq > after).slice(0, limit),
     views: (el) => mountViews(el, (seq) => fork.open(seq), () => snap.you.principal),
     chosen: (run) => rail.chosen(run),
+    // The gallery reads the screenshots held here, as the broker's list would serve them.
+    shots: { room: o.summary.room, load: async (run) => log.filter((e) => e.type === "screenshot")
+      .map((e) => shotFromPayload(e.payload)).filter((s): s is Shot => !!s && s.run === run) },
   });
   const scrollIndex = mountScrollIndex(main.querySelector<HTMLElement>(".view-chat")!,
     { nodes: () => summary.flow?.nodes ?? [], mark: (run) => rail.mark(run) });

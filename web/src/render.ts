@@ -169,6 +169,10 @@ export function renderEvent(ev: RoomEvent): HTMLElement {
     case "participant":
       row.append(el("div", "change", [p.principal, p.change, p.role].filter(Boolean).join(" · ")));
       break;
+    case "screenshot": // the meta only: the image is the chat's and the gallery's
+      row.append(el("div", "state", [`screenshot ${p.n ?? "?"}`, p.width && p.height ? `${p.width}×${p.height}` : "",
+        p.vision === false ? "model could not see it" : "", String(p.digest ?? "").slice(0, 12)].filter(Boolean).join(" · ")));
+      break;
     case "state_changed":
       row.append(el("div", "state", [stateHead(p), p.phase ?? p.status ?? "", p.reason ?? ""].filter(Boolean).join(" · ")));
       break;

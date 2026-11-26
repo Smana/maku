@@ -34,6 +34,10 @@ createServer((req, res) => {
     res.writeHead(400).end("bad request");
     return;
   }
+  // A room's screenshot, as the broker serves it (GET /api/rooms/{id}/screenshots/{digest}): the
+  // preview's own images under preview/media/shots, by digest.
+  const shot = /^\/api\/rooms\/[a-z0-9-]+\/screenshots\/([0-9a-f]{64})$/.exec(path.split(sep).join("/"));
+  if (!process.env.SERVE_ROOT && shot) path = join(sep, "preview", "media", "shots", `${shot[1]}.png`);
   // normalize keeps the leading /, so a /assets/ prefix here has no .. left above it.
   if (!process.env.SERVE_ROOT && path.startsWith(`${sep}assets${sep}`)) {
     path = path === `${sep}assets${sep}app.css` ? join(sep, "src", "app.css") : join(sep, "src", path);

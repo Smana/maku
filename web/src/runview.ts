@@ -5,6 +5,7 @@
 
 import type { RoomEvent } from "./conn";
 import type { Views } from "./roomview";
+import { mountGallery, shotFromPayload, type Shot } from "./shots";
 import type { FlowNode } from "./summary";
 
 export const maxRunEvents = 2000;
@@ -23,6 +24,9 @@ export function nodeAt(nodes: FlowNode[], seq: number): string | undefined {
 // leave returns to All runs, if a run is open: synchronously, so a caller can then land on a row.
 export interface RunView { set(nodes: FlowNode[]): void; select(run: string | undefined): Promise<void>; apply(e: RoomEvent): void; leave(): void }
 
+// The link GitHub gets (#screenshots): the latest run that took any opens on its gallery.
+const shotsHash = "#screenshots";
+
 function hashRun(): string | undefined {
   const m = /^#run=(.+)$/.exec(location.hash);
   if (!m) return undefined;
@@ -38,17 +42,20 @@ function setHash(run: string | undefined) {
 
 // mountRunView shows a chosen run's events in place of roomMain's children. load is one page
 // of the room's log after a seq; views mounts the chat and raw views into the run's element.
+// shots, when set, reads a run's screenshots for the gallery above its events.
 export function mountRunView(roomMain: HTMLElement, o: {
   load: (after: number, limit: number) => Promise<RoomEvent[]>;
   views: (el: HTMLElement) => Views;
   chosen: (run: string | undefined) => void;
   max?: number;
+  shots?: { room: string; load: (run: string) => Promise<Shot[]> };
 }): RunView {
   let nodes: FlowNode[] = [];
   let restore = hashRun();
+  let revealShots = location.hash === shotsHash;
   let first = true;
   let chosen: string | undefined;
-  let view: { el: HTMLElement; views: Views; note: HTMLElement } | undefined;
+  let view: { el: HTMLElement; views: Views; note: HTMLElement; gallery?: ReturnType<typeof mountGallery>; shotsEl?: HTMLElement } | undefined;
   let gen = 0;
   // While a load runs, live events wait; after it, only seqs past the last applied count.
   let loading = false;
@@ -61,6 +68,10 @@ export function mountRunView(roomMain: HTMLElement, o: {
   const say = (text: string) => { if (view) { view.note.textContent = text; view.note.hidden = !text; } };
   const put = (e: RoomEvent) => {
     view?.views.apply(e);
+    if (e.type === "screenshot") {
+      const s = shotFromPayload(e.payload);
+      if (s && (s.run || e.runId) === chosen) view?.gallery?.add(s);
+    }
     count++;
     through = Math.max(through, e.seq);
     if (capped()) say(`Showing the first ${max.toLocaleString("en-US")} events of this run`);
@@ -96,9 +107,31 @@ export function mountRunView(roomMain: HTMLElement, o: {
     note.setAttribute("role", "status");
     note.hidden = true;
     const body = document.createElement("div");
-    el.append(bar, note, body);
+    el.append(bar, note);
+    let gallery: ReturnType<typeof mountGallery> | undefined;
+    let shotsEl: HTMLElement | undefined;
+    if (o.shots) {
+      shotsEl = document.createElement("section");
+      shotsEl.id = "screenshots";
+      shotsEl.setAttribute("aria-label", "Screenshots");
+      gallery = mountGallery(shotsEl, o.shots.room);
+      el.append(shotsEl);
+    }
+    el.append(body);
     roomMain.append(el);
-    view = { el, views: o.views(body), note };
+    view = { el, views: o.views(body), note, gallery, shotsEl };
+  };
+  // loadShots fills the open run's gallery; a failed read leaves it as the live events fill it.
+  const loadShots = (n: FlowNode, g: number) => {
+    const reveal = revealShots;
+    revealShots = false;
+    if (!o.shots || !view?.gallery || !(n.screenshots ?? 0)) return;
+    const { gallery, shotsEl } = view;
+    o.shots.load(n.run).then((list) => {
+      if (g !== gen) return;
+      gallery.set(list.filter((s) => s.run === n.run));
+      if (reveal) shotsEl?.scrollIntoView?.({ block: "start" });
+    }).catch(() => { /* the live events still add to it */ });
   };
 
   const api: RunView = {
@@ -109,6 +142,11 @@ export function mountRunView(roomMain: HTMLElement, o: {
         const r = restore;
         restore = undefined;
         if (r && nodes.some((n) => n.run === r)) { void api.select(r); return; }
+        if (revealShots) {
+          const latest = nodes.filter((n) => (n.screenshots ?? 0) > 0 && n.fromSeq > 0).sort((a, b) => b.fromSeq - a.fromSeq)[0];
+          if (latest) { void api.select(latest.run); return; }
+          revealShots = false;
+        }
       }
       if (chosen && !nodes.some((n) => n.run === chosen)) void api.select(undefined);
     },
@@ -124,6 +162,7 @@ export function mountRunView(roomMain: HTMLElement, o: {
       count = 0;
       if (!n) { close(); return; }
       open(n);
+      loadShots(n, g);
       if (n.fromSeq <= 0) { say("This run's events are not in this room's log"); return; }
       loading = true;
       let after = n.fromSeq - 1;

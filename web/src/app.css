@@ -208,7 +208,7 @@ p, li { text-wrap: pretty; }
    kicker. The rules below keep each one's colour. The settings dt keeps the body's leading, so it
    sits on its value's line. */
 .rooms th, .page-header .fact-label, .policy-header dt, .workflow-label, .next-label, .now-lead, .brief-kind, .t-sec,
-.controls h2, .controls .group-room > summary, .controls .group-label {
+.controls h2, .controls .group-room > summary, .controls .group-label, .shots-head {
   font: 500 var(--text-eyebrow)/var(--leading-eyebrow) var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em;
 }
 .waiting, .closed, .mark-text, .sys, .hint, .approval-meta { text-wrap: pretty; }
@@ -1159,6 +1159,36 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .run-view-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .run-view-title { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
 .run-view-note { margin: 0 0 8px; color: var(--muted-foreground); }
+
+/* A run's screenshots (shots.ts): the chat card, the run's gallery above its events, and the
+   viewer. Flat like a card: a hairline and the surface, no shadow beyond a button's hover ring. */
+.shot-card { display: grid; gap: 4px; justify-items: start; max-width: var(--log-w); margin: 8px 0; }
+.shot-thumb {
+  display: block; padding: 0; overflow: hidden; line-height: 0; cursor: zoom-in;
+  border: 1px solid var(--border); border-radius: var(--radius-row); background: var(--card);
+}
+.shot-thumb img { display: block; width: 240px; max-width: 100%; height: auto; }
+.shot-caption { margin: 0; color: var(--muted-foreground); font-size: var(--text-small); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.shot-blind { margin: 0; color: var(--foreground); font-size: var(--text-small); font-weight: 700; }
+.shots { margin: 0 0 12px; }
+.shots-head { margin: 0 0 8px; color: var(--muted-foreground); }
+.shots-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.shots-item { display: grid; gap: 4px; align-content: start; }
+.shots-grid .shot-thumb, .shots-grid .shot-thumb img { width: 100%; }
+.shot-viewer {
+  box-sizing: border-box; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); color: var(--card-foreground);
+}
+.shot-viewer::backdrop { background: color-mix(in srgb, var(--background) 85%, transparent); }
+.shot-viewer-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.shot-viewer-bar button { min-height: var(--hit); }
+.shot-viewer-count { margin-right: auto; font-family: var(--font-mono); font-size: var(--text-small); font-variant-numeric: tabular-nums; }
+.shot-viewer-figure { display: grid; gap: 4px; margin: 0; }
+.shot-viewer-figure img { display: block; width: auto; height: auto; max-width: 100%; max-height: calc(100dvh - 180px); object-fit: contain; }
+@media (prefers-reduced-motion: no-preference) {
+  .shot-viewer[open] { animation: settle-in 180ms ease-out; }
+}
+.rail-shots { white-space: nowrap; }
 
 /* The coordination panel: a parent's family, apart from the run rail and its split parts. */
 .rail-coordination { display: grid; gap: 8px; margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }

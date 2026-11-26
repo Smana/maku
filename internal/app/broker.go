@@ -344,6 +344,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		}
 		api.GitHubLinks, api.LinkReader, api.GitHubActiveWindow = st, fconfig.PrincipalFactory, l.ActiveWindow.Duration
 	}
+	humans.Screenshots = st       // the room's screenshots, to its readers (screenshots phase B)
 	if cfg.Human.ApprovalMemory { // merge policy stage 5: the grants' human door, and the factory's routes
 		humans.Grants = st
 		api.Grants, api.GrantClient = st, fconfig.PrincipalFactory
