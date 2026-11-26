@@ -230,6 +230,15 @@
                     "internal": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/alias"}}
                   }
                 },
+                "vision": {
+                  "description": "The aliases whose model accepts images (v5 Q16); each must be in aliases.<class>.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "public": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/alias"}},
+                    "internal": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/alias"}}
+                  }
+                },
                 "lightAlias": {"description": "The alias the light jobs run on (CP12). Empty: the controller's tier-light default. Every non-empty listener must serve it.", "type": "string", "pattern": "^(|[a-z0-9]([a-z0-9-]*[a-z0-9])?)$"}
               }
             }

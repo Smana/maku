@@ -389,6 +389,7 @@ and an empty namespace the release's, which is where the umbrella runs it. */}}
   "podLabels" $podLabels
   "audiencePrefix" $prefix
   "aliases" (dict "public" $aliases.public "internal" ($aliases.internal | default list))
+  "vision" (dict "public" (($g.vision | default dict).public | default list) "internal" (($g.vision | default dict).internal | default list))
   "lightAlias" ($g.lightAlias | default "") | toJson -}}
 {{- else if eq $mode "secret" -}}
 {{- if not .Values.demoValues -}}
