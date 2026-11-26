@@ -47,16 +47,14 @@ func nextTrigger(t *v1alpha1.Task) string {
 }
 
 // nextImplementer builds the next implementer run. Before a pull request exists it is the fenced
-// snapshot; after, the revise brief with the room's log and queued messages, and refs are the
+// snapshot; after, the revise brief with the room's log. Every one of them, a first run, a retry, a
+// deeper retry and a resumed run included, quotes the room's queued messages, and refs are the
 // queued messages that brief quoted: the only ones the run may consume (F-A).
 func (r *Reconciler) nextImplementer(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (runs.Spec, []int64, string, error) {
 	trigger := nextTrigger(t)
 	text, ok, err := r.resumeBrief(ctx, t)
 	if err != nil {
 		return runs.Spec{}, nil, "", err
-	}
-	if ok && t.Status.PullRequest == nil {
-		return r.implementerSpec(cfg, t, text), nil, trigger, nil
 	}
 	if ok {
 		q, err := r.Rooms.Queue(ctx, t.Status.RoomRef)
@@ -72,7 +70,13 @@ func (r *Reconciler) nextImplementer(ctx context.Context, cfg *config.Config, t 
 		return runs.Spec{}, nil, "", err
 	}
 	if t.Status.PullRequest == nil && trigger != TriggerEscalation { // a step continues the run before it, PR or not
-		return r.implementerSpec(cfg, t, resumed(t, trigger)+firstBrief(t, r.Nonce(), sc)), nil, trigger, nil
+		q, err := r.Rooms.Queue(ctx, t.Status.RoomRef)
+		if err != nil {
+			return runs.Spec{}, nil, "", err
+		}
+		nonce := r.Nonce()
+		text, refs := forThisRun(resumed(t, trigger)+firstBrief(t, nonce, sc), q, nonce)
+		return r.implementerSpec(cfg, t, text), refs, trigger, nil
 	}
 	// The finished run's handoff and verdict are after its start; brief.Build reads only those.
 	evs, _, err := r.roomTail(ctx, t.Status.RoomRef, briefSince(t), briefEvent)

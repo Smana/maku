@@ -972,6 +972,20 @@ The merger App's token must read `actions` (runs and artifacts). Artifact downlo
 
 The factory re-reads the pull request right before starting the next run so newly submitted reviews join its brief and reviews dismissed beforehand are skipped (a review dismissed after being queued still drives that run).
 
+### Queued notes
+
+A note queued in a task's room (`answer` with no question open, `maku post --queue`, the room's **Queued for the next run**, or a maintainer's queued review) is quoted in the task's very next run that plans or changes the work, whatever started it:
+
+| Next run | Quotes the queued notes |
+|---|---|
+| First run (scoper, implementer or triager) | Yes, when queued before it starts |
+| `/factory retry`, `retry deeper`, a step-up, a resumed run | Yes |
+| Plan revision (`/factory plan revise`) | Yes, in the scoper's brief |
+| Revision after Request changes, CI fix | Yes |
+| Tester, reviewer and verifier runs | No: the notes wait for the next of the runs above |
+
+The notes are quoted after the brief, in the untrusted `QUEUED-DATA` fence, oldest first, within the revision brief's 13 KiB bound. A note that does not fit is clipped with a marker naming its `seq`, or waits whole for a later run with every note after it. A run consumes exactly the notes its brief quoted, once the run exists; the room then records `queued_consumed` and shows `queued #<seq> used by run <id>`, and the note leaves **Queued for the next run**.
+
 | Condition | Factory action |
 |---|---|
 | Maintainer with `write` comments `/factory retry` alone on a line (outside code fences, unedited, after escalation) | Queues one fresh run within 5 minutes; after `review_rounds_exhausted` or `no_verdict`, buys one revision and one review |

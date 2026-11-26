@@ -213,6 +213,7 @@ describe("changesSummary", () => {
     expect(changesSummary({ ...ev("message", { kind: "chat", delivery }), actor: { kind: "human", id: "human:a" } })).toBe(true);
   });
   it("a removed queued note refetches", () => expect(changesSummary(ev("state_changed", { kind: "queued_removed" }))).toBe(true));
+  it("a queued note a run used refetches", () => expect(changesSummary(ev("state_changed", { kind: "queued_consumed" }))).toBe(true));
   it("a queued note from a system actor (a sponsored principal) refetches", () => {
     expect(changesSummary(ev("message", { kind: "chat", delivery: "queued" }))).toBe(true);
   });

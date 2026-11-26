@@ -1702,17 +1702,16 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 	// triager one either: the config's validation cannot guard a name removed after a task was
 	// triaged.
 	if cfg.Investigates(t.Spec.Template) {
-		text, ok, err := r.resumeBrief(ctx, t)
+		text, refs, err := r.briefWithQueue(ctx, t, func(nonce string) string {
+			return resumed(t, nextTrigger(t)) + TriagerBrief(t, nonce)
+		})
 		if err != nil {
 			return err
-		}
-		if !ok {
-			text = resumed(t, nextTrigger(t)) + TriagerBrief(t, r.Nonce())
 		}
 		s := r.implementerSpec(cfg, t, text)
 		s.Role = "triager"
 		s.Persona = "triager"
-		return r.startRun(ctx, cfg, t, s, nextTrigger(t))
+		return r.startConsuming(ctx, cfg, t, s, nextTrigger(t), refs)
 	}
 	// Drive the next pre-implementer or implementer stage from the compiled stage list (WR11).
 	for _, st := range r.compiledStagesForTask(cfg, t) {
@@ -1730,22 +1729,51 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 			if err != nil {
 				return err
 			}
-			if err := r.startRun(ctx, cfg, t, s, trigger); err != nil {
+			if err := r.startConsuming(ctx, cfg, t, s, trigger, refs); err != nil {
 				return err
 			}
-			if t.Status.Phase == v1alpha1.PhaseEscalated { // the cluster refused the loop claim: no run exists
-				return nil
-			}
-			if late && current(t).HeadSHA == "" { // the head a revision starts on: Revised lists what it changed since
-				current(t).HeadSHA = pr.HeadSHA
-			}
-			// Consumed once the run exists, and only what its brief quoted (F-A). A failure only means
-			// the next brief repeats them.
-			if err := r.Rooms.Consume(ctx, t.Status.RoomRef, refs, current(t).ID); err != nil {
-				r.log().Warn("queue consume failed", "task.id", t.Name, "run.id", current(t).ID, "err", err)
+			if t.Status.Phase != v1alpha1.PhaseEscalated && late && current(t).HeadSHA == "" {
+				current(t).HeadSHA = pr.HeadSHA // the head a revision starts on: Revised lists what it changed since
 			}
 			return nil
 		}
+	}
+	return nil
+}
+
+// briefWithQueue is a run's brief and the room's queued messages it quotes (refs): a lost run's
+// replayed brief and what was queued since, else build's brief and what is queued now. A note
+// queued before a run is that run's, whatever its role.
+func (r *Reconciler) briefWithQueue(ctx context.Context, t *v1alpha1.Task, build func(nonce string) string) (string, []int64, error) {
+	text, ok, err := r.resumeBrief(ctx, t)
+	if err != nil {
+		return "", nil, err
+	}
+	q, err := r.Rooms.Queue(ctx, t.Status.RoomRef)
+	if err != nil {
+		return "", nil, err
+	}
+	nonce := r.Nonce()
+	if ok {
+		text, refs := withQueued(text, q, nonce)
+		return text, refs, nil
+	}
+	text, refs := forThisRun(build(nonce), q, nonce)
+	return text, refs, nil
+}
+
+// startConsuming starts s and, once the run exists, consumes the queued messages its brief quoted
+// (refs), and only those (F-A): the room records which run used them. A failure only means the next
+// brief repeats them.
+func (r *Reconciler) startConsuming(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, s runs.Spec, trigger string, refs []int64) error {
+	if err := r.startRun(ctx, cfg, t, s, trigger); err != nil {
+		return err
+	}
+	if t.Status.Phase == v1alpha1.PhaseEscalated || len(refs) == 0 { // the cluster refused the loop claim: no run exists
+		return nil
+	}
+	if err := r.Rooms.Consume(ctx, t.Status.RoomRef, refs, current(t).ID); err != nil {
+		r.log().Warn("queue consume failed", "task.id", t.Name, "run.id", current(t).ID, "err", err)
 	}
 	return nil
 }

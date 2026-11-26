@@ -3,8 +3,10 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,6 +65,58 @@ func TestRecordRunRequest(t *testing.T) {
 	empty, err := s.RecordRunRequest(ctx, runDraft(2), "aaaaaaaa", nil, fields)
 	if err != nil || !strings.Contains(string(empty.Payload), `"consumed":[]`) {
 		t.Fatalf("%s, %v", empty.Payload, err)
+	}
+}
+
+// The factory's consume moves the quoted messages still queued to consumed by the
+// run and records queued_consumed naming them, once: a retry moves and records
+// nothing, and a consume that moves nothing appends nothing.
+func TestConsumeQueuedRecordsTheRun(t *testing.T) {
+	ctx := t.Context()
+	s, _, _, _ := open(t)
+	var refs []int64
+	for i, text := range []string{"first", "second", "third"} {
+		ev, err := s.Enqueue(ctx, queuedDraft(int64(i+1), text), "human:alice", text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, ev.Seq)
+	}
+	if err := s.SetQueued(ctx, room, refs[1], "removed", ""); err != nil {
+		t.Fatal(err)
+	}
+	d := envelope.Draft{RoomID: room, Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"},
+		Origin: envelope.OriginClient, OriginClient: "system:factory:consume:7f3cq2xz"}
+	moved, err := s.ConsumeQueued(ctx, d, "7f3cq2xz", refs)
+	if err != nil || len(moved) != 2 || moved[0] != refs[0] || moved[1] != refs[2] {
+		t.Fatalf("moved %v, %v", moved, err)
+	}
+	st, _ := s.Room(ctx, room)
+	evs, err := s.Range(ctx, room, st.LastSeq-1, 10)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("%+v, %v", evs, err)
+	}
+	var got struct {
+		Kind, RunID string
+		Refs        []int64
+	}
+	if err := json.Unmarshal(evs[0].Payload, &got); err != nil || evs[0].Type != envelope.StateChanged ||
+		evs[0].Actor.ID != "system:factory" || got.Kind != "queued_consumed" || got.RunID != "7f3cq2xz" ||
+		!slices.Equal(got.Refs, []int64{refs[0], refs[2]}) {
+		t.Fatalf("%s %s %s, %v", evs[0].Type, evs[0].Actor.ID, evs[0].Payload, err)
+	}
+	if q, err := s.Queue(ctx, room); err != nil || len(q) != 0 {
+		t.Fatalf("still queued: %+v, %v", q, err)
+	}
+	again, err := s.ConsumeQueued(ctx, d, "7f3cq2xz", refs)
+	if err != nil || len(again) != 0 {
+		t.Fatalf("a retry moved %v, %v", again, err)
+	}
+	if st2, _ := s.Room(ctx, room); st2.LastSeq != st.LastSeq {
+		t.Fatalf("a retry appended: last_seq %d, want %d", st2.LastSeq, st.LastSeq)
+	}
+	if _, err := s.ConsumeQueued(ctx, d, "NOT A RUN", refs); !errors.Is(err, ErrBadMove) {
+		t.Fatalf("a run id that is not C2: %v", err)
 	}
 }
 

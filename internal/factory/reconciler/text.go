@@ -528,12 +528,26 @@ func reviseBrief(t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, 
 // Queued, and the replayed brief cannot quote it. It quotes them only within reviseCap, so the
 // longest replayed brief stays under AgentRun's 16 KiB; refs are the ones quoted (F1).
 func withQueued(text string, queued []rooms.Queued, nonce string) (string, []int64) {
+	return appendQueued(text, "\n\nMessages queued since the interrupted run started, maintainers' review requests among them, "+
+		"follow ", queued, nonce)
+}
+
+// forThisRun is a brief that carries no log of the room (a first implementer run, a retry before a
+// pull request exists, a plan or a plan revision, a triager's run) and the messages queued for it:
+// a note queued before a run is the next run's, whatever its kind. As withQueued, it quotes them
+// only within reviseCap; those that do not fit stay queued for a later run (F1).
+func forThisRun(text string, queued []rooms.Queued, nonce string) (string, []int64) {
+	return appendQueued(text, "\nThe messages queued for this run, maintainers' review requests among them, follow ", queued, nonce)
+}
+
+// appendQueued is text, then intro, then the queued messages in their fence, within reviseCap, and
+// the refs it quoted. With none queued, or no room for the first, it is text unchanged.
+func appendQueued(text, intro string, queued []rooms.Queued, nonce string) (string, []int64) {
 	if len(queued) == 0 {
 		return text, nil
 	}
 	fence := "QUEUED-DATA-" + nonce
-	intro := "\n\nMessages queued since the interrupted run started, maintainers' review requests among them, " +
-		"follow " + queuedHow(fence)
+	intro += queuedHow(fence)
 	block, refs := queuedBlock(queued, fence, nonce, reviseCap-len(text)-len(intro))
 	if len(refs) == 0 {
 		return text, nil // no room: they stay queued for a later run

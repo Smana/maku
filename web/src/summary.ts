@@ -169,7 +169,7 @@ export async function fetchSummary(id: string, get: typeof fetch = fetch): Promi
 export function changesSummary(e: RoomEvent): boolean {
   const kind = e.payload?.kind;
   switch (e.type) {
-    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase" || kind === "queued_removed";
+    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase" || kind === "queued_removed" || kind === "queued_consumed";
     case "message": return e.actor?.kind === "human" || e.payload?.delivery === "queued" || kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
     case "handoff": case "participant": return true;
     case "approval_requested": case "approval_decided": return true;

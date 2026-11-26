@@ -60,6 +60,14 @@ describe("ChatView messages", () => {
     ]);
     expect([...el.querySelectorAll(".chip-delivery")].map((c) => c.textContent)).toEqual(["queued", "steering → agent:ikely2yk"]);
   });
+  it("names the run that used queued notes", () => {
+    const { el } = view([ev(1, "state_changed", { kind: "queued_consumed", runId: "ikely2yk", refs: [12, 14] }, { kind: "system", id: "system:factory" })]);
+    expect(el.querySelector(".mark-text")?.textContent).toBe("queued #12, #14 used by run ikely2yk");
+  });
+  it("says which queued notes a requested run's brief used", () => {
+    const { el } = view([ev(1, "state_changed", { kind: "run_requested", role: "implementer", runId: "ikely2yk", consumed: [3] })]);
+    expect(el.querySelector(".mark-text")?.textContent).toBe("run requested: implementer · queued #3 used");
+  });
   it("names the message a delivery delivered", () => {
     const { el } = view([ev(1, "state_changed", { kind: "delivered", ref: 1846, runId: "ikely2yk" }, { kind: "system", id: "system:room-broker" })]);
     expect(el.querySelector(".mark-text")?.textContent).toBe("delivered #1846");

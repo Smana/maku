@@ -200,6 +200,13 @@ func TestAForkCarriesWhatLeftTheQueueAfterItsPoint(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"consumed by the factory", func(t *testing.T, s *Store, ref int64) {
+			d := envelope.Draft{RoomID: room, Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"},
+				Origin: envelope.OriginClient, OriginClient: "system:factory:consume:aaaaaaaa"}
+			if _, err := s.ConsumeQueued(t.Context(), d, "aaaaaaaa", []int64{ref}); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"consumed by a brief", func(t *testing.T, s *Store, ref int64) {
 			if _, err := s.RecordRunRequest(t.Context(), runDraft(1), "aaaaaaaa", []int64{ref}, nil); err != nil {
 				t.Fatal(err)

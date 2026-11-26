@@ -5,7 +5,6 @@ package bridgeapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -21,7 +20,7 @@ import (
 type QueueStore interface {
 	Enqueue(ctx context.Context, d envelope.Draft, author, text string) (envelope.Event, error)
 	Queue(ctx context.Context, roomID string) ([]store.Queued, error)
-	SetQueued(ctx context.Context, roomID string, ref int64, to, runID string) error
+	ConsumeQueued(ctx context.Context, d envelope.Draft, runID string, refs []int64) ([]int64, error)
 	Cursor(ctx context.Context, roomID, originClient string) (int64, error)
 }
 
@@ -141,8 +140,10 @@ func (s *Server) listQueue(w http.ResponseWriter, r *http.Request, _, room strin
 
 // consume: POST /v1/rooms/{id}/queue/consume {refs, runId}, the messages runId's
 // brief quoted. One no longer queued (consumed, promoted, removed) or never
-// queued is skipped, so a retry is safe; consumed counts this call's moves.
-func (s *Server) consume(w http.ResponseWriter, r *http.Request, _, room string) {
+// queued is skipped, so a retry is safe; consumed counts this call's moves. The
+// moves are recorded in the room as state_changed{queued_consumed}, so the room
+// shows which run used each note.
+func (s *Server) consume(w http.ResponseWriter, r *http.Request, principal, room string) {
 	var in struct {
 		Refs  []int64 `json:"refs"`
 		RunID string  `json:"runId"`
@@ -151,16 +152,16 @@ func (s *Server) consume(w http.ResponseWriter, r *http.Request, _, room string)
 		fail(w, http.StatusBadRequest, wire.ReasonBadConsume)
 		return
 	}
-	n := 0
-	for _, ref := range in.Refs {
-		switch err := s.Queue.SetQueued(r.Context(), room, ref, "consumed", in.RunID); {
-		case err == nil:
-			n++
-		case errors.Is(err, store.ErrNotQueued):
-		default:
-			s.logFailure(w, err, "consume a queued message", "room", room, "ref", ref)
-			return
-		}
+	if len(in.Refs) == 0 {
+		reply(w, http.StatusOK, map[string]int{"consumed": 0})
+		return
 	}
-	reply(w, http.StatusOK, map[string]int{"consumed": n})
+	d := envelope.Draft{RoomID: room, Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: principal},
+		Origin: envelope.OriginClient, OriginClient: principal + ":consume:" + in.RunID}
+	moved, err := s.Queue.ConsumeQueued(r.Context(), d, in.RunID, in.Refs)
+	if err != nil {
+		s.logFailure(w, err, "consume queued messages", "room", room, "run", in.RunID)
+		return
+	}
+	reply(w, http.StatusOK, map[string]int{"consumed": len(moved)})
 }
