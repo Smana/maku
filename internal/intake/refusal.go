@@ -323,6 +323,14 @@ const (
 	CatalogueUnavailable = "catalogue_unavailable"  // intake only
 )
 
+// The refusals of a model:<alias> label pin (Gemini plan A7), triage only: an alias the factory does
+// not know, and a provider alias on a task that is not public. Like a profile refusal, the task then
+// runs as if unpinned, on its tier's model.
+const (
+	ModelUnknown    = "model_unknown"
+	ModelPublicOnly = "model_public_only"
+)
+
 // ProfileRefusals is the closed list, in the spec's order.
 var ProfileRefusals = []string{ProfileUnknown, ProfileNotOffered, NotMaintainer, ProfileConflict, ProfileNoTestsPaths, CatalogueUnavailable}
 

@@ -2368,6 +2368,12 @@ spec:
                     - default
                     - rescue
                     type: string
+                  model:
+                    description: |-
+                      Model is the gateway alias a maintainer's model:<alias> label pinned the implementer and the
+                      reviewer to (Gemini plan A7), frozen at triage; empty without an honoured pin.
+                    maxLength: 64
+                    type: string
                   name:
                     maxLength: 63
                     type: string
@@ -2844,6 +2850,7 @@ spec:
                           - tier
                           - reviewerModel
                           - classModels
+                          - label
                           type: string
                         screenshots:
                           description: Screenshots says the run's claim asked for

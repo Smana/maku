@@ -70,3 +70,28 @@ func TestResolveHarnessPin(t *testing.T) {
 		t.Fatalf("intake pin: %+v", p)
 	}
 }
+
+// A maintainer's model:<alias> label pins the implementer and the reviewer to a gateway alias (Gemini
+// plan A7): one alias, a maintainer's, one the factory knows, and a provider alias on a public task only.
+func TestResolveModelPin(t *testing.T) {
+	cfg := &config.Config{Repositories: []config.Repository{{Name: "o/r", Maintainers: []string{"smana"}}}}
+	for name, c := range map[string]struct {
+		labels    []LabelPin
+		dataClass string
+		want      Pin
+	}{
+		"a maintainer's provider alias on a public task": {[]LabelPin{{Name: "gemini-standard", Actor: "smana"}}, "public", Pin{Name: "gemini-standard"}},
+		"a maintainer's tier name on an internal task":   {[]LabelPin{{Name: "tier-light", Actor: "smana"}}, "internal", Pin{Name: "tier-light"}},
+		"an outsider's label":                            {[]LabelPin{{Name: "gemini-standard", Actor: "stranger"}}, "public", Pin{Name: "gemini-standard", Refused: intake.NotMaintainer}},
+		"an alias the factory does not know":             {[]LabelPin{{Name: "gpt-9", Actor: "smana"}}, "public", Pin{Name: "gpt-9", Refused: intake.ModelUnknown}},
+		"a provider alias on an internal task":           {[]LabelPin{{Name: "gemini-light", Actor: "smana"}}, "internal", Pin{Name: "gemini-light", Refused: intake.ModelPublicOnly}},
+		"two aliases":                                    {[]LabelPin{{Name: "gemini-light", Actor: "smana"}, {Name: "mistral-light", Actor: "smana"}}, "public", Pin{Name: "gemini-light", Refused: intake.ProfileConflict}},
+		"no label":                                       {nil, "public", Pin{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ResolveModelPin(cfg, "o/r", c.labels, c.dataClass); got != c.want {
+				t.Fatalf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}

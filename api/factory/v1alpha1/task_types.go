@@ -451,6 +451,11 @@ type ProfileStatus struct {
 	// +kubebuilder:validation:Enum=openhands;opencode
 	// +optional
 	Harness string `json:"harness,omitempty"`
+	// Model is the gateway alias a maintainer's model:<alias> label pinned the implementer and the
+	// reviewer to (Gemini plan A7), frozen at triage; empty without an honoured pin.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	Model string `json:"model,omitempty"`
 	// HarnessSource records why Harness was chosen: labeled, treatment, default, or rescue.
 	// +kubebuilder:validation:Enum=labeled;treatment;default;rescue
 	// +optional
@@ -1046,7 +1051,7 @@ type RunProvenance struct {
 	ServedModels []string `json:"servedModels,omitempty"`
 	// Which config chose the run's model (v3 F15, F3): the tier's model, the template's
 	// reviewerModel, or the class's loops.<class>.models (a public task only), set at creation.
-	// +kubebuilder:validation:Enum=tier;reviewerModel;classModels
+	// +kubebuilder:validation:Enum=tier;reviewerModel;classModels;label
 	// +optional
 	ModelSource string `json:"modelSource,omitempty"`
 	// Harness is the harness recorded on the run's AgentRun claim (openhands or opencode).
@@ -1063,6 +1068,8 @@ const (
 	ModelSourceTier          = "tier"
 	ModelSourceReviewerModel = "reviewerModel"
 	ModelSourceClassModels   = "classModels"
+	// ModelSourceLabel is a maintainer's model:<alias> label pin (Gemini plan A7).
+	ModelSourceLabel = "label"
 )
 
 // IsZero reports whether no fact the room shows is known yet: ModelSource is the factory's own

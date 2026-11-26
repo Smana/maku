@@ -213,6 +213,8 @@ Triage selects the workflow by first match: (1) a maintainer's pin, (2) task sou
 
 A maintainer can pin a workflow via a `workflow:<name>` label before `factory/ready` or via a confirmed plan's `spec.intake.profile` (`profile:<name>` labels are ignored). Pins are validated at intake and triage: conflicting labels (`profile_conflict`), non-maintainer appliers (`not_maintainer`), unknown/`none` workflows (`profile_unknown`), or `careful` with `testFirst` on a repository without `tests.paths` (`profile_no_tests_paths`) do not fail the task — it runs unpinned and narrates `profile_refused` ([refusal codes and cohort table](reference/narration.md#workflow-pin-refusals)). Fewer-role pins remain safe because unreviewed diffs only auto-merge when a diff shape or oracle holds.
 
+A maintainer can also pin the model with a `model:<alias>` label: the implementer and the reviewer run on that gateway alias (`status.runs[].provenance.modelSource: label`), every other role keeps its own. The alias must be one the factory knows (`model_unknown`), and a provider alias such as `gemini-standard` needs a public task (`model_public_only`); a refused or a non-maintainer's (`not_maintainer`) label is narrated and the task runs on its tier's model. A pinned task is `labeled`, out of the evaluation cohorts, as with a `harness:` pin.
+
 ## Budgets
 
 Budgets bound token and dollar spend from outside the sandbox:

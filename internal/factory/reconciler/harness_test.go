@@ -104,3 +104,33 @@ func TestEveryRoleGetsTheFrozenHarnessAndRecordExistingReadsClaim(t *testing.T) 
 		t.Fatalf("integration harness = %q, want openhands", got)
 	}
 }
+
+// A maintainer's model:<alias> label (Gemini plan A7) freezes the alias on the profile and keeps the
+// task out of the evaluation cohorts; an outsider's is narrated and runs the task unpinned.
+func TestModelLabelPin(t *testing.T) {
+	for name, c := range map[string]struct {
+		actor, model, cohort, said string
+	}{
+		"a maintainer's": {"smana", "gemini-standard", triage.CohortLabeled, ""},
+		"an outsider's":  {"outsider", "", triage.CohortControl, "Only a maintainer of this repository can choose the model"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cf := profileCfg(true)
+			cf.Evaluation.ControlPercent = 100
+			g := profileRig(t, cf, issueTask("3buqdlot", 7, "fix it\n\nAcceptance: tests pass"), "")
+			g.f.SetIssue(forge.Issue{Number: 7, Labels: []string{"model:gemini-standard"}})
+			g.f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: "model:gemini-standard", At: now})
+			tk := g.reconcile(t, "3buqdlot", 1)
+			if tk.Status.Profile.Model != c.model || tk.Status.Profile.Cohort != c.cohort {
+				t.Fatalf("profile %+v, want model %q cohort %q", tk.Status.Profile, c.model, c.cohort)
+			}
+			said := c.said == ""
+			for _, m := range g.f.Comments(7) {
+				said = said || strings.Contains(m, "model `gemini-standard`") && strings.Contains(m, c.said)
+			}
+			if !said {
+				t.Fatalf("want the refusal narrated: %v", g.f.Comments(7))
+			}
+		})
+	}
+}

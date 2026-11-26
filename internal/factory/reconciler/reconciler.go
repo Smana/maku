@@ -1352,8 +1352,12 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 		cohort = triage.CohortTreatment
 	}
 	harness, harnessSource := triage.HarnessFor(cfg, t, d.HarnessPin, cohort)
+	model := ""
+	if d.ModelPin.Honoured() {
+		model = d.ModelPin.Name
+	}
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
-		Harness: harness, HarnessSource: harnessSource,
+		Harness: harness, HarnessSource: harnessSource, Model: model,
 		Checks: p.EffectiveChecks(), TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused,
 		Screenshots: screenshotsOf(r.repo(cfg, t))}
 }
@@ -1381,7 +1385,7 @@ func (r *Reconciler) pinTestsPaths(ctx context.Context, cfg *config.Config, t *v
 	}
 	d.Pin = d.Pin.NoTestsPaths()
 	d.Pinned = false
-	d.Cohort = triage.CohortOf(t.Name, d.HarnessPin.Honoured(), cfg.Evaluation.ControlPercent)
+	d.Cohort = triage.CohortOf(t.Name, d.HarnessPin.Honoured() || d.ModelPin.Honoured(), cfg.Evaluation.ControlPercent)
 	return d, nil
 }
 
@@ -1390,6 +1394,9 @@ func (r *Reconciler) pinTestsPaths(ctx context.Context, cfg *config.Config, t *v
 func (r *Reconciler) notePin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d triage.Decision) {
 	if d.HarnessPin.Name != "" && d.HarnessPin.Refused != "" {
 		narrateLater(t, narrate.HarnessRefused(d.HarnessPin.Name, d.HarnessPin.Refused))
+	}
+	if d.ModelPin.Name != "" && d.ModelPin.Refused != "" {
+		narrateLater(t, narrate.ModelRefused(d.ModelPin.Name, d.ModelPin.Refused))
 	}
 	if d.Pin.Name == "" {
 		return
