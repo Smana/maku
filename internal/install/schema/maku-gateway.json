@@ -73,6 +73,26 @@
       "propertyNames": {"$ref": "#/definitions/dnsLabel"},
       "additionalProperties": {"$ref": "#/definitions/provider"}
     },
+    "gcpCredentials": {
+      "description": "Where a gcp-auth preset (vertex) gets the proxy's Google token: the GKE metadata server, or an external_account credential in a ConfigMap.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "enum": ["metadata", "external"]},
+        "configMap": {"type": "string"},
+        "key": {"type": "string", "minLength": 1}
+      }
+    },
+    "proxy": {
+      "description": "Additions to the generated proxy pod, merged by name: env on the agentgateway container, sidecars and their volumes.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "env": {"type": "array", "items": {"type": "object", "required": ["name"]}},
+        "sidecars": {"type": "array", "items": {"type": "object", "required": ["name", "image"]}},
+        "volumes": {"type": "array", "items": {"type": "object", "required": ["name"]}}
+      }
+    },
     "aliases": {
       "type": "object",
       "additionalProperties": false,

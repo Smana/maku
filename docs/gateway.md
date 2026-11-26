@@ -139,6 +139,8 @@ disagree about [the clients](#the-planner-and-the-classifier).
 | `timeouts` | `runs: 600s`, `clients: 60s` | A long completion must not be cut; the clients' own deadlines are 20 s and 5 s |
 | `networkPolicy.mode` | `""` (kubernetes) | `kubernetes`, `cilium` or `none`; see [Network](#network) |
 | `metrics.allowFrom` | none | NetworkPolicy peers allowed to scrape the proxy's `:15020` |
+| `gcpCredentials` | `source: metadata` | Where a `vertex` provider's token comes from: `metadata` (GKE Workload Identity), or `external` with `configMap` and `key` (`credentials.json`), an `external_account` credential; see [Outside GKE](#outside-gke-workload-identity-federation) |
+| `proxy.env`, `proxy.sidecars`, `proxy.volumes` | none | Merged into the proxy pod the controller generates: env on the `agentgateway` container, sidecars and their volumes. A sidecar brings its own security context, resources, probes and egress |
 
 A smallest working set, with one in-cluster provider:
 
@@ -211,6 +213,31 @@ What the operator binds, on GKE with Workload Identity:
 - **The API:** `aiplatform.googleapis.com` enabled on the project.
 - **The network:** the policy opens the region's host and the GKE metadata server
   (`169.254.169.254` and `169.254.169.252`, ports 80 and 988).
+
+#### Outside GKE: Workload Identity Federation
+
+With `gcpCredentials.source: external` the proxy reads an `external_account` credential (Google's
+ADC format for Workload Identity Federation) from a ConfigMap you create, mounted at
+`/var/run/maku-gateway/gcp/credentials.json` and named by `GOOGLE_APPLICATION_CREDENTIALS`. The file
+holds no secret: a pool provider's name, the subject token type and where the subject token comes
+from. The network policy then opens `sts.googleapis.com:443` instead of the metadata server.
+
+On EKS, one gap: agentgateway 1.6's Google client (`google-cloud-auth` 1.16) reads AWS credentials
+for an `aws1` source only from `AWS_ACCESS_KEY_ID` and friends or from an IMDS-shaped `url`, never
+from EKS Pod Identity. A sidecar that serves the Pod Identity session on loopback in IMDS's shape
+closes it; set `credential_source.url` to the sidecar and `AWS_REGION` in `proxy.env`:
+
+```yaml
+maku-gateway:
+  gcpCredentials: {source: external, configMap: model-gateway-gcp-credentials}
+  proxy:
+    env: [{name: AWS_REGION, value: eu-west-3}]
+    sidecars: [...]   # the credential sidecar, with its own securityContext, resources and probes
+    volumes: [...]
+```
+
+cloud-native-ref's `aws-gcp-federation` design is one worked deployment: the pool trusts the
+gateway's Pod Identity role and nothing else.
 
 `max_tokens` counts thinking tokens: a small cap returns empty content, so a caller of Gemini sets
 none or a large one. The classifier refuses Gemini for the same reason.
@@ -457,6 +484,7 @@ same calls to the broker's `jwt.sub` and the route, which is enough for dashboar
 | out | the controller (`networkPolicy.controller`) | 9978 (xDS) |
 | out | each provider: its `egress.peers`, else its `egress.cidrs`, else any address outside `networkPolicy.exceptCIDRs` | the provider's port |
 | out | with a `vertex` provider, the GKE metadata server (`169.254.169.254/32`, `169.254.169.252/32`) | 80, 988 |
+| out | with a `vertex` provider and `gcpCredentials.source: external`, `sts.googleapis.com` instead of the metadata server | 443 |
 
 `cilium` renders the same as a CiliumNetworkPolicy, with each provider by FQDN. Use it only for
 providers outside the cluster. `none` renders no policy. The JWKS is not on the list: the controller

@@ -17,6 +17,9 @@ Off by default (`enabled: false`): an install that does not turn it on renders n
   (`providers.<name>.existingSecret`, `key`) and never renders it. A `vertex` provider takes none:
   the proxy calls Vertex AI as its own ServiceAccount, `<name>`, which the operator binds to a Google
   role holding `aiplatform.endpoints.predict` ([Gemini on Vertex AI](../../docs/gateway.md#gemini-on-vertex-ai)).
+  Outside GKE, `gcpCredentials.source: external` reads an `external_account` credential from a
+  ConfigMap instead (Workload Identity Federation), and `proxy.sidecars` carries what produces its
+  subject token.
 
 ## What it renders
 

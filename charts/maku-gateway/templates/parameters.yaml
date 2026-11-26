@@ -49,6 +49,22 @@ spec:
               labelSelector:
                 matchLabels: {{- toYaml $sel | nindent 18 }}
             {{- end }}
+          {{- $external := eq .Values.gcpCredentials.source "external" }}
+          {{- if or $external .Values.proxy.volumes }}
+          volumes:
+            {{- if $external }}
+            # The external_account credential (gcpCredentials): a pool provider's name and where the
+            # subject token comes from, no key.
+            - name: gcp-credentials
+              configMap:
+                name: {{ .Values.gcpCredentials.configMap }}
+                items:
+                  - {key: {{ .Values.gcpCredentials.key }}, path: credentials.json}
+            {{- end }}
+            {{- with .Values.proxy.volumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
           containers:
             - name: agentgateway
               securityContext:
@@ -60,6 +76,27 @@ spec:
                   port: 15021
                 periodSeconds: 10
                 failureThreshold: 6
+              {{- if or $external .Values.proxy.env }}
+              env:
+                {{- if $external }}
+                # Read by google-cloud-auth's ADC when a gcp-auth backend carries no explicit
+                # credential (agentgateway's policies.auth.gcp: {type: AccessToken}).
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: /var/run/maku-gateway/gcp/credentials.json
+                {{- end }}
+                {{- with .Values.proxy.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- end }}
+              {{- if $external }}
+              volumeMounts:
+                - name: gcp-credentials
+                  mountPath: /var/run/maku-gateway/gcp
+                  readOnly: true
+              {{- end }}
+            {{- with .Values.proxy.sidecars }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
   service:
     spec:
       # Runs and the broker reach it in-cluster; a LoadBalancer would give their boundary a cloud address.

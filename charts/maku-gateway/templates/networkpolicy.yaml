@@ -20,6 +20,10 @@
 {{- /* A provider on the proxy's own Google identity fetches its token from the GKE metadata server:
 169.254.169.254:80, and 169.254.169.252:988 on GKE Dataplane V2. */}}
 {{- $mds := list "169.254.169.254/32" "169.254.169.252/32" }}
+{{- /* With an external_account credential the token comes from Google's STS instead, and the proxy
+needs no metadata server: on EKS that would be the EC2 instance metadata service. */}}
+{{- $gcpExternal := eq $v.gcpCredentials.source "external" }}
+{{- $gcpSTS := "sts.googleapis.com" }}
 {{- if eq $mode "kubernetes" }}
 # Default deny on the proxy pods (GW13). In: runs on public and internal, the broker on clients, a
 # scraper on 15020. Out: DNS, the controller's xDS, and each provider on its port. The JWKS is not
@@ -87,7 +91,14 @@ spec:
         {{- end }}
       ports: [{port: {{ $d.port }}, protocol: TCP}]
     {{- end }}
-    {{- if $gcpAuth }}
+    {{- if and $gcpAuth $gcpExternal }}
+    # {{ $gcpSTS }}: the token exchange of the external_account credential (gcpCredentials)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml $v.networkPolicy.exceptCIDRs | nindent 14 }}
+      ports: [{port: 443, protocol: TCP}]
+    {{- else if $gcpAuth }}
     # the GKE metadata server: the proxy's Google access token (Workload Identity)
     - to:
         {{- range $mds }}
@@ -186,7 +197,14 @@ spec:
         - ports:
             - {port: {{ $d.port | quote }}, protocol: TCP}
     {{- end }}
-    {{- if $gcpAuth }}
+    {{- if and $gcpAuth $gcpExternal }}
+    # The token exchange of the external_account credential (gcpCredentials).
+    - toFQDNs:
+        - matchName: {{ $gcpSTS }}
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+    {{- else if $gcpAuth }}
     # The GKE metadata server: Cilium does not count 169.254.169.254 as the host entity on GKE.
     - toCIDR: {{- toYaml $mds | nindent 8 }}
       toPorts:

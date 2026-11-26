@@ -287,5 +287,37 @@ done
 out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium)"
 yeq "[select(.kind == \"CiliumNetworkPolicy\") | .spec.egress[] | select(.toCIDR)] | length" 0 'no gcp provider: no metadata server'
 
+# ---- Gemini from outside GKE: an external_account credential (Workload Identity Federation)
+ext=(--set gcpCredentials.source=external --set gcpCredentials.configMap=gcp-credentials)
+rejects 'external without its ConfigMap' 'gcpCredentials.configMap is required with gcpCredentials.source external' \
+  "${minimal[@]}" "${vtx[@]}" "${gal[@]}" --set gcpCredentials.source=external
+rejects 'a ConfigMap on the metadata source' 'gcpCredentials.configMap: only gcpCredentials.source external reads a credential file' \
+  "${minimal[@]}" "${vtx[@]}" "${gal[@]}" --set gcpCredentials.configMap=gcp-credentials
+rejects 'an unknown credential source' 'value must be one of' "${minimal[@]}" --set gcpCredentials.source=key
+rejects 'a sidecar named like the proxy' 'proxy.sidecars: agentgateway is the proxy' \
+  "${minimal[@]}" --set 'proxy.sidecars[0].name=agentgateway' --set 'proxy.sidecars[0].image=x'
+pod='select(.kind == "AgentgatewayParameters") | .spec.deployment.spec.template.spec'
+out="$(render "${minimal[@]}" "${vtx[@]}" "${gal[@]}")"
+yeq "$pod | (.volumes // [] | length) + ([.containers[] | select(.name == \"agentgateway\") | .env // [] | length] | .[0])" 0 \
+  'the metadata source adds no volume and no env to the proxy'
+out="$(render "${minimal[@]}" "${vtx[@]}" "${gal[@]}" "${ext[@]}" --set 'proxy.env[0].name=AWS_REGION' --set 'proxy.env[0].value=eu-west-3' \
+  --set 'proxy.sidecars[0].name=aws-creds' --set 'proxy.sidecars[0].image=registry.test/creds@sha256:0' \
+  --set 'proxy.volumes[0].name=aws-creds' --set 'proxy.volumes[0].configMap.name=aws-creds')"
+yeq "$pod | .volumes[0].name + \" \" + .volumes[0].configMap.name + \" \" + .volumes[0].configMap.items[0].path" \
+  'gcp-credentials gcp-credentials credentials.json' 'external: the ConfigMap is mounted as credentials.json'
+yeq "$pod | .containers[] | select(.name == \"agentgateway\") | [.env[] | .name + \"=\" + .value] | join(\",\")" \
+  'GOOGLE_APPLICATION_CREDENTIALS=/var/run/maku-gateway/gcp/credentials.json,AWS_REGION=eu-west-3' \
+  'external: GOOGLE_APPLICATION_CREDENTIALS names the mounted file, then proxy.env'
+yeq "$pod | .containers[] | select(.name == \"agentgateway\") | .volumeMounts[0].mountPath + \" \" + (.volumeMounts[0].readOnly | tostring)" \
+  '/var/run/maku-gateway/gcp true' 'external: the credential is mounted read-only'
+yeq "$pod | ([.containers[].name] | join(\",\")) + \" \" + ([.volumes[].name] | join(\",\"))" \
+  'agentgateway,aws-creds gcp-credentials,aws-creds' 'proxy.sidecars and proxy.volumes join the pod'
+yeq "$np | [.spec.egress[] | select(.to[0].ipBlock.cidr == \"169.254.169.254/32\")] | length" 0 \
+  'external: no metadata server (on EKS it would be the EC2 instance metadata service)'
+out="$(render "${minimal[@]}" "${vtx[@]}" "${gal[@]}" "${ext[@]}" --set networkPolicy.mode=cilium)"
+yeq "select(.kind == \"CiliumNetworkPolicy\") | [.spec.egress[] | .toFQDNs[]?.matchName] | join(\",\")" \
+  'aiplatform.eu.rep.googleapis.com,stub.models.svc.cluster.local,sts.googleapis.com' 'external, cilium: Google STS by FQDN beside Vertex'
+yeq "[select(.kind == \"CiliumNetworkPolicy\") | .spec.egress[] | select(.toCIDR)] | length" 0 'external, cilium: no metadata server'
+
 [[ $fail == 0 ]] || exit 1
 echo "maku-gateway chart render checks passed"
