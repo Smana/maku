@@ -32,10 +32,20 @@ class ProxyRig(unittest.TestCase):
         """The test proxy on a free port, allowing github.com and the install set; its env from env."""
         port = free_port()
         self.log = os.path.join(self.tmp, "proxy.log")
-        p = subprocess.Popen([sys.executable, PROXY, str(port)],
-                             env={**os.environ, "ALLOW": "github.com", "INSTALL": RELEASE, "LOG": self.log, "DIAL": "0", **env})
-        self.addCleanup(p.wait)
-        self.addCleanup(p.terminate)
+        # -I -S and a bare environment: the image's sitecustomize (tracing, MCP) stays out of the proxy.
+        p = subprocess.Popen([sys.executable, "-I", "-S", PROXY, str(port)],
+                             env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ALLOW": "github.com", "INSTALL": RELEASE,
+                                  "LOG": self.log, "DIAL": "0", **env},
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def stop():
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+        self.addCleanup(stop)
         deadline = time.monotonic() + 10
         while True:
             try:
