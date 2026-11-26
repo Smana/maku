@@ -3,6 +3,7 @@
 package reconciler
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -105,5 +106,63 @@ func TestARequirementFoundFromTheDiffRunsTheStageOnce(t *testing.T) {
 	}
 	if !foundNote {
 		t.Fatalf("expected room narration explaining late stage, got %v", g.log.states)
+	}
+}
+
+// A class bound from a MergePolicy, served the way the factory serves it: the merger App reaches
+// the reconciler through Clients, per repository, never through r.Merger. Mirrors gcp-0's
+// alert-rules (requires plan, shadow, file scope on the binding only) and task xfav2em3.
+func TestABoundPolicyRequiringAPlanAddsTheScoperFromTheDiff(t *testing.T) {
+	tk := issueTask("xfav2em3", 7, "# Name the threshold\n\nIn `observability/base/loggen/demo-vmrule.yaml`, name the threshold.\n\n## Acceptance\n- Only the summary changes.")
+	g := shippedRig(t, tk)
+	rc := &g.r.Cfg.Current().Repositories[0]
+	rc.Workflow.Default = config.WorkflowStandard
+	var p config.PolicySpec
+	if err := json.Unmarshal([]byte(`{"evidence":"standard","monitor":{"followUpWindow":"2h","verification":{"within":"2h"}},"requires":["plan"]}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	cl, refusal := config.Resolve("alert-rules", p, config.Binding{
+		Name: "alert-rules", Mode: config.ModeShadow,
+		AllowedFiles:   []string{`^observability/.+\.ya?ml$`},
+		ProtectedFiles: []string{`^docs/platform-constitution\.md$`},
+	}, config.PolicyContext{}, rc.Merge)
+	if refusal != nil {
+		t.Fatalf("binding refused: %+v", refusal)
+	}
+	rc.Classes["alert-rules"] = cl
+	g.r.Merger, g.r.Forge = nil, nil
+	g.r.Clients = func(string) (TaskForge, forge.Merger, bool) { return g.f, g.f, true }
+
+	tk = g.reconcile(t, "xfav2em3", 3) // Received -> Triaged -> Queued -> Implementing
+	if tk.Spec.ScopeMode == string(config.ScopeScoper) || current(tk).Role != "implementer" {
+		t.Fatalf("triage predicted another class, so no plan yet: scopeMode=%q role=%q", tk.Spec.ScopeMode, current(tk).Role)
+	}
+	head := strings.Repeat("c", 40)
+	g.f.SetBranch("agent/xfav2em3", 12)
+	g.f.SetPR(forge.PR{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", State: "OPEN", HeadSHA: head})
+	g.f.SetFileStats(forge.FileStat{Path: "observability/base/loggen/demo-vmrule.yaml", Additions: 1, Deletions: 1})
+	g.runs.set(runID("xfav2em3", 0), "Succeeded")
+	g.log.end(runID("xfav2em3", 0), "Succeeded", "agent_finished")
+
+	tk = g.reconcile(t, "xfav2em3", 2)
+	if tk.Status.Profile == nil || tk.Status.Profile.Requires == nil || !tk.Status.Profile.Requires.DiffChecked {
+		t.Fatalf("the first diff was never checked against the class: %+v", tk.Status.Profile)
+	}
+	if tk.Spec.ScopeMode != string(config.ScopeScoper) || tk.Status.Profile.Requires.By != "alert-rules" ||
+		!slices.Contains(tk.Status.Profile.Requires.Stages, "plan") {
+		t.Fatalf("alert-rules requires a plan: scopeMode=%q requires=%+v", tk.Spec.ScopeMode, tk.Status.Profile.Requires)
+	}
+	if next := g.runs.specs[runID("xfav2em3", 1)]; next.Role != "triager" || !scoperRun(tk) { // the scoper runs as the triager
+		t.Fatalf("the run after the implementer is %q, want the scoper", next.Role)
+	}
+	if slices.ContainsFunc(tk.Status.Runs, func(rr v1alpha1.RunRecord) bool { return rr.Role == "reviewer" }) {
+		t.Fatalf("the reviewer ran before the required plan: %+v", tk.Status.Runs)
+	}
+	foundNote := false
+	for _, s := range g.log.states {
+		foundNote = foundNote || strings.Contains(s, "class `alert-rules` requires plan")
+	}
+	if !foundNote {
+		t.Fatalf("expected room narration of the late plan, got %v", g.log.states)
 	}
 }
