@@ -300,7 +300,7 @@ func FindingsPosted(t *v1alpha1.Task, findings, roomsURL string) Event {
 		body = fmt.Sprintf("_The findings stay in the room (%s/r/%s, tailnet only): the task's data class is not public._",
 			strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
 	} else {
-		body = summary(findings, maxBody-len(head)-len(offer))
+		body = prose(findings, maxBody-len(head)-len(offer))
 	}
 	return Event{Key: "findings-posted", Class: ClassDone, Body: head + body + offer}
 }
@@ -436,13 +436,13 @@ func PlanProposed(t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, room
 		if len(sc.Acceptance) > 0 {
 			b.WriteString("\n**Acceptance checks:**\n")
 			for _, a := range sc.Acceptance {
-				fmt.Fprintf(&b, "- %s\n", summary(a.Check+" — "+a.Proves, 240))
+				fmt.Fprintf(&b, "- %s\n", item(summary(a.Check+" — "+a.Proves, 240)))
 			}
 		}
 		if sp != nil && len(sp.Children) > 0 {
 			fmt.Fprintf(&b, "\n**Proposed split (%d parts):**\n", len(sp.Children))
 			for i, c := range sp.Children {
-				fmt.Fprintf(&b, "- Part %d: %s\n", i+1, summary(c.Task, 240))
+				fmt.Fprintf(&b, "- Part %d:\n\n  %s\n", i+1, item(summary(c.Task, 240)))
 			}
 		}
 	}
@@ -1212,16 +1212,106 @@ func RoleFindings(t *v1alpha1.Task, role, runID, verdict, text string) Event {
 func summary(text string, budget int) string {
 	s, _ := sanitize.Text(text)
 	s = strings.ReplaceAll(s, "@", "＠")
-	const mark = "\n⟦clipped by the factory; the whole summary is in the room⟧"
 	for n := len(s); ; n = n * 3 / 4 {
-		shown := s
+		q := github.Quote(strings.ToValidUTF8(s[:n], ""))
 		if n < len(s) {
-			shown = strings.ToValidUTF8(s[:n], "") + mark
+			q += clipMark // after the fence, never inside it
 		}
-		if q := github.Quote(shown); len(q) <= budget || n == 0 {
+		if len(q) <= budget || n == 0 {
 			return q
 		}
 	}
+}
+
+// clipMark ends a clipped summary, outside its fence.
+const clipMark = "\n⟦clipped by the factory; the whole summary is in the room⟧"
+
+// item is block as the content of a "- " list item: every line after the first indented under the
+// marker, so a fenced block opened on the item's line also closes inside it. Unindented, the fence
+// ends the item empty and its closer opens a fence that swallows the rest of the comment.
+func item(block string) string {
+	return strings.ReplaceAll(block, "\n", "\n  ")
+}
+
+// prose is an agent's markdown report, readable and inert: sanitize.Public's rewriting, the one a
+// published proposal gets (every link, mention, issue or commit reference and entity in a code span,
+// HTML escaped), cut at a line within budget, a fence the cut leaves open closed before the clip
+// mark. When Public cannot make it inert (it withholds), the summary's fenced block, hard-wrapped so
+// no line scrolls.
+func prose(text string, budget int) string {
+	for n := len(text); ; n = n * 3 / 4 {
+		shown := strings.ToValidUTF8(text[:n], "")
+		if n < len(text) {
+			if i := strings.LastIndexByte(shown, '\n'); i > 0 {
+				shown = shown[:i]
+			}
+		}
+		out, rep := sanitize.Public(closeFence(strings.TrimRight(shown, "\n"))) // Public withholds an open fence
+		if rep.Withheld {
+			return summary(wrap(text, wrapAt), budget)
+		}
+		out = closeFence(strings.TrimRight(out, "\n"))
+		if n < len(text) {
+			out += "\n" + clipMark
+		}
+		if len(out) <= budget || n == 0 {
+			return out
+		}
+	}
+}
+
+// wrapAt is the column a fenced report wraps at: a code block never wraps, it scrolls.
+const wrapAt = 100
+
+// wrap hard-wraps each line of s at width runes, at the last space before it when there is one.
+func wrap(s string, width int) string {
+	var b strings.Builder
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		for r := []rune(line); ; {
+			if len(r) <= width {
+				b.WriteString(string(r))
+				break
+			}
+			cut := width
+			for j := width; j > 0; j-- {
+				if r[j] == ' ' {
+					cut = j
+					break
+				}
+			}
+			b.WriteString(strings.TrimRight(string(r[:cut]), " ") + "\n")
+			r = []rune(strings.TrimLeft(string(r[cut:]), " "))
+		}
+	}
+	return b.String()
+}
+
+// fenceLine is a fence's opening or closing line: up to three spaces, then three or more backticks
+// or tildes.
+var fenceLine = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})(.*)$")
+
+// closeFence appends the closer of a fence s leaves open, so what follows s is never code.
+func closeFence(s string) string {
+	open := ""
+	for line := range strings.SplitSeq(s, "\n") {
+		m := fenceLine.FindStringSubmatch(strings.TrimRight(line, " \t"))
+		switch {
+		case m == nil:
+		case open == "":
+			if m[1][0] != '`' || !strings.Contains(m[2], "`") { // a backtick fence's info has no backtick
+				open = m[1]
+			}
+		case m[1][0] == open[0] && len(m[1]) >= len(open) && strings.TrimSpace(m[2]) == "":
+			open = ""
+		}
+	}
+	if open != "" {
+		s += "\n" + open
+	}
+	return s
 }
 
 // ProfileChosen names the workflow (a harness profile) the task's run-th run starts under, the
