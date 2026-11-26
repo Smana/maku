@@ -90,7 +90,7 @@ type Binding struct {
 	MaxPerDay int `json:"maxPerDay,omitempty"`
 }
 
-// PolicySpec is a MergePolicy's class definition: MergeClass, without mode, workflow fields or requires.
+// PolicySpec is a MergePolicy's class definition: MergeClass, without mode or workflow fields. Requires (workflow stages, WR6) is served.
 // +kubebuilder:object:generate=true
 type PolicySpec struct {
 	MergeClass `json:",inline"`

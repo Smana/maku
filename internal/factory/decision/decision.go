@@ -46,13 +46,17 @@ type Rows struct {
 	// Considered is each candidate policy that did not hold on the diff, "<policy>:<reason>"
 	// joined with "," (MR1); "" when none, and then it does not print.
 	Considered string
+	// Signal is what judged the meaning of a decision that held (correctness signals CS1):
+	// "<signal>:ok" or "none". It is "" on a refusal, and then it does not print, so a refusal's
+	// record is unchanged.
+	Signal string
 }
 
 // Marker is the hidden one-line record appended to the decision's comment. It is a line of its
 // own beside the comment's event marker (ruling R-m11), and class= lets the tally filter by
 // class (R-I9). An unread field prints "-" (R-m7): an empty string, and the counts of a diff not
 // read, so a replay never reads a count of 0 that nobody took. Every field is one token.
-// The dual and grant fields, and considered= (MR1), sit before reviewer, which the tally reads last.
+// The dual and grant fields, considered= (MR1) and signal= sit before reviewer, which the tally reads last.
 func Marker(head, class, verdict, reason string, r Rows) string {
 	dual := ""
 	switch {
@@ -75,6 +79,9 @@ func Marker(head, class, verdict, reason string, r Rows) string {
 	}
 	if r.Considered != "" {
 		dual += " considered=" + r.Considered
+	}
+	if r.Signal != "" {
+		dual += " signal=" + r.Signal
 	}
 	return fmt.Sprintf("<!-- agent-factory-decision head=%s class=%s decision=%s:%s files=%s/%d lines=%s/%d shape=%s holdout=%s oracle=%s age=%s evidence=%s paused=%s capped=%s%s reviewer=%s -->",
 		dash(head), dash(class), dash(verdict), dash(reason), count(r.Files, r.Counted), r.MaxFiles, count(r.Lines, r.Counted), r.MaxLines,

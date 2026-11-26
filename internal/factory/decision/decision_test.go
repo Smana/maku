@@ -111,3 +111,21 @@ func TestMarkerConsidered(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// Correctness signals CS1, W11: a decision that held records what judged its meaning, before
+// reviewer= (which the tally reads last); a refusal prints no signal=, so its record is unchanged.
+func TestTheMarkerNamesTheSignal(t *testing.T) {
+	r := Rows{Counted: true, Files: 1, MaxFiles: 5, Lines: 4, MaxLines: 20, Gated: true, Reviewer: "none", Considered: "docs:class_mismatch"}
+	without := Marker("abc", "docs-links", "arm", "armed", r)
+	r.Signal = "links-only:ok"
+	with := Marker("abc", "docs-links", "arm", "armed", r)
+	if !strings.Contains(with, " considered=docs:class_mismatch signal=links-only:ok reviewer=none -->") {
+		t.Fatalf("signal= not between considered= and reviewer=: %s", with)
+	}
+	if strings.Replace(with, " signal=links-only:ok", "", 1) != without {
+		t.Fatalf("only signal= may differ\n%s\n%s", with, without)
+	}
+	if strings.Contains(without, "signal=") {
+		t.Fatalf("an empty signal prints: %s", without)
+	}
+}
