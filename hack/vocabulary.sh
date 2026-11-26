@@ -26,3 +26,27 @@ if [ -n "$hits" ]; then
   exit 1
 fi
 echo "==> vocabulary: the reader pages say workflow"
+
+# The merge-policy pages (correctness signals, decision 3): a maintainer's merge of a shadow decision
+# is "agreed", a monitor window that ended with nothing is "quiet". "clean decisions" and "healthy"
+# in prose fail; the wire values (`clean`, `healthy`, the Healthy condition) stay in code spans.
+hits=""
+for f in docs/merge-policies.md docs/factory.md docs/reference/web-ui-settings.md; do
+  [ -f "$f" ] || continue
+  out=$(awk -v f="$f" '
+    /^ ? ? ?(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    {
+      line = $0
+      gsub(/`[^`]*`/, "", line)
+      l = tolower(line)
+      if (l ~ /(^|[^a-z])clean (decision|merge|shadow merge)s?([^a-z]|$)/ || l ~ /(^|[^a-z])healthy([^a-z]|$)/) print f ":" NR ": " $0
+    }' "$f")
+  [ -n "$out" ] && hits+="$out"$'\n'
+done
+if [ -n "$hits" ]; then
+  printf '%s\n' "$hits" >&2
+  echo "FAIL: say \"agreed\" or \"quiet\" (docs/merge-policies.md#holds-agreed-signal-checked); wire values stay in backticks" >&2
+  exit 1
+fi
+echo "==> vocabulary: the merge-policy pages say agreed and quiet"
