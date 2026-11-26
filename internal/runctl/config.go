@@ -72,6 +72,8 @@ type Config struct {
 	// Tracing hands each run's harness the OTLP/HTTP endpoint it exports its span to, under the
 	// task's trace (v4 D21). Unset, runs export nothing and their policies are unchanged.
 	Tracing Tracing `json:"tracing,omitzero"`
+	// Browser is the sidecar a run with spec.screenshots gets (v5 Q16); its image is images.browser.
+	Browser BrowserConfig `json:"browser,omitzero"`
 }
 
 // Tracing is where runs export their span, and the collector pods their policy opens its port to:
@@ -184,6 +186,9 @@ type Gateway struct {
 	// Aliases are the aliases each listener serves (maku-gateway aliases.<class>'s keys): a run whose
 	// alias its listener does not serve is refused before its pod exists.
 	Aliases GatewayAliases `json:"aliases,omitzero"`
+	// Vision are the aliases, per listener, that accept images (v5 Q16, C4): each one a subset of
+	// Aliases. It decides only whether a run's screenshots reach its model (VisionFor).
+	Vision GatewayAliases `json:"vision,omitzero"`
 	// LightAlias is the alias the light jobs run on (CP12): an internal run's condenser summary
 	// and a search implementer's child. Every non-empty listener must serve it, so no pod is
 	// created with a dead LIGHT_BASE_URL.
@@ -318,6 +323,16 @@ func (c Config) model() []error {
 			errs = append(errs, fmt.Errorf("model.gateway.lightAlias %s is not served on the %s listener (maku-gateway aliases.%s)", g.LightAlias, cl.class, cl.class))
 		}
 	}
+	for _, cl := range []struct {
+		class          string
+		vision, served []string
+	}{{"public", g.Vision.Public, g.Aliases.Public}, {"internal", g.Vision.Internal, g.Aliases.Internal}} {
+		for _, a := range cl.vision {
+			if !slices.Contains(cl.served, a) {
+				errs = append(errs, fmt.Errorf("model.gateway.vision.%s: %q is not an alias the listener serves", cl.class, a))
+			}
+		}
+	}
 	return errs
 }
 
@@ -346,6 +361,8 @@ type Images struct {
 	// Probe runs the preflight's netprobe pod: the run-controller's own image, required in
 	// kubernetes mode.
 	Probe string `json:"probe,omitempty"`
+	// Browser is the maku-browser sidecar image (v5 Q16), required when a run sets spec.screenshots.
+	Browser string `json:"browser,omitempty"`
 }
 
 // defaultProfiles are the composition's _EGRESS_PROFILES (crossplane-configuration v0.9.17) plus
@@ -386,6 +403,7 @@ func LoadConfig(path string) (Config, error) {
 		c.DNS = DNS{Namespace: "kube-system", Labels: map[string]string{"k8s-app": "kube-dns"}}
 	}
 	c.Model.Mode = cmp.Or(c.Model.Mode, ModelModeSecret)
+	c.Browser.applyDefaults()
 	if c.Gateway() {
 		g := &c.Model.Gateway
 		g.Ports.Public, g.Ports.Internal = cmp.Or(g.Ports.Public, 8080), cmp.Or(g.Ports.Internal, 8081)
@@ -435,6 +453,7 @@ func (c Config) validate() error {
 	}
 	errs = append(errs, c.roomToolsURL()...)
 	errs = append(errs, c.Tracing.validate(c.clusterDomain())...)
+	errs = append(errs, c.Browser.validate()...)
 	if len(c.Broker.Labels) == 0 {
 		errs = append(errs, errors.New("broker.labels: the CNP needs at least one to select the broker"))
 	}
@@ -531,6 +550,10 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return "runtimeClassName is empty and allowUnsandboxed is false: refusing to run unsandboxed"
 	case r.Spec.Harness == "opencode" && c.Images.Opencode == "":
 		return "spec.harness opencode needs images.opencode configured"
+	case screenshotsOn(r) && r.Spec.Role != "implementer" && r.Spec.Role != "tester":
+		return "spec.screenshots is for an implementer or tester run only (v5 Q16, VS5)"
+	case screenshotsOn(r) && c.Images.Browser == "":
+		return "spec.screenshots needs images.browser configured"
 	}
 	if c.Gateway() {
 		if why := c.gatewayInvalid(r); why != "" {

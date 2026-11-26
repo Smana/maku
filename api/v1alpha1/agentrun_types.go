@@ -115,6 +115,23 @@ type AgentRunSpec struct {
 	// +kubebuilder:validation:Enum=gateway
 	// +optional
 	MeteredBy string `json:"meteredBy,omitempty"`
+	// Screenshots gives an implementer or tester run a loopback-only browser sidecar (v5 Q16). The
+	// factory stamps it from the Repository's opt-in; the run-controller refuses it on any other
+	// role. Set at creation.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="screenshots is immutable"
+	// +optional
+	Screenshots *AgentRunScreenshots `json:"screenshots,omitempty"`
+}
+
+// AgentRunScreenshots is a run's browser opt-in and its screenshot cap (v5 Q16).
+type AgentRunScreenshots struct {
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// MaxScreenshots caps the screenshots the browser takes; empty: the gate's default, 10.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=25
+	// +optional
+	MaxScreenshots int32 `json:"maxScreenshots,omitempty"`
 }
 
 // AgentRunLoop is the run's loop policy, fixed at creation (v3: the loop policy's claim object).

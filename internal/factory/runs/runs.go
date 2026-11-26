@@ -169,6 +169,9 @@ type Spec struct {
 	// ReviewChecks is a reviewer's acceptance, written as AnnReviewChecks at CREATE only, clipped
 	// to runwatch.MaxReviewChecks bytes; "" writes none.
 	ReviewChecks string
+	// Screenshots is spec.screenshots (v5 Q16): the run's screenshot cap, written as
+	// {enabled: true, maxScreenshots: N} only when above 0; 0 gives the run no browser.
+	Screenshots int32
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -229,6 +232,12 @@ func (s Spec) Validate() error {
 	if s.Harness != "" && !config.ValidHarness(s.Harness) {
 		errs = append(errs, fmt.Errorf("harness %q is openhands, opencode or empty", s.Harness))
 	}
+	if s.Screenshots < 0 || s.Screenshots > config.MaxScreenshotsCeiling {
+		errs = append(errs, fmt.Errorf("screenshots %d is not between 0 and %d", s.Screenshots, config.MaxScreenshotsCeiling))
+	}
+	if s.Screenshots > 0 && !slices.Contains(config.ScreenshotRoles, s.Role) {
+		errs = append(errs, fmt.Errorf("screenshots on a %s run: implementer or tester only (VS5)", s.Role))
+	}
 	// v3 F15, F4: Moonshot processes in China and Mistral in the EU. Every claim, the factory's and
 	// the API's, passes here, so no internal run names a provider alias, as its model or its judge's.
 	judge := ""
@@ -286,6 +295,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Harness != "" {
 		spec["harness"] = s.Harness
+	}
+	if s.Screenshots > 0 {
+		spec["screenshots"] = map[string]any{"enabled": true, "maxScreenshots": int64(s.Screenshots)}
 	}
 	if l := s.Loop; l != nil || s.Checks || s.Search {
 		loop := map[string]any{}
@@ -396,8 +408,10 @@ type Run struct {
 	// CompositionRevision Crossplane bound it to, and the harness image the composition read
 	// from its pod. Empty until known.
 	FactoryVersion, CompositionRevision, HarnessImage string
-	Tokens, MaxTokens, StartSeq, MaxMicroUSD          int64
-	Created, Finished                                 time.Time
+	// Screenshots is the claim's spec.screenshots.maxScreenshots when enabled, else 0 (v5 Q16).
+	Screenshots                              int32
+	Tokens, MaxTokens, StartSeq, MaxMicroUSD int64
+	Created, Finished                        time.Time
 	// Deleting: the claim carries a deletion timestamp. Its finalizers can keep it listed, in
 	// whatever phase it had, long after the run itself was stopped (#55).
 	Deleting bool
@@ -426,6 +440,10 @@ func FromUnstructured(k runwatch.Kind, u *unstructured.Unstructured) (Run, bool)
 		r.StartSeq = v
 	}
 	r.MaxTokens, _, _ = unstructured.NestedInt64(u.Object, "spec", "budget", "maxTokens")
+	if on, _, _ := unstructured.NestedBool(u.Object, "spec", "screenshots", "enabled"); on {
+		n, _, _ := unstructured.NestedInt64(u.Object, "spec", "screenshots", "maxScreenshots")
+		r.Screenshots = int32(min(max(n, 0), int64(config.MaxScreenshotsCeiling))) // #nosec G115 -- clamped to 0..25
+	}
 	// Absent is 0; present but unreadable or not positive is -1, so the meter can tell a run
 	// that never had a cap from one whose cap was damaged: both are revoked when sponsored.
 	if raw, ok := u.GetAnnotations()[AnnMaxMicroUSD]; ok {
@@ -503,7 +521,7 @@ func (c Client) Create(ctx context.Context, s Spec) error {
 	// A claim carrying a newer spec field is created under Strict field validation: an old schema
 	// would prune it and run with defaults while the Task records the requested policy; refuse instead.
 	var opts []client.CreateOption
-	if s.Loop != nil || s.Checks || s.Search || s.Effort != "" || s.Harness != "" {
+	if s.Loop != nil || s.Checks || s.Search || s.Effort != "" || s.Harness != "" || s.Screenshots > 0 {
 		opts = append(opts, client.FieldValidation("Strict"))
 	}
 	claim := Build(c.Kind, s)

@@ -294,6 +294,31 @@ func TestRepositoryPrivateCodeAdmission(t *testing.T) {
 	}
 }
 
+// v5 Q16: a Repository's screenshots opt-in names implementer or tester only, and caps at 25.
+func TestRepositoryScreenshotsAdmission(t *testing.T) {
+	a := startAdmission(t)
+	for name, tc := range map[string]struct{ screenshots, want string }{
+		"enabled":         {screenshots: "{enabled: true, roles: [tester], maxScreenshots: 25}"},
+		"a reviewer role": {screenshots: "{enabled: true, roles: [reviewer]}", want: "Unsupported value"},
+		"a cap above 25":  {screenshots: "{enabled: true, maxScreenshots: 26}", want: "less than or equal to 25"},
+		"a cap of zero":   {screenshots: "{enabled: true, maxScreenshots: 0}", want: "greater than or equal to 1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := edit(t, anrRepository, "ss-"+strings.ReplaceAll(name, " ", "-"), map[string]string{"spec.screenshots": tc.screenshots})
+			err := a.create(t, m)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // WF3, WF7: a Repository names its default workflow and opts in to the tester; the name is bounded.
 func TestRepositoryWorkflowAdmission(t *testing.T) {
 	a := startAdmission(t)
