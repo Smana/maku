@@ -359,7 +359,9 @@ func (r *Reconciler) create(ctx context.Context, run *v1alpha1.AgentRun, runID s
 	case NetworkPolicyKubernetes:
 		objs = append(objs, KubeNetworkPolicy(run, r.Cfg, m, runID))
 	}
-	for _, o := range append(objs, Pod(run, r.Cfg, m, runID)) {
+	pod := Pod(run, r.Cfg, m, runID)
+	StampInstallDeadline(pod, r.Now(), r.Cfg)
+	for _, o := range append(objs, pod) {
 		if err := controllerutil.SetControllerReference(run, o, r.Client.Scheme()); err != nil {
 			return "", err
 		}

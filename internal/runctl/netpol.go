@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -111,6 +112,34 @@ func proxyEnv(c Config) []corev1.EnvVar {
 		{Name: "HTTPS_PROXY", Value: c.EgressProxy.URL}, {Name: "https_proxy", Value: c.EgressProxy.URL},
 		{Name: "NO_PROXY", Value: noProxy}, {Name: "no_proxy", Value: noProxy},
 	}
+}
+
+// installEnv is a kubernetes-mode check run's harness's close of its install set: the proxy's
+// endpoint (NO_PROXY keeps its in-cluster Service direct) and the pod's UID, which the close names.
+func installEnv(c Config) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "EGRESS_INSTALL_CLOSE_URL", Value: strings.TrimSuffix(c.EgressProxy.URL, "/") + "/v1/close-install"},
+		{Name: "POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+	}
+}
+
+// hostPorts443 is hosts on 443, joined for an annotation.
+func hostPorts443(hosts []string) string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, h+":443")
+	}
+	return strings.Join(out, ",")
+}
+
+// StampInstallDeadline writes the install set's deadline on a pod that has one: now, the pod's
+// create, plus the window. The reconciler calls it right before the create; the proxy treats a set
+// without a readable deadline as closed.
+func StampInstallDeadline(p *corev1.Pod, now time.Time, c Config) {
+	if _, ok := p.Annotations[EgressInstallAnnotation]; !ok {
+		return
+	}
+	p.Annotations[EgressInstallUntilAnnotation] = now.UTC().Add(time.Duration(c.InstallEgress.WindowSeconds) * time.Second).Format(time.RFC3339)
 }
 
 // egressAnnotation is Egress joined, for EgressAnnotation.

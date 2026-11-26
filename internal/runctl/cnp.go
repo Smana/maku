@@ -15,11 +15,16 @@ import (
 
 // NetworkPolicy is the run's default-deny CNP: DNS for its names only, the broker on 8443 (and
 // roomToolsURL's port when set),
-// github and its profiles on 443, the model host on its port, the OTLP collector's pods on its port
+// github and its profiles on 443 (and a check run's install set), the model host on its port, the OTLP collector's pods on its port
 // when tracing is configured. Nothing dials in except the
 // kubelet's probe of the bridge (C4).
 func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstructured.Unstructured {
 	web := webHosts(r, c, m) // reached on 443
+	// A CNP cannot narrow itself on a signal from the pod: a check run's install set stays open for the
+	// whole run in this mode (the harness says so), as it was before the install set existed.
+	for _, h := range c.InstallFQDNs(r) {
+		web = addUnique(web, h)
+	}
 	modelNS, inCluster := inClusterNamespace(m.Host)
 	names := addUnique(slices.Clone(web), m.Host)
 	matchNames := func(hs []string) []any {

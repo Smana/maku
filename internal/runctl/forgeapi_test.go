@@ -23,7 +23,7 @@ func TestFQDNsForgeAPIDeny(t *testing.T) {
 	if slices.Contains(got, ForgeAPIHost) {
 		t.Fatalf("api.github.com kept: %v", got)
 	}
-	for _, h := range []string{"github.com", "codeload.github.com", "objects.githubusercontent.com"} {
+	for _, h := range []string{"github.com", "dl.google.com"} {
 		if !slices.Contains(got, h) {
 			t.Fatalf("%s dropped: %v", h, got)
 		}

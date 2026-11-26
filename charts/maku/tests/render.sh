@@ -805,7 +805,16 @@ yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$kn" >"$tmp/rc-kubernetes.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$tr" >"$tmp/rc-tracing.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$trk" >"$tmp/rc-tracing-kubernetes.yaml"
-go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" || fail=1
+# runController.installEgress reaches the run-controller's config as set, and its loader accepts it.
+ie="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes \
+  --set runController.installEgress.windowSeconds=900 --set-json 'runController.installEgress.hosts=["release-assets.githubusercontent.com"]')"
+saved="$out"; out="$ie"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.installEgress.windowSeconds == 900 and (.installEgress.hosts | join(",")) == "release-assets.githubusercontent.com")' 'runController.installEgress reaches the run-controller config'
+out="$kn"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (has("installEgress") | not)' 'installEgress unset: the built-in install set'
+out="$saved"
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ie" >"$tmp/rc-install.yaml"
+go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" "$tmp/rc-install.yaml" || fail=1
 go run ./tests/loadconfig run-controller-tracing "$tmp/rc-tracing.yaml" "$tmp/rc-tracing-kubernetes.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$gw" >"$tmp/rc-gateway.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$gwext" >"$tmp/rc-gateway-external.yaml"

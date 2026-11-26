@@ -35,12 +35,15 @@ func TestLoopChecksReachTheHarness(t *testing.T) {
 	}
 }
 
-// RC7: a GitHub release download lands on release-assets; Go's archive is on dl.google.com.
+// RC7: a GitHub release download lands on release-assets, which a check run reaches during its
+// install; Go's archive is on dl.google.com, the golang profile's.
 func TestTheDefaultProfilesReachTheChecksHosts(t *testing.T) {
-	fqdns := testConfig(t).FQDNs(goRun())
-	for _, h := range []string{"release-assets.githubusercontent.com", "dl.google.com"} {
-		if !slices.Contains(fqdns, h) {
-			t.Fatalf("%s missing from %v", h, fqdns)
-		}
+	c := testConfig(t)
+	r := goRun(func(r *v1alpha1.AgentRun) { r.Spec.Loop.Checks = true })
+	if fqdns := c.FQDNs(r); !slices.Contains(fqdns, "dl.google.com") {
+		t.Fatalf("dl.google.com missing from %v", fqdns)
+	}
+	if install := c.InstallFQDNs(r); !slices.Contains(install, "release-assets.githubusercontent.com") {
+		t.Fatalf("release-assets missing from the install set %v", install)
 	}
 }

@@ -355,6 +355,12 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	if c.NetworkPolicy == NetworkPolicyKubernetes {
 		harness.Env = append(harness.Env, proxyEnv(c)...)
 		om.Annotations[EgressAnnotation] = egressAnnotation(r, c, m)
+		// The install set, which the harness closes before the agent starts: the harness alone gets
+		// the endpoint and its pod's UID, which the proxy checks against the pod at the caller's IP.
+		if install := c.InstallFQDNs(r); len(install) > 0 {
+			om.Annotations[EgressInstallAnnotation] = hostPorts443(install)
+			harness.Env = append(harness.Env, installEnv(c)...)
+		}
 	}
 	var rc *string
 	if c.RuntimeClassName != "" {
