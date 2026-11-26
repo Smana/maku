@@ -8,8 +8,10 @@
 
 import { bindingAnchor } from "./binding-editor";
 import { modeMeaning } from "./policy-describe";
-import { patternDetails, policyWords } from "./policy-words";
-import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
+import { patternDetails } from "./policy-words";
+import { meaningNode } from "./sentence";
+import { blockerLines, blockerList } from "./promote-blockers";
+import { explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
 import type { Binding, Catalogue, CatalogueClass, CatalogueProfile, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
@@ -30,7 +32,7 @@ const unproposedWords: Record<string, string> = {
   not_in_repository_policy: "the class is not declared in the repository's policy file",
 };
 
-// evidenceBar is a class's clean decisions toward the minimum; eligible says whether it may promote
+// evidenceBar is a class's agreed decisions (the wire's clean) toward the minimum; eligible says whether it may promote
 // (an approved exception can make it so where the evidence alone does not).
 export function evidenceBar(e: Evidence, eligible = e.eligible): HTMLElement {
   const box = el("div", undefined, "evidence-bar");
@@ -38,8 +40,8 @@ export function evidenceBar(e: Evidence, eligible = e.eligible): HTMLElement {
   box.setAttribute("aria-valuemin", "0");
   box.setAttribute("aria-valuenow", String(Math.min(e.clean, e.minimum)));
   box.setAttribute("aria-valuemax", String(e.minimum));
-  box.setAttribute("aria-label", "clean decisions toward promotion");
-  // A blocked class is not one step from promotion, however many clean decisions it has: its bar
+  box.setAttribute("aria-label", "agreed decisions toward promotion");
+  // A blocked class is not one step from promotion, however many agreed decisions it has: its bar
   // never reads as full.
   const blocked = !eligible && (e.blockers ?? []).length > 0;
   if (blocked) box.dataset.blocked = "true";
@@ -48,17 +50,17 @@ export function evidenceBar(e: Evidence, eligible = e.eligible): HTMLElement {
   const track = el("span", undefined, "evidence-track");
   track.append(fill);
   box.append(track, el("span", e.clean > e.minimum
-    ? `${e.minimum} of ${e.minimum} clean decisions (${e.clean} recorded)`
-    : `${e.clean} of ${e.minimum} clean decisions to promote`, "evidence-count"));
+    ? `${e.minimum} of ${e.minimum} agreed (${e.clean} recorded)`
+    : `${e.clean} of ${e.minimum} agreed to promote`, "evidence-count"));
   return box;
 }
 
 // generationLine is the shadow decisions merged unchanged per policy generation (Q6, PR13):
-// "gen 4: 3 clean · gen 3: 17 clean · before the binding: 12"; empty without a split. Promotion
+// "gen 4: 3 agreed · gen 3: 17 agreed · before the binding: 12"; empty without a split. Promotion
 // counts them all.
 export function generationLine(e: Evidence): string {
   return (e.shadow.byGeneration ?? []).map((g) => {
-    const counts = `${g.mergedUnchanged} clean${g.changed ? `, ${g.changed} changed` : ""}`;
+    const counts = `${g.mergedUnchanged} agreed${g.changed ? `, ${g.changed} changed` : ""}`;
     return g.before ? `before the binding: ${counts}` : `gen ${g.generation}: ${counts}`;
   }).join(" \u00b7 ");
 }
@@ -85,7 +87,7 @@ const detail = (e: Evidence) => {
 
 const ladder = (e: Evidence) => {
   const ol = el("ol", undefined, "evidence-ladder");
-  ol.setAttribute("aria-label", "clean merges in a row, and the bad rate each proves");
+  ol.setAttribute("aria-label", "quiet merges in a row, and the wrong-call rate each proves");
   ol.title = LADDER_LEGEND;
   for (const s of e.ladder) {
     const li = el("li", `${s.merges} merges${s.reached ? ", reached" : ""}`);
@@ -95,7 +97,7 @@ const ladder = (e: Evidence) => {
   return ol;
 };
 
-// lastDecisionWords reads the factory's "would_merge:clean" as "would merge (clean)".
+// lastDecisionWords reads the factory's "shadow:shadow_would_arm" as "shadow (shadow would arm)".
 function lastDecisionWords(code: string): string {
   const [what, why] = code.split(":", 2);
   return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
@@ -149,6 +151,26 @@ export function profilesRow(cat: Catalogue | null | undefined, cls: string): HTM
   return row;
 }
 
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const drillWords = (d: string) => d === "passed" ? "done" : !d || d === "none" ? "not done" : d.replaceAll("_", " ");
+
+// progressWords is a policy's progress, each number with its judge (correctness signals CS7): in
+// shadow the decisions a maintainer agreed with; once live the merges with what checked them.
+export function progressWords(c: ClassReport): string {
+  const e = c.evidence;
+  if (!e) return "";
+  const wrong = plural(e.bad, "wrong call", "wrong calls");
+  if (c.mode === "live") {
+    const merges = e.outcomes?.merges ?? 0;
+    const quiet = Math.max(0, (e.outcomes?.conclusive ?? 0) - (e.outcomes?.bad ?? 0));
+    const m = c.meaning;
+    const by = !m ? "" : m.signal && m.signal !== "none" ? `, all signal-checked by ${m.signal}`
+      : m.prose ? ", unchecked: nothing checks the meaning of prose" : ", unchecked: nothing checks their meaning";
+    return `Live. ${merges} merged alone${by}. ${quiet} quiet. ${wrong}.`;
+  }
+  return `${e.clean} of ${e.minimum} agreed: you merged ${e.clean} unchanged, changed ${e.shadow.changed}. ${wrong}. Rollback drill: ${drillWords(e.drill)}.`;
+}
+
 export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const now = () => (ctx.now ?? Date.now)();
   const card = el("article", undefined, "class-card");
@@ -171,7 +193,8 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
 
   const binding = r.bindings?.find((x) => x.name === c.class)?.parameters;
   const spec = ctx.page.policySpecs?.[c.class] ?? {};
-  card.append(el("p", policyWords(spec, binding), "policy-sentence"));
+  // The factory's sentence for this repository's binding (correctness signals CS7), never rebuilt.
+  card.append(meaningNode(c.meaning));
   const patterns = binding?.allowedFiles?.length ? binding.allowedFiles : (Array.isArray(spec.allowedFiles) ? spec.allowedFiles as string[] : []);
   if (patterns.length) card.append(patternDetails(patterns));
   bindingRows(card, c, ctx);
@@ -198,7 +221,7 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     if (r.evidenceAt) card.append(el("p", "Evidence for this class is still being read.", "evidence-reading"));
     notPromotable();
   } else if (c.mode === "live") {
-    card.append(el("p", `Live \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), certainty(e));
+    card.append(el("p", progressWords(c), "evidence-live"), certainty(e));
   } else if (c.mode === "off" || c.mode === "disabled") {
     card.append(e.clean === 0 ? el("p", "Off: no decisions recorded.", "evidence-detail") : certainty(e));
   } else {
@@ -209,14 +232,16 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     if (gens) extras.push(el("p", gens, "evidence-generations"));
     const reviewers = (e.shadow.reviewers ?? []).map((x) => `${x.model} ${x.mergedUnchanged}/${x.mergedUnchanged + x.changed}`).join(", ");
     if (reviewers) extras.push(el("p", `Reviewers: ${reviewers}`, "evidence-reviewers"));
-    card.append(evidenceBar(e, eligible), certainty(e, extras));
+    card.append(evidenceBar(e, eligible), el("p", progressWords(c), "evidence-progress"), certainty(e, extras));
     if (r.repositoryObject) {
       const where = policyState(r) === "repository" ? ".github/agent-factory.yaml" : r.repositoryManifestPath ?? "the Repository manifest";
       card.append(el("p", `To promote, set mode: live on the binding in ${where} and merge the change.`, "promote-where"));
     }
     card.append(el("p", eligible
-      ? (e.eligible ? "Eligible to promote: enough clean decisions, no bad outcome, drill passed." : `Eligible to promote under exception ${exc!.id} (${exc!.minimum} clean decisions required).`)
-      : `Blocks promotion: ${blockerActions(e).join(", ") || "no reason given"}.`, "evidence-eligibility"));
+      ? (e.eligible ? "Eligible to promote: enough agreed decisions, no wrong call, rollback drill done." : `Eligible to promote under exception ${exc!.id} (${exc!.minimum} agreed decisions required).`)
+      : (e.blockers ?? []).length ? "Blocks promotion:" : "Blocks promotion: no reason given.", "evidence-eligibility"));
+    // W6: one line per blocker, each with its next step.
+    if (!eligible && (e.blockers ?? []).length) card.append(blockerList(blockerLines(e)));
     // The broker refuses a second request while one is open (promotion_open): offer neither then.
     const open = ctx.page.promotions.some((p) => p.class === c.class && (p.state === "requested" || p.state === "pr_opened"));
     if (open) act.textContent = "";
@@ -233,6 +258,12 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
       };
       act.append(b);
     } else if (c.proposal && ctx.page.you.maintainer && !eligible) {
+      // The button stays, disabled: the lines above say why and what to do next.
+      const off = el("button", "Promote to live", "primary");
+      off.type = "button";
+      off.disabled = true;
+      off.title = "Promotion is blocked: see the lines above.";
+      act.append(off);
       const b = el("button", "Ask an operator for an exception");
       b.type = "button";
       b.onclick = () => exceptionForm(act, r.repository, c.class, r.minimum, ctx);
@@ -272,7 +303,7 @@ function exceptionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
   const xs = ctx.page.exceptions.filter((y) => y.class === cls);
   if (xs.length === 0) return undefined;
   for (const x of xs) {
-    const line = el("p", `Exception: ${x.minimum} clean decisions instead of ${ctx.page.report.minimum}, ${x.state}` + (x.decidedBy ? ` by ${x.decidedBy}` : ""));
+    const line = el("p", `Exception: ${x.minimum} agreed decisions instead of ${ctx.page.report.minimum}, ${x.state}` + (x.decidedBy ? ` by ${x.decidedBy}` : ""));
     const now = (ctx.now ?? Date.now)();
     if (x.expiresAt) line.append(Date.parse(x.expiresAt) < now ? ", expired " : " until ", timeText(x.expiresAt, now));
     line.append(`. \u201c${x.justification}\u201d`);
@@ -328,11 +359,11 @@ function exceptionForm(at: HTMLElement, repository: string, cls: string, minimum
   min.type = "number";
   min.min = "1";
   min.max = String(minimum - 1);
-  min.setAttribute("aria-label", "minimum clean decisions");
+  min.setAttribute("aria-label", "minimum agreed decisions");
   const why = el("textarea");
   why.maxLength = 2000;
   why.setAttribute("aria-label", "justification");
-  why.placeholder = "Why this class may go live on fewer clean decisions (20 to 2,000 characters)";
+  why.placeholder = "Why this policy may go live on fewer agreed decisions (20 to 2,000 characters)";
   const b = el("button", "Ask");
   b.type = "button";
   b.onclick = async () => {
