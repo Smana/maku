@@ -1605,6 +1605,11 @@ func providerModels() map[string]providerModel {
 	}
 }
 
+// IsAlias reports whether model is a gateway alias a run may name: C5's or a provider alias.
+func IsAlias(model string) bool {
+	return slices.Contains(models(), model) || PublicOnly(model)
+}
+
 // PublicOnly reports whether model is a provider alias, which only a public run may name.
 func PublicOnly(model string) bool {
 	_, ok := providerModels()[model]

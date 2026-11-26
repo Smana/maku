@@ -215,3 +215,36 @@ func TestAnAdoptedRunKeepsItsModelSource(t *testing.T) {
 		})
 	}
 }
+
+// A model:<alias> pin (Gemini plan A7) puts the implementer and the reviewer on the alias, recorded
+// as modelSource label, ahead of a loops row; every other role keeps its own model.
+func TestPinModelFromLabel(t *testing.T) {
+	row := map[string]config.ModelAliases{"implementer": {"standard": "mistral-standard"}, "tester": {"standard": "mistral-standard"}}
+	for name, c := range map[string]struct {
+		spec   func(*Reconciler, *v1alpha1.Task) runs.Spec
+		want   string
+		source string
+	}{
+		"implementer": {func(r *Reconciler, t *v1alpha1.Task) runs.Spec { return r.implementerSpec(r.Cfg.Current(), t, "x") }, "gemini-standard", v1alpha1.ModelSourceLabel},
+		"reviewer": {func(r *Reconciler, t *v1alpha1.Task) runs.Spec {
+			s := r.implementerSpec(r.Cfg.Current(), t, "x")
+			s.Role = "reviewer"
+			return s
+		}, "gemini-standard", v1alpha1.ModelSourceLabel},
+		"tester keeps its row": {tester, "mistral-standard", v1alpha1.ModelSourceClassModels},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newRig(t)
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Models: row}}
+			tk := issueTask("3buqdlot", 7, "x")
+			tk.Spec.DataClass, tk.Spec.PredictedClass, tk.Spec.Template = "public", "review", "pair"
+			tk.Spec.Budget = v1alpha1.Budget{Tier: "standard", Model: "agent-default", RunTokens: 1_500_000, RunMinutes: 45}
+			tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "standard", Source: "label", Cohort: "labeled", Model: "gemini-standard"}
+			s := c.spec(g.r, tk)
+			s.RunID = rid(0)
+			if got := g.r.pinModel(g.r.Cfg.Current(), tk, &s); s.Model != c.want || got != c.source {
+				t.Fatalf("%s: model %q source %q, want %q %q", s.Role, s.Model, got, c.want, c.source)
+			}
+		})
+	}
+}

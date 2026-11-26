@@ -27,6 +27,9 @@ type Decision struct {
 	// HarnessPin is the harness a person pinned (harness:<name> label or intake.harness) and
 	// whether triage refused it; zero without one.
 	HarnessPin Pin
+	// ModelPin is the gateway alias a maintainer's model:<alias> label pinned the implementer and
+	// the reviewer to, and whether triage refused it (Gemini plan A7); zero without one.
+	ModelPin Pin
 	// Notes are sentences triage says once on the task, such as LegacyLabelNote.
 	Notes []string
 }

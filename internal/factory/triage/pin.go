@@ -110,3 +110,37 @@ func ResolveHarnessPin(cfg *config.Config, repo string, labels []LabelPin, field
 	}
 	return pin
 }
+
+// ResolveModelPin checks a model:<alias> label (Gemini plan A7): one alias, applied by a maintainer,
+// an alias the factory knows, and a provider alias on a public task only. An honoured pin puts the
+// task's implementer and reviewer runs on the alias; a refused one runs the task as if unpinned.
+func ResolveModelPin(cfg *config.Config, repo string, labels []LabelPin, dataClass string) Pin {
+	names := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if !slices.Contains(names, l.Name) {
+			names = append(names, l.Name)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return Pin{}
+	case 1:
+	default:
+		return Pin{Name: names[0], Refused: intake.ProfileConflict}
+	}
+	pin := Pin{Name: names[0]}
+	rc := cfg.RepositoryFor(repo)
+	maintainer := false
+	for _, l := range labels {
+		maintainer = maintainer || rc.IsMaintainer(l.Actor)
+	}
+	switch {
+	case !maintainer:
+		pin.Refused = intake.NotMaintainer
+	case !config.IsAlias(pin.Name):
+		pin.Refused = intake.ModelUnknown
+	case config.PublicOnly(pin.Name) && dataClass != "public":
+		pin.Refused = intake.ModelPublicOnly
+	}
+	return pin
+}

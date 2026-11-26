@@ -102,7 +102,7 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if outcome == config.OutcomeReport || outcome == config.OutcomeReview {
 		class, declared = "review", false
 	}
-	pin, harnessPin, legacy, err := c.pin(ctx, cfg, t, outcome)
+	pin, harnessPin, modelLabels, legacy, err := c.pin(ctx, cfg, t, outcome)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -113,20 +113,22 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if outcomeNote != "" {
 		notes = append(notes, outcomeNote)
 	}
-	// Declared is no pin (P8): only an honoured workflow or harness pin is labeled.
-	cohort := CohortOf(t.Name, pin.Honoured() || harnessPin.Honoured(), cfg.Evaluation.ControlPercent)
+	modelPin := ResolveModelPin(cfg, t.Spec.Repository, modelLabels, dataClass)
+	// Declared is no pin (P8): only an honoured workflow, harness or model pin is labeled, so a
+	// pinned model never joins an evaluation cohort.
+	cohort := CohortOf(t.Name, pin.Honoured() || harnessPin.Honoured() || modelPin.Honoured(), cfg.Evaluation.ControlPercent)
 	if outcome == config.OutcomeReview {
 		return Decision{Template: "review", PredictedClass: "review", DataClass: dataClass, Outcome: config.OutcomeReview,
 			Budget:         BudgetFor(cfg, "standard"),
 			Classification: v1alpha1.Classification{Tier: "standard", Classifier: "static", Fallback: "none"},
-			HarnessPin:     harnessPin, Cohort: cohort, Notes: notes}, nil
+			HarnessPin:     harnessPin, ModelPin: modelPin, Cohort: cohort, Notes: notes}, nil
 	}
 	if !internalInvestigate && outcome != config.OutcomeReport && oracle(cfg, t, class) {
 		// MC6: the findings are the task and the oracle its verifier: one implementer at tier light,
 		// no classifier call, so no control group either (OD-14 measures the classifier).
 		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Outcome: outcome, Budget: BudgetFor(cfg, "light"),
 			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}, Declared: declared,
-			Pinned: pin.Honoured(), Pin: pin, HarnessPin: harnessPin, Cohort: cohort, Notes: notes}, nil
+			Pinned: pin.Honoured(), Pin: pin, HarnessPin: harnessPin, ModelPin: modelPin, Cohort: cohort, Notes: notes}, nil
 	}
 	res, err := C7Response{}, errors.New("no classifier") // no C7 service, no call (WF9)
 	if c.C != nil {
@@ -151,7 +153,8 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 		source = "runlore" // Matrix keys on the source kind: investigate template ([triager])
 	}
 	return Decision{Template: Matrix(class, source, tier), PredictedClass: class, DataClass: dataClass, Outcome: outcome,
-		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Pinned: pin.Honoured(), Pin: pin, HarnessPin: harnessPin, Cohort: cohort, Notes: notes}, nil
+		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Pinned: pin.Honoured(), Pin: pin, HarnessPin: harnessPin,
+		ModelPin: modelPin, Cohort: cohort, Notes: notes}, nil
 }
 
 // profileName is a harness profile's name as config and the Task's CRD spell it.
@@ -163,16 +166,17 @@ const LegacyLabelNote = "the `class:` and `profile:` labels are no longer read; 
 
 // pin is t's pinned workflow and harness as ResolvePin / ResolveHarnessPin judge them (P5, P6):
 // workflow:<name> and harness:<name> labels on its issue with each one's last applier, and the
-// intake's profile/harness with the sponsor login the factory resolved.
-func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, outcome string) (pin, harnessPin Pin, legacy bool, err error) {
+// intake's profile/harness with the sponsor login the factory resolved. modelLabels are its
+// model:<alias> labels, which ResolveModelPin judges against the task's data class.
+func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, outcome string) (pin, harnessPin Pin, modelLabels []LabelPin, legacy bool, err error) {
 	if Investigates(cfg, t) || t.Spec.Source.Kind == "schedule" || outcome == config.OutcomeReport || outcome == config.OutcomeReview {
-		return Pin{}, Pin{}, false, nil
+		return Pin{}, Pin{}, nil, false, nil
 	}
 	var wfLabels, harnessLabels []LabelPin
 	if gh := c.forge(t); t.Spec.Issue != 0 && gh != nil {
 		iss, err := gh.Issue(ctx, t.Spec.Issue)
 		if err != nil {
-			return Pin{}, Pin{}, false, err
+			return Pin{}, Pin{}, nil, false, err
 		}
 		for _, l := range iss.Labels {
 			if strings.HasPrefix(l, "class:") || strings.HasPrefix(l, "profile:") {
@@ -182,7 +186,7 @@ func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task,
 			if name, ok := strings.CutPrefix(l, "workflow:"); ok && profileName.MatchString(name) {
 				evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
 				if err != nil {
-					return Pin{}, Pin{}, false, err
+					return Pin{}, Pin{}, nil, false, err
 				}
 				actor := ""
 				if len(evs) > 0 {
@@ -194,13 +198,25 @@ func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task,
 			if name, ok := strings.CutPrefix(l, "harness:"); ok && profileName.MatchString(name) {
 				evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
 				if err != nil {
-					return Pin{}, Pin{}, false, err
+					return Pin{}, Pin{}, nil, false, err
 				}
 				actor := ""
 				if len(evs) > 0 {
 					actor = evs[len(evs)-1].Actor
 				}
 				harnessLabels = append(harnessLabels, LabelPin{Name: name, Actor: actor})
+				continue
+			}
+			if name, ok := strings.CutPrefix(l, "model:"); ok && profileName.MatchString(name) {
+				evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
+				if err != nil {
+					return Pin{}, Pin{}, nil, false, err
+				}
+				actor := ""
+				if len(evs) > 0 {
+					actor = evs[len(evs)-1].Actor
+				}
+				modelLabels = append(modelLabels, LabelPin{Name: name, Actor: actor})
 			}
 		}
 	}
@@ -210,7 +226,7 @@ func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task,
 	}
 	return ResolvePin(cfg, t.Spec.Repository, wfLabels, field, login),
 		ResolveHarnessPin(cfg, t.Spec.Repository, harnessLabels, harnessField, login),
-		legacy, nil
+		modelLabels, legacy, nil
 }
 
 // oracle reports whether class is an oracle class of t's repository; none when it is not served.

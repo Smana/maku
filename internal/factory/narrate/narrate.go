@@ -1403,6 +1403,23 @@ func HarnessRefused(name, code string) Event {
 	return Event{Key: "harness-refused", Class: ClassChanged, Body: fmt.Sprintf("Agent factory: the pinned harness `%s` was not applied: %s", name, sentence)}
 }
 
+// ModelRefused says a model:<alias> label was not applied (Gemini plan A7); the task runs on its
+// tier's model.
+func ModelRefused(name, code string) Event {
+	sentence := "the model selection is not valid; using the tier's model."
+	switch code {
+	case "not_maintainer":
+		sentence = "Only a maintainer of this repository can choose the model."
+	case "profile_conflict":
+		sentence = "More than one model was requested; using the tier's model."
+	case "model_unknown":
+		sentence = "The factory knows no such model alias; using the tier's model."
+	case "model_public_only":
+		sentence = "A provider's model serves public tasks only; using the tier's model."
+	}
+	return Event{Key: "model-refused", Class: ClassChanged, Body: fmt.Sprintf("Agent factory: the pinned model `%s` was not applied: %s", name, sentence)}
+}
+
 // TriageNote is triage's note i on the task (triage.Decision.Notes), said once.
 func TriageNote(i int, note string) Event {
 	return Event{Key: fmt.Sprintf("triage-note-%d", i), Class: ClassChanged, Body: "Agent factory: " + note}

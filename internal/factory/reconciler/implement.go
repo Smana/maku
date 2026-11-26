@@ -558,6 +558,10 @@ func (r *Reconciler) workflow(cfg *config.Config, t *v1alpha1.Task) string {
 // An internal run accepts only a tier alias; with no override it keeps its tier's model, or the
 // template's reviewerModel.
 func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) string {
+	if m := labelModel(t, s.Role); m != "" {
+		s.Model = m
+		return v1alpha1.ModelSourceLabel
+	}
 	if s.Persona != "" && s.Persona != s.Role {
 		if _, custom := cfg.Roles[s.Persona]; custom {
 			if m := cfg.ModelFor(r.workflow(cfg, t), s.DataClass, s.Persona, s.Tier); m != "" {
@@ -582,12 +586,23 @@ func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec
 // template's reviewerModel ran on it.
 func (r *Reconciler) modelSourceOf(cfg *config.Config, t *v1alpha1.Task, x runs.Run) string {
 	switch rm := cfg.Templates[t.Spec.Template].ReviewerModel; {
+	case x.Model != "" && x.Model == labelModel(t, x.Role):
+		return v1alpha1.ModelSourceLabel
 	case config.PublicOnly(x.Model):
 		return v1alpha1.ModelSourceClassModels
 	case x.Role == "reviewer" && rm != "" && x.Model == rm:
 		return v1alpha1.ModelSourceReviewerModel
 	}
 	return v1alpha1.ModelSourceTier
+}
+
+// labelModel is the alias a model:<alias> pin put role on (Gemini plan A7): the implementer and the
+// reviewer of a task whose profile froze an honoured pin; "" for any other role or task.
+func labelModel(t *v1alpha1.Task, role string) string {
+	if t.Status.Profile == nil || (role != "implementer" && role != "reviewer") {
+		return ""
+	}
+	return t.Status.Profile.Model
 }
 
 // current is the task's last run record.

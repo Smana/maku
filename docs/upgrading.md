@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [The `model:<alias>` label pin](#the-modelalias-label-pin)
 - [Run aliases and per-alias prices](#run-aliases-and-per-alias-prices)
 - [Gemini: the gemini and vertex presets](#gemini-the-gemini-and-vertex-presets)
 - [The OpenCode image runs repository checks](#the-opencode-image-runs-repository-checks)
@@ -51,6 +52,13 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## The `model:<alias>` label pin
+
+The `Task` CRD gains `status.profile.model`, and a run's `provenance.modelSource` may be `label`:
+upgrade the CRDs (`agent-factory-crds`) before the factory. No value changes. A maintainer's
+`model:<alias>` label on an issue puts its implementer and reviewer on that alias
+([factory](factory.md)).
 
 ## Run aliases and per-alias prices
 
