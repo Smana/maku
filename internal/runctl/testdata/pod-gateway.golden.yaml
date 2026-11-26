@@ -40,6 +40,8 @@ spec:
       value: /run/agent/task/rules.md
     - name: HOME
       value: /home/openhands
+    - name: MAKU_ALIASES
+      value: agent-default,tier-light,tier-standard,kimi-frontier
     - name: ROOM_ID
       value: roomroom
     - name: BRIDGE_URL

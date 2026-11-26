@@ -147,6 +147,15 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	if isOpenCode {
 		env = append(env, corev1.EnvVar{Name: "AGENT_HARNESS", Value: "opencode"})
 	}
+	// Gemini plan A5, A6: the aliases the run's listener serves, which OpenCode lists as its models
+	// so a new alias needs no image release, and the run's alias's rates for OpenHands' own counter.
+	if len(m.Aliases) > 0 {
+		env = append(env, corev1.EnvVar{Name: "MAKU_ALIASES", Value: strings.Join(m.Aliases, ",")})
+	}
+	if m.Price != nil {
+		env = append(env, corev1.EnvVar{Name: "LLM_INPUT_USD_PER_MTOK", Value: m.Price.Input},
+			corev1.EnvVar{Name: "LLM_OUTPUT_USD_PER_MTOK", Value: m.Price.Output})
+	}
 	if s.Effort != "" {
 		env = append(env, corev1.EnvVar{Name: "LLM_REASONING_EFFORT", Value: s.Effort})
 	}

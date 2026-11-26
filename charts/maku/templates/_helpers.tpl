@@ -390,7 +390,8 @@ and an empty namespace the release's, which is where the umbrella runs it. */}}
   "audiencePrefix" $prefix
   "aliases" (dict "public" $aliases.public "internal" ($aliases.internal | default list))
   "vision" (dict "public" (($g.vision | default dict).public | default list) "internal" (($g.vision | default dict).internal | default list))
-  "lightAlias" ($g.lightAlias | default "") | toJson -}}
+  "lightAlias" ($g.lightAlias | default "")
+  "prices" ($g.prices | default dict) | toJson -}}
 {{- else if eq $mode "secret" -}}
 {{- if not .Values.demoValues -}}
 {{- fail "runController.model.mode secret is demo-only (v4 D7): the provider key would sit in the sandbox. Set model.mode gateway with model.gateway.aliases, or demoValues: true for a demo (values-quickstart.yaml, the umbrella's values-demo.yaml); docs/upgrading.md#the-gateway-is-the-model-path" -}}

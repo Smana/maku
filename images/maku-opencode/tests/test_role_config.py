@@ -52,6 +52,18 @@ class RoleConfigTest(unittest.TestCase):
         self.assertEqual([v["id"] for v in variants], ["low", "medium", "high"])
         self.assertEqual(variants[1]["body"], {"reasoning_effort": "medium"})
 
+    def test_aliases_come_from_the_run_controller(self):
+        # Gemini plan A5: MAKU_ALIASES is the run's listener's aliases, so a new one needs no image.
+        c = role_config.role_config({**PUBLIC, "MODEL": "gemini-standard", "MAKU_ALIASES": "agent-default,gemini-standard"})
+        models = c["providers"]["maku"]["models"]
+        self.assertEqual(list(models), ["agent-default", "gemini-standard"])
+        self.assertEqual([v["id"] for v in models["gemini-standard"]["variants"]], ["low", "medium", "high"])
+        self.assertEqual(c["model"], "maku/gemini-standard#high")
+
+    def test_aliases_fall_back_to_the_defaults(self):
+        c = role_config.role_config(PUBLIC)
+        self.assertEqual(list(c["providers"]["maku"]["models"]), list(role_config.DEFAULT_ALIASES))
+
     def test_internal_cache_marker_and_public_omission(self):
         self.assertEqual(
             role_config.role_config(INTERNAL)["providers"]["maku"]["compatibility"]["cacheFormat"],

@@ -193,6 +193,10 @@ type Gateway struct {
 	// and a search implementer's child. Every non-empty listener must serve it, so no pod is
 	// created with a dead LIGHT_BASE_URL.
 	LightAlias string `json:"lightAlias,omitempty"`
+	// Prices are an alias's USD per million tokens (Gemini plan A6), the served model's meter.prices
+	// row: a run on a priced alias tells its harness, so OpenHands' own counter prices the model the
+	// alias reaches and not GLM. An alias without one keeps the harness's defaults.
+	Prices map[string]AliasPrice `json:"prices,omitempty"`
 	// ServiceAccount is the run-controller's own, which the gateway-token-ttl preflight requests a
 	// token for, at the longest run's lifetime (GW9).
 	ServiceAccount ServiceAccountRef `json:"serviceAccount,omitzero"`
@@ -208,6 +212,12 @@ type ServiceAccountRef struct {
 type GatewayPorts struct {
 	Public   int `json:"public,omitempty"`
 	Internal int `json:"internal,omitempty"`
+}
+
+// AliasPrice is one alias's input and output rates, USD per million tokens, as decimal strings.
+type AliasPrice struct {
+	Input  string `json:"input"`
+	Output string `json:"output"`
 }
 
 // GatewayAliases are the aliases served per data class.
@@ -247,6 +257,9 @@ func (c Config) modelPodLabels() map[string]string {
 
 // aliasRE is a gateway alias: a path segment, and an audience's last label.
 var aliasRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// priceRE is a non-negative decimal, such as 3.30 or 15.
+var priceRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
 // audiencePrefixRE is dot-separated alias-like labels.
 var audiencePrefixRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
@@ -321,6 +334,16 @@ func (c Config) model() []error {
 	}{{"public", g.Aliases.Public}, {"internal", g.Aliases.Internal}} {
 		if len(cl.aliases) > 0 && !slices.Contains(cl.aliases, g.LightAlias) {
 			errs = append(errs, fmt.Errorf("model.gateway.lightAlias %s is not served on the %s listener (maku-gateway aliases.%s)", g.LightAlias, cl.class, cl.class))
+		}
+	}
+	for a, p := range g.Prices {
+		if !slices.Contains(g.Aliases.Public, a) && !slices.Contains(g.Aliases.Internal, a) {
+			errs = append(errs, fmt.Errorf("model.gateway.prices.%s: no listener serves this alias", a))
+		}
+		for _, v := range []string{p.Input, p.Output} {
+			if !priceRE.MatchString(v) {
+				errs = append(errs, fmt.Errorf("model.gateway.prices.%s: %q is not a decimal USD per million tokens", a, v))
+			}
 		}
 	}
 	for _, cl := range []struct {
@@ -661,6 +684,10 @@ type Model struct {
 	JudgeBaseURL               string
 	Light, LightBaseURL        string
 	Port                       int
+	// Aliases are the aliases the run's listener serves, and Price the run's alias's rates when
+	// model.gateway.prices names it: gateway mode only (Gemini plan A5, A6).
+	Aliases []string
+	Price   *AliasPrice
 }
 
 // defaultAlias is spec.model's CRD default.
@@ -694,7 +721,14 @@ func (c Config) GatewayModel(r *v1alpha1.AgentRun) Model {
 		port = g.Ports.Internal
 	}
 	base := fmt.Sprintf("http://%s:%d/m/", u.Hostname(), port)
-	m := Model{BaseURL: base + alias(r) + "/v1", Name: alias(r), Host: u.Hostname(), Port: port}
+	served := g.Aliases.Public
+	if class(r) == "internal" {
+		served = g.Aliases.Internal
+	}
+	m := Model{BaseURL: base + alias(r) + "/v1", Name: alias(r), Host: u.Hostname(), Port: port, Aliases: served}
+	if p, ok := g.Prices[alias(r)]; ok {
+		m.Price = &p
+	}
 	if lightOn(r) {
 		m.Light, m.LightBaseURL = g.LightAlias, base+g.LightAlias+"/v1"
 	}

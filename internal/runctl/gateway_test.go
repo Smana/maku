@@ -316,3 +316,39 @@ func TestAJudgeElsewhereKeepsBothTokens(t *testing.T) {
 		t.Errorf("light-token %+v", s)
 	}
 }
+
+// Gemini plan A5, A6: a gateway run is told the aliases its listener serves (MAKU_ALIASES, which
+// OpenCode lists as its models) and, when model.gateway.prices names its alias, the alias's own
+// rates (LLM_INPUT_USD_PER_MTOK, LLM_OUTPUT_USD_PER_MTOK), so OpenHands' own counter stops pricing
+// every model as GLM. An alias without a row keeps the harness's defaults.
+func TestPodGatewayAliasesAndPrices(t *testing.T) {
+	c, err := cfgFrom(t, gatewayConfig+"    prices:\n      kimi-frontier: {input: \"2.00\", output: \"10.00\"}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		mut                   func(*v1alpha1.AgentRun)
+		aliases, input, outpt string
+	}{
+		"a priced public alias": {func(r *v1alpha1.AgentRun) { r.Spec.Model = "kimi-frontier" }, "agent-default,tier-light,tier-standard,kimi-frontier", "2.00", "10.00"},
+		"an unpriced one":       {func(r *v1alpha1.AgentRun) { r.Spec.Model = "tier-standard" }, "agent-default,tier-light,tier-standard,kimi-frontier", "", ""},
+		"an internal run":       {func(r *v1alpha1.AgentRun) { r.Spec.Model, r.Spec.DataClass = "tier-standard", "internal" }, "tier-light,tier-standard", "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := gatewayRun(tc.mut)
+			env := envOf(&Pod(r, c, c.GatewayModel(r), "abcdefgh").Spec.Containers[0])
+			if env["MAKU_ALIASES"] != tc.aliases || env["LLM_INPUT_USD_PER_MTOK"] != tc.input || env["LLM_OUTPUT_USD_PER_MTOK"] != tc.outpt {
+				t.Fatalf("MAKU_ALIASES %q, prices %q %q; want %q, %q %q", env["MAKU_ALIASES"],
+					env["LLM_INPUT_USD_PER_MTOK"], env["LLM_OUTPUT_USD_PER_MTOK"], tc.aliases, tc.input, tc.outpt)
+			}
+		})
+	}
+	for name, raw := range map[string]string{
+		"a price for an alias no listener serves": "      gemini-light: {input: \"1.50\", output: \"7.50\"}\n",
+		"a price that is not a decimal":           "      kimi-frontier: {input: \"two\", output: \"10\"}\n",
+	} {
+		if _, err := cfgFrom(t, gatewayConfig+"    prices:\n"+raw); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
