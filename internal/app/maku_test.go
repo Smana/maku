@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1476,5 +1477,65 @@ func TestMakuWorkflowDryRun(t *testing.T) {
 	}
 	if parsed.Workflow != "thorough" || len(parsed.Rows) != 2 {
 		t.Fatalf("parsed = %+v", parsed)
+	}
+}
+
+// A three-issue plan under wholePlans files three issues in plan order from the terminal, the
+// second and third naming the issues they wait for, and starts each one: the same path maku mcp's
+// start tool takes. The Cost row's step-up is on the plan's basis, never below its ceiling.
+func TestTerminalStartFilesAWholePlanInOrder(t *testing.T) {
+	b := newMakuBroker(t)
+	b.handoff = func(path string, _ []byte) (int, string) {
+		switch path {
+		case "/api/handoffs":
+			return http.StatusOK, `{"apiVersion":"handoff/v1","id":"h5555555555","text":"Handoff h5555555555","ready":true,"workflow":"standard","repository":"Smana/maku","title":"one","body":"Body one."}`
+		case "/api/handoffs/h5555555555/check":
+			return http.StatusOK, `{"id":"h5555555555","hash":"sha256:` + strings.Repeat("c", 64) + `","canStart":true,"linked":true,"workflow":"standard","wholePlans":true,` +
+				`"repository":"Smana/maku","title":"one","body":"Body one.",` +
+				`"activeChoice":{"name":"standard","ceilingUSD":5.10,"stepUpCeilingUSD":13.60,"path":["implementer","reviewer","CI","merge gate"]},` +
+				`"plan":{"repository":"Smana/maku","budget":{"ceilingUSD":15.30},"issues":[` +
+				`{"index":1,"title":"one","body":"Body one."},` +
+				`{"index":2,"title":"two","body":"Body two.","dependsOn":[1]},` +
+				`{"index":3,"title":"three","body":"Body three.","dependsOn":[2],"outcome":"plan-first"}]}}`
+		default:
+			return http.StatusNotFound, `{"error":"not_found"}`
+		}
+	}
+	r, out := configured(t, b)
+	r.Ask = func(string) (bool, error) { return true, nil }
+	var titles, bodies []string
+	r.FileIssue = func(_ context.Context, repo, title, body string) (string, error) {
+		titles, bodies = append(titles, title), append(bodies, body)
+		return fmt.Sprintf("https://github.com/%s/issues/%d", repo, 40+len(titles)), nil
+	}
+	var labels []string
+	label := func(_ context.Context, _ string, n int, l string) error {
+		labels = append(labels, fmt.Sprintf("#%d %s", n, l))
+		return nil
+	}
+	r.AddLabel, r.LabelIssue = label, label
+
+	if err := r.Run(t.Context(), []string{"start", "three things"}); err != nil {
+		t.Fatalf("maku start: %v", err)
+	}
+	if !slices.Equal(titles, []string{"one", "two", "three"}) {
+		t.Fatalf("filed %v, want [one two three]", titles)
+	}
+	if strings.Contains(bodies[0], "Waits for") || !strings.Contains(bodies[1], "Waits for #41") || !strings.Contains(bodies[2], "Waits for #42") {
+		t.Fatalf("bodies do not name what they wait for: %q", bodies)
+	}
+	want := []string{"#41 factory/ready", "#42 factory/ready", "#43 plan-first", "#43 factory/ready"}
+	if !slices.Equal(labels, want) {
+		t.Fatalf("labels = %v, want %v", labels, want)
+	}
+	got := out.String()
+	for _, w := range []string{"this files all 3, in order", "Body three.", "up to $15.30 · up to $40.80 if it steps up",
+		"Filed https://github.com/Smana/maku/issues/43", "Started 3 issues"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("output lacks %q:\n%s", w, got)
+		}
+	}
+	if strings.Contains(got, "$13.60") {
+		t.Errorf("the Cost row shows one task's step-up beside the plan's ceiling:\n%s", got)
 	}
 }

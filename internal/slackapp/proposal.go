@@ -460,7 +460,7 @@ func adaptProposalSections(p ProposalPayload, sections []roomview.ProposalSectio
 		Reason:          roomview.Reason(source, "", suggested, "", nil),
 		Path:            path,
 		CeilingUSD:      ceiling,
-		StepUpUSD:       p.StepUpUSD,
+		StepUpUSD:       proposalStepUpUSD(p),
 	}
 	var cardBuf strings.Builder
 	_ = roomview.WorkflowCardText(&cardBuf, card, roomview.Options{Format: roomview.Slack})
@@ -1876,4 +1876,13 @@ func (a *App) filedText(res RunResult, user string) string {
 		return fmt.Sprintf("Filed %d issues for <@%s>%s: %s", len(res.Issues), user, by, strings.Join(parts, ", "))
 	}
 	return fmt.Sprintf("Filed #%d for <@%s>%s; the factory starts it. Room: %s", res.Issue, user, by, url)
+}
+
+// proposalStepUpUSD is the card's step-up figure on the plan's basis: the broker's plan budget
+// carries it summed over the plan's issues, while the active workflow's step-up is one task's.
+func proposalStepUpUSD(p ProposalPayload) float64 {
+	if p.Plan.Budget.StepUpCeilingUSD > 0 {
+		return p.Plan.Budget.StepUpCeilingUSD
+	}
+	return p.StepUpUSD
 }

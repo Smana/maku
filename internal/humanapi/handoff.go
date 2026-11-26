@@ -846,7 +846,7 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 			activeName = plan.Issues[0].Profile
 		}
 		if pr, ok := catProfiles[activeName]; ok {
-			plan.Budget.StepUpCeilingUSD = pr.StepUpCeilingUSD
+			plan.Budget.StepUpCeilingUSD = roomview.PlanStepUpUSD(plan.Budget.CeilingUSD, pr.CeilingUSD, pr.StepUpCeilingUSD, len(plan.Issues))
 			ac := WorkflowChoice{
 				Name:             activeName,
 				Description:      pr.Description,

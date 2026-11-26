@@ -500,19 +500,22 @@ func withDependsOn(body string, deps []int) string {
 	return strings.TrimRight(body, "\n") + "\n\nWaits for " + list + "\n\n<!-- maku depends-on: " + list + " -->\n"
 }
 
-func (r *Relay) fileWholePlan(ctx context.Context, checked *handoffCheckShape, draft draftShape,
-	offer, startNow, chosen bool, workflowIgnored string) any {
-	gov := checked.governed()
-	filedByIdx := make(map[int]int, len(checked.view.Issues))
-	urls := make([]string, 0, len(checked.view.Issues))
-	type filedEntry struct {
-		Index     int    `json:"index"`
-		URL       string `json:"url"`
-		Issue     int    `json:"issue,omitempty"`
-		DependsOn []int  `json:"dependsOn,omitempty"`
-	}
-	entries := make([]filedEntry, 0, len(checked.view.Issues))
-	for i, is := range checked.view.Issues {
+// FiledIssue is one issue of a whole plan as start filed it: its plan index, its URL and number,
+// and the filed issues it waits for.
+type FiledIssue struct {
+	Index     int    `json:"index"`
+	URL       string `json:"url"`
+	Issue     int    `json:"issue,omitempty"`
+	DependsOn []int  `json:"dependsOn,omitempty"`
+}
+
+// fileInOrder files every issue of view on repo in plan order, each body naming the filed issues
+// it waits for. Both start surfaces (maku mcp's start tool and the terminal maku start) file a
+// whole plan through it. On an error it returns the issues filed before it.
+func fileInOrder(ctx context.Context, repo string, view planView, file IssueFiler) ([]FiledIssue, error) {
+	filedByIdx := make(map[int]int, len(view.Issues))
+	entries := make([]FiledIssue, 0, len(view.Issues))
+	for i, is := range view.Issues {
 		idx := is.Index
 		if idx == 0 {
 			idx = i + 1
@@ -523,17 +526,29 @@ func (r *Relay) fileWholePlan(ctx context.Context, checked *handoffCheckShape, d
 				deps = append(deps, num)
 			}
 		}
-		body := withDependsOn(is.Body, deps)
-		u, err := r.File(ctx, draft.Repo, is.Title, body)
+		u, err := file(ctx, repo, is.Title, withDependsOn(is.Body, deps))
 		if err != nil {
-			return mcpwire.ToolError("not_filed: " + err.Error())
+			return entries, err
 		}
-		num, _ := issueNumber(u, draft.Repo)
+		num, _ := issueNumber(u, repo)
 		if num > 0 {
 			filedByIdx[idx] = num
 		}
-		urls = append(urls, u)
-		entries = append(entries, filedEntry{Index: idx, URL: u, Issue: num, DependsOn: deps})
+		entries = append(entries, FiledIssue{Index: idx, URL: u, Issue: num, DependsOn: deps})
+	}
+	return entries, nil
+}
+
+func (r *Relay) fileWholePlan(ctx context.Context, checked *handoffCheckShape, draft draftShape,
+	offer, startNow, chosen bool, workflowIgnored string) any {
+	gov := checked.governed()
+	entries, err := fileInOrder(ctx, draft.Repo, checked.view, r.File)
+	if err != nil {
+		return mcpwire.ToolError("not_filed: " + err.Error())
+	}
+	urls := make([]string, 0, len(entries))
+	for _, e := range entries {
+		urls = append(urls, e.URL)
 	}
 	if !offer || !startNow {
 		next := "show the developer the issue links and stop: they label them " + readyLabel + " to start the work, their decision. Never add the label yourself"
@@ -635,10 +650,10 @@ func renderStartCard(checked *handoffCheckShape, defaultWF string, allChoices []
 	ceiling := checked.view.Budget.CeilingUSD
 	if c, ok := checked.findChoice(defaultWF); ok {
 		path = slices.Clone(c.Path)
-		stepUpUSD = c.StepUpCeilingUSD
 		if ceiling == 0 {
 			ceiling = c.CeilingUSD
 		}
+		stepUpUSD = roomview.PlanStepUpUSD(ceiling, c.CeilingUSD, c.StepUpCeilingUSD, len(checked.view.Issues))
 	}
 	if len(path) == 0 && len(roles) > 0 {
 		path = append(slices.Clone(roles), "CI", "merge gate")
