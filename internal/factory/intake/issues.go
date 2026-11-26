@@ -724,14 +724,25 @@ func (p *IssuePoller) revert(ctx context.Context, cfg *config.Config, n int, all
 	if drill {
 		ann[v1alpha1.AnnotationDrill] = "true"
 	}
+	matched := false
 	for i := range all {
 		t := &all[i]
 		if ref := t.Status.PullRequest; ref != nil && ref.Number == n && (ref.AutoMerged || ref.MergedHow == "approved") && p.owns(cfg, t) {
+			matched = true
 			body, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": ann}})
 			obj := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: t.Name, Namespace: t.Namespace}}
 			if err := p.Client.Patch(ctx, obj, client.RawPatch(types.MergePatchType, body)); err != nil {
 				return fmt.Errorf("revert task %s: %w", t.Name, err)
 			}
+		}
+	}
+	if !matched {
+		// The label reverts only what the merger merged (§6.4: human merges are never reverted). Say so
+		// on the pull request, and name the drill that does work on any merged pull request, rather
+		// than consume the label in silence.
+		e := narrate.RevertNotFactoryMerged(p.repo(cfg).Name, n, evs[len(evs)-1].At)
+		if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("pr-%d", n), e); err != nil {
+			return err
 		}
 	}
 	return p.Forge.RemoveLabel(ctx, n, LabelRevert)

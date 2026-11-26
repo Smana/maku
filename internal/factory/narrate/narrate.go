@@ -1065,6 +1065,18 @@ func Refused(number int, reason string, at time.Time) Event {
 		Body: fmt.Sprintf("The agent factory did not start a task for #%d: %s.", number, Reason(reason))}
 }
 
+// RevertNotFactoryMerged answers a maintainer's factory/revert on a pull request the factory did not
+// merge (a maintainer's merge, or one outside the factory's tasks): the label reverts only what the
+// merger merged, so no revert is opened. A rollback drill of any merged pull request is
+// `maku policy drill`, which opens the labelled revert for a maintainer to merge.
+func RevertNotFactoryMerged(repository string, number int, at time.Time) Event {
+	return Event{Key: fmt.Sprintf("revert-refused-not_factory_merged-%d", at.Unix()), Class: ClassChanged,
+		Body: fmt.Sprintf("The agent factory did not revert #%d: `factory/revert` reverts only a pull request the factory merged "+
+			"(auto-merged, or merged on a maintainer's approval), and a human's merge is never reverted by label. "+
+			"For a rollback drill of this pull request, run `maku policy drill %s#%d`: the factory opens a revert labelled "+
+			"`factory/drill` for a maintainer to review and merge.", number, repository, number)}
+}
+
 // PersonOverBudget refuses a label whose labeller's day is spent (v2 per-person caps D4): no Task,
 // the person, their cap and the reset named, so re-labelling after it retries.
 func PersonOverBudget(number int, person string, capMicroUSD int64, at time.Time) Event {

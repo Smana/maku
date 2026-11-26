@@ -41,6 +41,7 @@ func (readAccess) CanRead(_ context.Context, p authn.Principal, repository strin
 type fakeEditor struct {
 	previews, timelines, recents, backtests int
 	backtestErr                             error
+	drillErr                                error
 }
 
 func (f *fakeEditor) Preview(context.Context, string, string) (any, error) {
@@ -85,6 +86,9 @@ func (f *fakeEditor) PromotionStatus(_ context.Context, _, _ string, _ int) (any
 }
 
 func (f *fakeEditor) Drill(_ context.Context, repo string, number int) (any, error) {
+	if f.drillErr != nil {
+		return nil, f.drillErr
+	}
 	return map[string]any{"repository": repo, "pullRequest": number, "url": "https://github.com/example/repo/pull/43"}, nil
 }
 

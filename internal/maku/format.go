@@ -122,6 +122,10 @@ var reasons = map[string]string{
 	"no_deeper_workflow":     "this task has no deeper workflow to step up to (or has already stepped up once)",
 	"deeper_over_cap":        "stepping up costs more than the cost confirmed for this task: to run the deeper workflow, start the task again with it (New task, or maku start --workflow <name>), which confirms its higher cost",
 	"unknown_task":           "the factory has no task of that id",
+	"drill_not_merged":       "a rollback drill reverts a merged pull request: this one is not merged",
+	"drill_no_connection":    "the factory has no GitHub connection for this repository right now; retry",
+	"drill_no_merger":        "the factory has no merger connection for this repository, and the merger opens a drill's revert: check the merger App's key and installation",
+	"drill_revert_failed":    "GitHub refused the revert (the factory's log names why): check the merger App's contents: write on this repository",
 }
 
 // Explain is a rejection in words, or the reason itself when it has none.

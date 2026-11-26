@@ -40,8 +40,10 @@ manifest and no `.policy.yml` rule is needed (`maku/merge-gate` is the gate stat
    ([selection from the diff](#selection-from-the-diff)) and writes a `shadow_would_arm` record for
    each shadow policy that holds, regardless of any issue label.
 3. Merge the pull requests you agree with unchanged. For the first drill, choose one merged shadow
-   pull request, apply `factory/revert` and `factory/drill`, and let the merger open and merge the
-   revert. That single drill covers the repository: evidence now accumulates only from maintainer
+   pull request and run `maku policy drill owner/name#PR`: the merger opens a revert labelled
+   `factory/drill`, and you review and merge it. (The `factory/revert` label reverts only a pull
+   request the factory merged, so it cannot drill a shadow pull request a maintainer merged.) That
+   single drill covers the repository: evidence now accumulates only from maintainer
    merges at the exact judged head. Once a policy reaches its clean minimum (`5` for `evidence: low`,
    `20` for `standard`), [promote it](#promotion-shadow-to-live) with a one-line `mode: live` binding.
 
@@ -856,8 +858,9 @@ the PR is open. There are no **Merged** or **Abandon** buttons: served live clos
 With `gitops` unset, the response instead carries the one-line proposal and its `gh pr create`
 command; the maintainer opens the PR manually. `maku policy promote POLICY --repository owner/name`
 uses the same flow. For the first rollback drill, choose a merged PR of the repository and run
-`maku policy drill owner/name#PR`: the factory opens a revert labelled `factory/drill`, and a
-maintainer reviews and merges that too.
+`maku policy drill owner/name#PR`: the merger App opens a revert labelled `factory/drill`, and a
+maintainer reviews and merges that too. Any merged pull request of the repository qualifies,
+whoever merged it.
 
 Below the minimum, a maintainer may request an exception (a lower minimum and a justification of 20
 to 2,000 characters); one of `policyManagement.operators` approves or refuses it once. An approved

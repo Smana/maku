@@ -28,7 +28,7 @@ Every label below is read once a minute (`poll.issues`). Labels applied by non-m
 | Label `factory/stop` on the issue or its PR | Revokes and deletes active runs and ends the task `Stopped` (kept if no task is running yet so a later start stops immediately; removed and answered if applied by a non-maintainer) | Maintainer |
 | **cancel task** or **discard task** on the room page, `maku cancel <task> [--discard]`, or the `cancel` tool | Stops the task as `factory/stop` does, reason `cancelled`, even when its issue was deleted; a discard also closes the pull request, deletes `agent/<task>` and closes the issue as not planned ([`POST /v1/tasks/{task}/cancellations`](reference/api.md#post-v1taskstaskcancellations)) | The task's owner or a maintainer, with write |
 | The task's issue deleted on GitHub | Ends the task `Stopped`, reason `issue_deleted`, within 5 minutes | — |
-| Label `factory/revert` on an auto-merged PR within `merge.revertWindow` | Opens a revert PR via the merger App, ends the task `Reverted`, and counts against the class [breaker](#the-merge-gate) (human merges are never reverted) | Maintainer |
+| Label `factory/revert` on an auto-merged PR within `merge.revertWindow` | Opens a revert PR via the merger App, ends the task `Reverted`, and counts against the class [breaker](#the-merge-gate) (human merges are never reverted: on a PR the factory did not merge, the factory removes the label and comments that it opened no revert, naming `maku policy drill`) | Maintainer |
 | Label `factory/drill` on an auto-merged PR **before** `factory/revert` | Marks the revert a [drill](#the-merge-gate), copies the label to the revert PR, and skips the breaker | Maintainer |
 | Label `factory/hold` on a PR | Hands the PR to a human (`held`) before class or approval checks; removing it re-enters the gate (`reentered_unheld`), though it does not disarm an already-armed GitHub auto-merge | Anyone able to label |
 | Comment `/factory split` alone on a line on a `split_proposed` issue | Approves the proposed [split](#splits) and charges every part to the commenter (read before `/factory retry`) | Maintainer with `write` |
@@ -289,8 +289,12 @@ merge leaves the window first. A monitored class whose `followUpWindow` is short
 Such a revert trips the class again once the breaker sees it: at once for a merge whose Task exists,
 after a restart for one known only from GitHub's labels, which are read once per process.
 
-**Drills.** A maintainer who reverts on purpose (a runbook drill) labels the pull request
-`factory/drill` before `factory/revert`. The merger copies the label to the revert pull request and
+**Drills.** Two paths open a drill revert. For any merged pull request, whoever merged it, run
+`maku policy drill owner/name#PR`: the merger App opens a revert labelled `factory/drill` for a
+maintainer to merge ([promotion](merge-policies.md#promotion-shadow-to-live)). For a pull request
+the factory merged, a maintainer who reverts on purpose (a runbook drill) labels the pull request
+`factory/drill` before `factory/revert`; the labels never revert a human's merge, and the factory
+answers them on one with a comment naming `maku policy drill`. The merger copies the label to the revert pull request and
 records `status.pullRequest.drill`: "the ledger does not count that revert". The ledger reads a
 revert pull request's `factory/drill` only when the label is still on it and its newest label event
 is the merger App's or a maintainer's; anyone else's label, or a truncated event list, counts the
@@ -882,7 +886,7 @@ the policy's meaning shown read-only. **Check** is the factory's: each binding r
 resolves it, or refused with its reason, and the `Repository` manifest to commit. A policy is edited
 on its own page, checked against every consumer the maintainer reads, and answers the
 `mergepolicy-<name>.yaml` to commit. Under repository authority the bindings are the file's, edited
-by pull request. Editors write nothing; a configured promotion or rollback drill opens a pull request through the factory App and never merges it ([the settings pages](merge-policies.md#the-settings-pages)).
+by pull request. Editors write nothing; a configured promotion opens a pull request through the factory App, a rollback drill opens its revert through the merger App, and neither merges it ([the settings pages](merge-policies.md#the-settings-pages)).
 
 **The decision timeline.** For a pull request, each decision record the factory wrote renders in
 the gate's order: fixed base, author mode, class, the recorded conditions, deny, approval subset,

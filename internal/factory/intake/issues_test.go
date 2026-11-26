@@ -889,3 +889,31 @@ func TestTwoOutcomeLabelsConflict(t *testing.T) {
 		t.Fatalf("expected outcome_conflict comment, got %v", cs)
 	}
 }
+
+// A maintainer's factory/revert on a pull request the factory did not merge opens no revert: the
+// factory says so on the pull request, names `maku policy drill`, and consumes the label.
+func TestRevertLabelOnAMaintainersMergeAnswers(t *testing.T) {
+	tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot", Namespace: "agent-system"},
+		Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseDone, PullRequest: &v1alpha1.PullRequestRef{Number: 12, MergedHow: "human"}}}
+	f := forgetest.NewFake()
+	f.SetLabeled(LabelRevert, forge.Item{Number: 12, PullRequest: true})
+	f.SetEvents(12, forge.LabelEvent{Actor: "Smana", Label: LabelRevert, At: t0})
+	p, c := poller(t, f, tk)
+	for range 2 { // a second poll posts nothing twice
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got v1alpha1.Task
+	_ = c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &got)
+	if got.Annotations[v1alpha1.AnnotationRevert] != "" {
+		t.Fatalf("a maintainer's merge was marked for revert: %v", got.Annotations)
+	}
+	cs := f.Comments(12)
+	if len(cs) != 1 || !strings.Contains(cs[0], "did not revert #12") || !strings.Contains(cs[0], "maku policy drill Smana/cloud-native-ref#12") {
+		t.Fatalf("comments = %q", cs)
+	}
+	if !slices.Contains(f.Removed(12), LabelRevert) {
+		t.Fatalf("label not consumed: %v", f.Removed(12))
+	}
+}

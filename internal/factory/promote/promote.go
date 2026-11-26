@@ -26,9 +26,24 @@ type Git interface {
 	CreatePR(ctx context.Context, base, head, title, body string, draft bool) (forge.PR, error)
 	PullRequestForBranch(ctx context.Context, branch string) (int, error)
 	PullRequest(ctx context.Context, number int) (forge.PR, error)
+}
+
+// Reverter is the merger's side of a drill: it opens the revert and labels it. A revert creates a
+// branch and a commit, which needs contents: write; with a separate merger App the factory App holds
+// contents: read only, so a drill through the factory App always failed (R16: reverts are merge-side
+// calls, made with the merger's key, as the reconciler's own reverts are).
+type Reverter interface {
 	RevertPR(ctx context.Context, of forge.RevertOf) (forge.Revert, error)
 	AddLabels(ctx context.Context, number int, labels ...string) error
 }
+
+// Drill's refusals, each a distinct reason on POST /v1/policy/drill.
+var (
+	ErrUnknownRepository = errors.New("the repository is not served by this factory")
+	ErrNoConnection      = errors.New("the repository has no factory connection")
+	ErrNoMerger          = errors.New("the repository has no merger connection")
+	ErrNotMerged         = errors.New("a rollback drill needs a merged pull request")
+)
 
 // Reports is the repository's current evidence report.
 type Reports interface {
@@ -40,6 +55,8 @@ type Service struct {
 	Cfg     config.Source
 	Reports Reports
 	Git     func(repository string) (Git, bool)
+	// Merger is the repository's merger connection, which opens and labels a drill's revert.
+	Merger func(repository string) (Reverter, bool)
 }
 
 // Result is a promotion PR, or the command to open it when gitops is not configured.
@@ -179,30 +196,45 @@ func (s *Service) Status(ctx context.Context, repository, class string, number i
 	return Status{PullRequestState: pr.State, ServedMode: c.Mode}, nil
 }
 
-// Drill opens a labelled revert of a merged pull request, leaving its merge to a maintainer.
+// Drill opens a labelled revert of a merged pull request, leaving its merge to a maintainer. Any
+// merged pull request of a served repository qualifies, whoever merged it: the factory reads it with
+// the factory App and opens the revert with the merger, as the merger's own reverts are opened.
 func (s *Service) Drill(ctx context.Context, repository string, number int) (forge.Revert, error) {
 	cfg := s.Cfg.Current()
 	rc := cfg.RepositoryFor(repository)
 	if rc == nil {
-		return forge.Revert{}, errors.New("unknown repository")
+		return forge.Revert{}, ErrUnknownRepository
 	}
 	if s.Git == nil {
-		return forge.Revert{}, errors.New("the repository has no factory connection")
+		return forge.Revert{}, ErrNoConnection
 	}
 	git, ok := s.Git(rc.Name)
 	if !ok {
-		return forge.Revert{}, errors.New("the repository has no factory connection")
+		return forge.Revert{}, ErrNoConnection
+	}
+	if s.Merger == nil {
+		return forge.Revert{}, ErrNoMerger
+	}
+	merger, ok := s.Merger(rc.Name)
+	if !ok {
+		return forge.Revert{}, ErrNoMerger
 	}
 	pr, err := git.PullRequest(ctx, number)
-	if err != nil || pr.State != "MERGED" {
-		return forge.Revert{}, errors.New("a rollback drill needs a merged pull request")
+	if err != nil {
+		return forge.Revert{}, fmt.Errorf("read #%d: %w", number, err)
 	}
-	revert, err := git.RevertPR(ctx, forge.RevertOf{Number: pr.Number, NodeID: pr.NodeID,
+	if pr.State != "MERGED" {
+		return forge.Revert{}, ErrNotMerged
+	}
+	revert, err := merger.RevertPR(ctx, forge.RevertOf{Number: pr.Number, NodeID: pr.NodeID,
 		Title: "Revert " + pr.Title, Body: fmt.Sprintf("Reverts %s#%d\n\nRollback drill requested through maku policy drill.", rc.Name, pr.Number), By: rc.Merge.MergerLogin})
 	if err != nil {
-		return forge.Revert{}, err
+		return forge.Revert{}, fmt.Errorf("open the revert of #%d: %w", number, err)
 	}
-	return revert, git.AddLabels(ctx, revert.Number, "factory/drill")
+	if err := merger.AddLabels(ctx, revert.Number, "factory/drill"); err != nil {
+		return revert, fmt.Errorf("label the revert #%d factory/drill: %w", revert.Number, err)
+	}
+	return revert, nil
 }
 
 func proposalFor(raw, repository, class string) ([]byte, int, error) {
