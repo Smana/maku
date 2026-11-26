@@ -108,7 +108,7 @@ monitoring:
 | uid | Title | Rendered with |
 |---|---|---|
 | `agents-overview` | The fleet at a glance: health, spend, runs in flight, pull requests, firing alerts | always |
-| `agent-factory` | Tasks, pull request outcomes, budgets, automatic merges by policy and why other candidates waited, the ledger against the gateway | always |
+| `agent-factory` | Tasks, pull request outcomes, budgets, automatic merges by policy and why other candidates waited, the ledger against the gateway, cost and effect by stage, ceiling use, workflow choices and step-ups, cost by harness | always |
 | `agent-room` | One room (`var-room`): its runs, spend, approvals, events | always |
 | `agent-run` | One run (`var-run`): phase, duration, models, tokens and cost, the ledger against the gateway | always |
 | `agent-identity` | Spend per identity (`var-principal`): one principal at a time, never ranked | always |

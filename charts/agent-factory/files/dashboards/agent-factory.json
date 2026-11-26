@@ -820,6 +820,204 @@
           "legendFormat": "{{cohort}} / {{harness}}"
         }
       ]
+    },
+    {
+      "id": 26,
+      "type": "row",
+      "title": "Workflows and stages",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 89,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Cost by stage (7 d)",
+      "description": "USD each stage of the tasks that ended in the window spent, from maku_factory_stage_cost_usd (WR5): ask, plan, implement, review, judge, step_up, other. Recorded once per stage when its task ends.",
+      "gridPos": {
+        "x": 0,
+        "y": 90,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (stage) (increase(maku_factory_stage_cost_usd_sum[7d]))",
+          "legendFormat": "{{stage}}"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "table",
+      "title": "What each stage changed (7 d)",
+      "description": "Stages of the tasks that ended in 7 days, by stage, effect and the task's outcome, from maku_factory_stage_effects_total (WR5). A stage that cost money and changed nothing (no_verdict, not_needed) is the one to drop from a workflow.",
+      "gridPos": {
+        "x": 12,
+        "y": 90,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (stage, effect, outcome) (increase(maku_factory_stage_effects_total[7d])) > 0",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Ceiling use, p50 and p90 (7 d)",
+      "description": "An ended task's USD over the ceiling its workflow card showed, from maku_factory_ceiling_use_ratio (WR5). 100 % is the ceiling; the buckets stop at 150 %, so a quantile past it reads 150 %.",
+      "gridPos": {
+        "x": 0,
+        "y": 98,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (increase(maku_factory_ceiling_use_ratio_bucket[7d])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum by (le) (increase(maku_factory_ceiling_use_ratio_bucket[7d])))",
+          "legendFormat": "p90"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Workflow choices (7 d)",
+      "description": "Ended tasks by what became of the automatic workflow choice, from maku_factory_workflow_choices_total (WR5): kept, overridden by a pin, or stepped_up after a failed run.",
+      "gridPos": {
+        "x": 8,
+        "y": 98,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (choice) (increase(maku_factory_workflow_choices_total[7d]))",
+          "legendFormat": "{{choice}}"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "table",
+      "title": "Step-ups (7 d)",
+      "description": "Workflow step-ups and offers on the tasks that ended in 7 days, by trigger, mode (auto, manual, offered) and the task's outcome, from maku_factory_step_ups_total (WR5).",
+      "gridPos": {
+        "x": 16,
+        "y": 98,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (trigger, mode, outcome) (increase(maku_factory_step_ups_total[7d])) > 0",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Cost by harness and role (7 d)",
+      "description": "USD per harness and role over the window, from maku_factory_run_cost_usd's harness label (openhands or opencode): which harness spends what, outside the trial's cohorts too.",
+      "gridPos": {
+        "x": 0,
+        "y": 106,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (harness, role) (increase(maku_factory_run_cost_usd_sum[7d]))",
+          "legendFormat": "{{harness}} / {{role}}"
+        }
+      ]
     }
   ]
 }
