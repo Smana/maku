@@ -71,7 +71,7 @@ func withShots(f *fakeShots) option {
 }
 
 // getFull is a GET that keeps the response headers.
-func getFull(t *testing.T, e env, path string, h http.Header) (*http.Response, string) {
+func getFull(t *testing.T, e env, path string, h http.Header) (int, http.Header, string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, e.ts.URL+path, nil)
 	if err != nil {
@@ -84,7 +84,7 @@ func getFull(t *testing.T, e env, path string, h http.Header) (*http.Response, s
 	}
 	defer func() { _ = r.Body.Close() }()
 	b, _ := io.ReadAll(r.Body)
-	return r, string(b)
+	return r.StatusCode, r.Header, string(b)
 }
 
 func TestScreenshotList(t *testing.T) {
@@ -120,9 +120,9 @@ func TestScreenshotList(t *testing.T) {
 
 func TestScreenshotImage(t *testing.T) {
 	e := setup(t, abc(t), withShots(shotsWorld()))
-	r, body := getFull(t, e, "/api/rooms/"+roomID+"/screenshots/"+shotA, admin("boss"))
-	if r.StatusCode != http.StatusOK || body != "\x89PNG" {
-		t.Fatalf("%d %q", r.StatusCode, body)
+	code, hdr, body := getFull(t, e, "/api/rooms/"+roomID+"/screenshots/"+shotA, admin("boss"))
+	if code != http.StatusOK || body != "\x89PNG" {
+		t.Fatalf("%d %q", code, body)
 	}
 	for k, want := range map[string]string{
 		"Content-Type":            "image/png",
@@ -131,7 +131,7 @@ func TestScreenshotImage(t *testing.T) {
 		"Content-Disposition":     `inline; filename="` + roomID + `-aaaa1111-1.png"`,
 		"Cache-Control":           "private, max-age=3600, immutable",
 	} {
-		if got := r.Header.Get(k); got != want {
+		if got := hdr.Get(k); got != want {
 			t.Errorf("%s = %q, want %q", k, got, want)
 		}
 	}
