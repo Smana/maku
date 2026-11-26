@@ -94,7 +94,7 @@ export async function policyPage(app: HTMLElement, name: string, get: typeof fet
   main.append(definition, el("h2", "Repositories using it"));
   if (p.bindings?.length) main.append(bindingsTable(p.bindings));
   const cs = p.status.consumers ?? [];
-  if (cs.length === 0) main.append(el("p", "No repository you read binds this policy."));
+  if (cs.length === 0 && !p.bindings?.length) main.append(el("p", "No repository you read binds this policy."));
   else main.append(table(["Repository", "Mode", "Status", "Why"],
     cs.map((c) => [c.repository, c.mode ?? "", c.accepted ? "accepted" : "refused", c.reason ?? ""]), "consumers"));
   main.append(el("h2", "Edit this policy"), policyEditor(p, get, catalog, repositories));

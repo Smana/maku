@@ -141,7 +141,7 @@ describe("a policy's page", () => {
     expect(fixed).toEqual({
       requires: "Tasks that touch these files run: a plan you approve",
       evidence: "20 agreed decisions before promotion",
-      monitor: "After a merge, waits 2 h for RunLore's verdict and reads follow-up fixes for 2 h. Silence here is quiet, not right.",
+      monitor: "After a merge, waits 2 h for RunLore's verdict and reads follow-up fixes for 2 h.",
     });
     const rows = [...app.querySelectorAll("table.bindings tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
     expect(rows).toEqual([["Smana/cloud-native-ref", "shadow", "an agent changes YAML under observability/ and a reviewer approves", "rules", ""]]);

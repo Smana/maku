@@ -60,7 +60,7 @@ export function readOnlyWords(key: string, value: unknown): string {
       if (verification?.within) parts.push(`waits ${durationWords(verification.within)} for RunLore's verdict`);
       if (typeof o.oracleRuns === "number" && o.oracleRuns > 0) parts.push(`reads the detector's next ${o.oracleRuns} runs`);
       if (o.followUpWindow) parts.push(`reads follow-up fixes for ${durationWords(o.followUpWindow)}`);
-      return parts.length ? `After a merge, ${natural(parts)}. Silence here is quiet, not right.` : "";
+      return parts.length ? `After a merge, ${natural(parts)}.` : "";
     }
     case "oracle":
       return `Detector \`${String(o.probe ?? "")}\`, at most ${Number(o.maxFindings ?? 0)} findings a task, reported by ${o.workflow ? `\`${String(o.workflow)}\`` : "the binding's workflow"}`;
