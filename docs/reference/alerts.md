@@ -64,6 +64,7 @@ No series, no alert: on a release without a gauge the expression is empty, so a 
 | `RunControllerPreflightFailing` | A [preflight](../operations/failures.md#the-run-controllers-preflight) check refuses new runs, by `check` | 10 min | The run-controller's `preflight failed` line names the check and its fix |
 | `RunControllerDown` | The run-controller is not up | 5 min | `kubectl get pods -l app.kubernetes.io/name=run-controller`. No run starts or ends; running pods keep running |
 | `EgressProxyDown` | No egress proxy replica is up; rendered in `networkPolicies.mode kubernetes` | 5 min | `kubectl get pods -l app.kubernetes.io/name=egress-proxy`. The runs' HTTPS fails |
+| `MakuEgressInstallClosedRefusal` | The egress proxy refused a run's CONNECT to a host of its install set (GitHub's release hosts) after the set closed; rendered in `networkPolicies.mode kubernetes` | none | `kubectl logs -l app.kubernetes.io/name=egress-proxy \| grep install_closed` names the run; read its steps for the download it tried |
 | `AgentSandboxPodPending` | A pod in the runs namespace has been `Pending` 15 min; rendered with `kubeStateMetrics` | 15 min | `kubectl describe pod -n <runs namespace> <pod>`: capacity, the sandbox RuntimeClass's nodes, the runs quota |
 
 ## Slack alerts

@@ -27,6 +27,19 @@ tests:
     alert_rule_test:
       - {eval_time: 9m, alertname: EgressProxyDown, exp_alerts: []}
       - {eval_time: 12m, alertname: EgressProxyDown, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # MakuEgressInstallClosedRefusal: fires on the first install_closed refusal; other reasons never.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_egress_proxy_refusals_total{reason="install_closed", pod="egress-proxy-a"}', values: '0x5 1x10'}
+      - {series: 'maku_egress_proxy_refusals_total{reason="not_allowed", pod="egress-proxy-b"}', values: '0x5 4x10'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: MakuEgressInstallClosedRefusal, exp_alerts: []}
+      - {eval_time: 7m, alertname: MakuEgressInstallClosedRefusal, exp_alerts: [{exp_labels: {severity: warning}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'maku_egress_proxy_refusals_total{reason="not_allowed", pod="egress-proxy-b"}', values: '0x5 4x10'}
+    alert_rule_test:
+      - {eval_time: 7m, alertname: MakuEgressInstallClosedRefusal, exp_alerts: []}
   # AgentSandboxPodPending: a run pod Pending 15 minutes in the runs namespace; another namespace's
   # pod is not a run.
   - interval: 1m

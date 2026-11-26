@@ -4945,7 +4945,8 @@ spec:
 # (no hostPath), CPU and memory limits on every container, and images from the run-controller's own
 # repositories (by digest unless e2e.unpinnedImages). No ephemeral container is ever added (no
 # kubectl debug into a run), and a pod's maku.ogenki.io/egress annotation, which the egress proxy
-# trusts, never changes after create.
+# trusts, never changes after create; nor do its install set and deadline. The egress proxy may set
+# maku.ogenki.io/egress-install-closed to "true" and change nothing else; once set, it stays.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -4977,6 +4978,10 @@ spec:
       expression: "has(object.metadata.annotations) && 'maku.ogenki.io/egress' in object.metadata.annotations ? object.metadata.annotations['maku.ogenki.io/egress'] : ''"
     - name: oldEgress
       expression: "request.operation == 'UPDATE' && has(oldObject.metadata.annotations) && 'maku.ogenki.io/egress' in oldObject.metadata.annotations ? oldObject.metadata.annotations['maku.ogenki.io/egress'] : ''"
+    - name: annotations
+      expression: "object.metadata.?annotations.orValue({})"
+    - name: oldAnnotations
+      expression: "request.operation == 'UPDATE' ? oldObject.metadata.?annotations.orValue({}) : {}"
   validations:
     - expression: "!has(request.subResource) || request.subResource != 'ephemeralcontainers'"
       message: "a run pod takes no ephemeral container: no kubectl debug into a run"
@@ -4984,6 +4989,15 @@ spec:
       message: "only the run-controller (system:serviceaccount:agent-system:run-controller) creates pods in agents"
     - expression: "request.operation != 'UPDATE' || variables.egress == variables.oldEgress"
       message: "the maku.ogenki.io/egress annotation is set at create, by the run-controller, and never changes"
+    - expression: >-
+        request.operation != 'UPDATE' || ['maku.ogenki.io/egress-install', 'maku.ogenki.io/egress-install-until'].all(k, variables.annotations[?k].orValue('') == variables.oldAnnotations[?k].orValue(''))
+      message: "the maku.ogenki.io/egress-install and egress-install-until annotations are set at create, by the run-controller, and never change"
+    - expression: >-
+        variables.annotations[?'maku.ogenki.io/egress-install-closed'].orValue('true') == 'true' && (!('maku.ogenki.io/egress-install-closed' in variables.oldAnnotations) || 'maku.ogenki.io/egress-install-closed' in variables.annotations)
+      message: "maku.ogenki.io/egress-install-closed is \"true\" or absent, and once set it stays: an install set never reopens"
+    - expression: >-
+        request.userInfo.username != 'system:serviceaccount:agent-system:egress-proxy' || (request.operation == 'UPDATE' && object.spec == oldObject.spec && object.metadata.?labels.orValue({}) == oldObject.metadata.?labels.orValue({}) && object.metadata.?finalizers.orValue([]) == oldObject.metadata.?finalizers.orValue([]) && object.metadata.?ownerReferences.orValue([]) == oldObject.metadata.?ownerReferences.orValue([]) && variables.annotations.all(k, k == 'maku.ogenki.io/egress-install-closed' || (k in variables.oldAnnotations && variables.oldAnnotations[k] == variables.annotations[k])) && variables.oldAnnotations.all(k, k in variables.annotations))
+      message: "the egress proxy changes a run pod's maku.ogenki.io/egress-install-closed annotation and nothing else"
     - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gvisor'"
       message: "a run pod runs under RuntimeClass \"gvisor\" (sandbox.runtimeClassName)"
     - expression: "has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false"
