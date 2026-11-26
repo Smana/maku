@@ -124,13 +124,20 @@ func (s *Server) policyRepositories(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out := []string{}
+	out, maintains := []string{}, []string{}
 	for _, rc := range cfg.Repos() {
 		if can, err := s.reads(r.Context(), p, rc.Name); err == nil && can {
 			out = append(out, rc.Name)
+			// The settings gear is a maintainer's (developer review gap 10): an unlinked caller, or a
+			// link that cannot be read, maintains nothing here.
+			if s.Logins != nil {
+				if login, err := s.Logins.Login(r.Context(), p.Sub, rc.Name); err == nil && login != "" && rc.IsMaintainer(login) {
+					maintains = append(maintains, rc.Name)
+				}
+			}
 		}
 	}
-	reply(w, http.StatusOK, map[string][]string{"repositories": out})
+	reply(w, http.StatusOK, map[string][]string{"repositories": out, "maintains": maintains})
 }
 
 // PolicyEditor is the settings editor's check and the decision timeline (stage 6), each answered

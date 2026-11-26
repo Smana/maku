@@ -135,9 +135,9 @@ func (f *fakePolicyFactory) PolicyPreviewPolicy(_ context.Context, token, name s
 	return policyview.PolicyPreview{Valid: true, ManifestPath: "mergepolicy-" + name + ".yaml"}, nil
 }
 
-func (f *fakePolicyFactory) PolicyRepositories(_ context.Context, token string) ([]string, error) {
+func (f *fakePolicyFactory) PolicyRepositories(_ context.Context, token string) (runrequest.PolicyIndex, error) {
 	f.tokens = append(f.tokens, token)
-	return []string{policyRepo}, nil
+	return runrequest.PolicyIndex{Repositories: []string{policyRepo}, Maintains: []string{}}, nil
 }
 
 // memRecords is the store's promotion workflow, in memory, with its refusals.

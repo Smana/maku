@@ -28,7 +28,8 @@ function gear(): SVGSVGElement {
   return svg;
 }
 
-// mountSettingsLink appends the link to host, hidden until the settings API proves the feature is on.
+// mountSettingsLink appends the link to host, hidden until the settings API proves the feature is on
+// and the caller maintains a repository.
 export function mountSettingsLink(host: HTMLElement, href = "/settings", get: typeof fetch = fetch): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "settings-link";
@@ -38,6 +39,17 @@ export function mountSettingsLink(host: HTMLElement, href = "/settings", get: ty
   label.textContent = "Settings";
   a.append(gear(), label);
   host.append(a);
-  void api("/api/policy/repositories", {}, get).then((r) => { a.hidden = !r.ok; }).catch(() => { a.hidden = true; });
+  // The settings are a maintainer's: an empty maintains list hides the gear. A factory that does not
+  // say (no maintains) shows it, as before.
+  void api("/api/policy/repositories", {}, get)
+    .then(async (r) => {
+      if (!r.ok) {
+        a.hidden = true;
+        return;
+      }
+      const body = (await r.json().catch(() => ({}))) as { maintains?: string[] | null };
+      a.hidden = Array.isArray(body.maintains) && body.maintains.length === 0;
+    })
+    .catch(() => { a.hidden = true; });
   return a;
 }
