@@ -17,6 +17,7 @@ import (
 	"github.com/Smana/maku/internal/github"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/metrics"
+	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/verdictpost"
 )
 
@@ -38,6 +39,9 @@ func addVerdictPoster(dir string, add func(manager.Runnable) error, roomLog verd
 	p := &verdictpost.Poster{Log: roomLog, PublicURL: publicURL, Now: time.Now, Logger: log,
 		GitHub:    &github.App{Dir: dir, API: githubAPIURL(), HC: httpx.New(posterGitHubTimeout, nil), Now: time.Now},
 		DataClass: roomDataClass(rooms, ns), OnResult: verdictResults(m)}
+	if sh, ok := roomLog.(roomScreenshots); ok {
+		p.Screenshots = screenshotCount(sh)
+	}
 	return add(posterLoop(p, log, nil))
 }
 
@@ -51,6 +55,29 @@ func posterLoop(p *verdictpost.Poster, log *slog.Logger, tick func(time.Duration
 			log.Error("verdict poster", "err", err)
 		}
 	}}
+}
+
+// roomScreenshots lists a room's screenshots; the broker's store implements it.
+type roomScreenshots interface {
+	Screenshots(ctx context.Context, room string) ([]store.ScreenshotMeta, error)
+}
+
+// screenshotCount counts a room's browser screenshots for the verdict's gallery link; a store error
+// counts none, so the verdict still posts.
+func screenshotCount(sh roomScreenshots) func(ctx context.Context, room string) int {
+	return func(ctx context.Context, room string) int {
+		list, err := sh.Screenshots(ctx, room)
+		if err != nil {
+			return 0
+		}
+		n := 0
+		for _, m := range list {
+			if m.Source == store.SourceBrowser {
+				n++
+			}
+		}
+		return n
+	}
 }
 
 // roomDataClass reads a Room's data class; a Room that cannot be read is never
