@@ -188,6 +188,8 @@ type Spec struct {
 	// Size is spec.size, small when empty; Image is spec.image, the harness image when empty: the
 	// repository's runtime (developer review gap 2).
 	Size, Image string
+	// Services are spec.services: the loopback service sidecars of the repository's runtime.
+	Services []string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -254,6 +256,11 @@ func (s Spec) Validate() error {
 	}
 	if s.Harness != "" && !config.ValidHarness(s.Harness) {
 		errs = append(errs, fmt.Errorf("harness %q is openhands, opencode or empty", s.Harness))
+	}
+	for _, v := range s.Services {
+		if !slices.Contains(config.Services, config.Service(v)) {
+			errs = append(errs, fmt.Errorf("service %q is not one of %v", v, config.Services))
+		}
 	}
 	if s.Size != "" && !slices.Contains(config.RunSizes, s.Size) {
 		errs = append(errs, fmt.Errorf("size %q is not one of %v", s.Size, config.RunSizes))
@@ -330,6 +337,13 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Image != "" {
 		spec["image"] = s.Image
+	}
+	if len(s.Services) > 0 {
+		svcs := make([]any, len(s.Services))
+		for i, v := range s.Services {
+			svcs[i] = v
+		}
+		spec["services"] = svcs
 	}
 	if s.Screenshots > 0 {
 		spec["screenshots"] = map[string]any{"enabled": true, "maxScreenshots": int64(s.Screenshots)}

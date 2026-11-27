@@ -284,12 +284,22 @@ runController:
     # Optional browser sidecar image (v5 Q16, docs/browser-verification.md): set it to let a
     # Repository with spec.screenshots run its implementer and tester with a loopback-only browser.
     browser: {repository: ghcr.io/smana/maku-browser, tag: ""}
+    # Optional loopback service sidecars (docs/make-a-repository-ready.md): set one to let a
+    # Repository with spec.runtime.services run its tests against it. The official images, pinned.
+    postgres: {repository: docker.io/library/postgres, tag: ""}
+    redis: {repository: docker.io/library/redis, tag: ""}
   # The browser sidecar's own budget, beside the harness's (v5 Q16). Size the runs namespace's
   # ResourceQuota for it: +512Mi request and +2Gi limit per opted-in run.
   browser:
     resources:
       requests: {cpu: 250m, memory: 512Mi}
       limits: {cpu: "2", memory: 2Gi}
+  # Each loopback service sidecar's budget, beside the harness's. Size the runs namespace's
+  # ResourceQuota for it: +256Mi request and +1Gi limit per service per run.
+  services:
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 1Gi}
   # The image prefixes a Repository's spec.runtime.image may start with, such as
   # "ghcr.io/acme/maku-harness-": each such image is built FROM the harness image and pinned by
   # digest. Empty refuses every runtime image.

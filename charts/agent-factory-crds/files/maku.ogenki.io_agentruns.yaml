@@ -277,6 +277,22 @@ spec:
                 x-kubernetes-validations:
                 - message: screenshots is immutable
                   rule: self == oldSelf
+              services:
+                description: |-
+                  Services are loopback-only service sidecars the run's tests reach on 127.0.0.1 (developer
+                  review gap 3): postgres on 5432, redis on 6379. Set at creation.
+                items:
+                  description: AgentRunService is one loopback service sidecar.
+                  enum:
+                  - postgres
+                  - redis
+                  type: string
+                maxItems: 2
+                type: array
+                x-kubernetes-list-type: set
+                x-kubernetes-validations:
+                - message: services is immutable
+                  rule: self == oldSelf
               size:
                 default: small
                 enum:
