@@ -12,7 +12,7 @@ import type { Condition, Evidence, Report } from "./settings";
 async function refusal(r: Response): Promise<string> {
   try {
     const body = (await r.json()) as { error?: unknown };
-    if (typeof body.error === "string" && /^[a-z][a-z_]{0,47}$/.test(body.error)) return body.error;
+    if (typeof body.error === "string" && /^[a-z][a-z0-9_]{0,47}$/.test(body.error)) return body.error;
   } catch { /* not JSON */ }
   return `HTTP ${r.status}`;
 }

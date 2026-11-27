@@ -156,6 +156,12 @@ type Server struct {
 	InstallUnsafe func() []string
 	// StagesCache holds each repository's folded stage report for the catalogue's typical cost (WR5).
 	StagesCache *stages.Cache
+	// RoutineState reads and updates operational pause flags and skip diagnostics for upkeep routines.
+	RoutineState RoutineStateStore
+	// RoutineTrigger starts manual upkeep routine tasks via the scheduler without an import cycle.
+	RoutineTrigger RoutineTrigger
+	// Tasks reads Tasks (typically mgr.GetClient() in production); nil falls back to taskReader().
+	Tasks client.Reader
 	// forgeReads is forge_read's per-(run, target) answer cache (forgeReadTTL).
 	forgeReads *forgeReadCache
 }
@@ -251,6 +257,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(workflowDryRunRoute, s.workflowDryRun)
 	// v4 D3: the banner's factory codes, for any signed-in human.
 	mux.HandleFunc(InstallRoute, s.install)
+	// Upkeep routines Phase 1: overview, detail, manual trigger, pause and resume.
+	mux.HandleFunc("GET /v1/routines", s.listRoutines)
+	mux.HandleFunc("GET /v1/routines/{owner}/{name}/{routine}", s.getRoutine)
+	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/runs", s.runRoutine)
+	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/pause", s.pauseRoutine)
+	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/resume", s.resumeRoutine)
 	// stage 6: off lists no policy route, so each is a 404.
 	mux.HandleFunc("GET /v1/policy/evidence", gate(s.promotionOn, s.policyEvidence))
 	mux.HandleFunc("GET /v1/policy/repositories", gate(s.promotionOn, s.policyRepositories))

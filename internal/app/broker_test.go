@@ -1029,3 +1029,31 @@ func TestPolicyWorkflowOnlyWhenOn(t *testing.T) {
 		t.Fatal("a workflow without a factory")
 	}
 }
+
+func TestFactoryRoutinesOnlyWithAFactory(t *testing.T) {
+	cfg := plannerConfig()
+	if factoryRoutines(cfg) != nil {
+		t.Fatal("routines gateway without a factory")
+	}
+	cfg.FactoryURL = "https://agent-factory.agents.svc:8082"
+	cfg.FactoryCAFile = "/etc/ca.crt"
+	f, ok := factoryRoutines(cfg).(runrequest.Factory)
+	if !ok || f.URL != cfg.FactoryURL || f.CAFile != cfg.FactoryCAFile {
+		t.Fatalf("%#v", f)
+	}
+	s, err := buildHumans(t, cfg, &intakeVisibility{public: map[string]bool{"smana/ai-native-ref": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Routines == nil {
+		t.Fatal("humanServer must wire Routines when FactoryURL is set")
+	}
+	cfg.FactoryURL = ""
+	s2, err := buildHumans(t, cfg, &intakeVisibility{public: map[string]bool{"smana/ai-native-ref": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.Routines != nil {
+		t.Fatal("humanServer must leave Routines nil when FactoryURL is empty")
+	}
+}

@@ -38,7 +38,8 @@ func routineScheme() *runtime.Scheme {
 }
 
 type fakeSkipMetrics struct {
-	calls []skipMetricCall
+	calls  []skipMetricCall
+	paused map[string]bool
 }
 
 type skipMetricCall struct {
@@ -47,6 +48,13 @@ type skipMetricCall struct {
 
 func (m *fakeSkipMetrics) RoutineSkip(_ context.Context, repository, routine, reason string) {
 	m.calls = append(m.calls, skipMetricCall{repo: repository, routine: routine, reason: reason})
+}
+
+func (m *fakeSkipMetrics) RoutinePaused(_ context.Context, repository, routine string, paused bool) {
+	if m.paused == nil {
+		m.paused = map[string]bool{}
+	}
+	m.paused[repository+"/"+routine] = paused
 }
 
 type errorReader struct {
@@ -748,6 +756,51 @@ type alreadyExistsOnCreateClient struct {
 
 func (c alreadyExistsOnCreateClient) Create(context.Context, client.Object, ...client.CreateOption) error {
 	return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "tasks"}, c.name)
+}
+
+func TestRoutineSchedulerSyncsPausedMetrics(t *testing.T) {
+	// Use a time far from the 03:00 cron slot so sync happens even outside the 1h slot window.
+	now := time.Date(2026, 11, 26, 15, 0, 0, 0, time.UTC)
+	declPaused := config.ResolvedRoutine{
+		Name:   "decl-paused",
+		Mode:   config.RoutineModePR,
+		Paused: true,
+		Cron:   "0 3 * * *",
+	}
+	statePaused := config.ResolvedRoutine{
+		Name: "op-paused",
+		Mode: config.RoutineModePR,
+		Cron: "0 3 * * *",
+	}
+	active := config.ResolvedRoutine{
+		Name: "active-job",
+		Mode: config.RoutineModePR,
+		Cron: "0 3 * * *",
+	}
+	cfg := baseRoutineCfg(declPaused)
+	cfg.Repositories[0].ResolvedRoutines["op-paused"] = statePaused
+	cfg.Repositories[0].ResolvedRoutines["active-job"] = active
+
+	sch, sm, st := newRoutineScheduler(t, forgetest.NewFake(), cfg, now)
+	if err := st.SetPaused(t.Context(), "acme/app", "op-paused", true, "manual", "github:alice"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !sm.paused["acme/app/decl-paused"] || !sm.paused["acme/app/op-paused"] || sm.paused["acme/app/active-job"] {
+		t.Fatalf("paused metrics after tick = %+v", sm.paused)
+	}
+	// Operational unpause updates gauge to false on next tick while declarative remains true.
+	if err := st.SetPaused(t.Context(), "acme/app", "op-paused", false, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !sm.paused["acme/app/decl-paused"] || sm.paused["acme/app/op-paused"] || sm.paused["acme/app/active-job"] {
+		t.Fatalf("paused metrics after resume = %+v", sm.paused)
+	}
 }
 
 var _ = fmt.Sprintf

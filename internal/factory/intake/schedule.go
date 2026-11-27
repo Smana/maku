@@ -151,6 +151,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 func (s *Scheduler) Tick(ctx context.Context) error {
 	stopped := s.Stopped != nil && s.Stopped(ctx)
 	cfg := s.Cfg.Current()
+	s.syncRoutinePaused(ctx, cfg)
 	var errs []error
 	for _, rc := range cfg.Repos() {
 		owned := s.Owned != nil && s.Owned(rc.Name)

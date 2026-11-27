@@ -45,8 +45,9 @@ func (r Maku) config(ctx context.Context, args []string) error {
 		var manifests manifestList
 		fs.Var(&manifests, "manifests", "removed: the per-repository MergePolicy is gone (B8)")
 		ns := fs.String("namespace", "agent-system", "the namespace of the manifests")
+		outDir := fs.String("out", "", "write each manifest (<kind>-<name>.yaml, including routine-<name>.yaml) to this directory instead of stdout")
 		residual := fs.String("residual", "", "write the config file without the migrated keys here, once the conversion is proved")
-		force := fs.Bool("force", false, "replace an existing --residual file")
+		force := fs.Bool("force", false, "replace existing --residual or --out files")
 		if _, err := flags(fs, args); err != nil {
 			return err
 		}
@@ -85,6 +86,16 @@ func (r Maku) config(ctx context.Context, args []string) error {
 		if err != nil {
 			return fmt.Errorf("config migrate: %w", err)
 		}
+		if hasLegacySchedules(before.Repos()) {
+			objs, err = migrateSchedulesIntoObjects(before.Repos(), objs, *ns)
+			if err != nil {
+				return fmt.Errorf("config migrate: %w", err)
+			}
+			out, err = resources.Encode(objs)
+			if err != nil {
+				return fmt.Errorf("config migrate: %w", err)
+			}
+		}
 		after, err := resources.Assemble(file, objs)
 		if err != nil {
 			return fmt.Errorf("config migrate: the converted objects: %w", err)
@@ -95,6 +106,9 @@ func (r Maku) config(ctx context.Context, args []string) error {
 		if len(after.Refused) > 0 {
 			return fmt.Errorf("config migrate: the factory would refuse %d converted objects", len(after.Refused))
 		}
+		if refusedRoutines := refusedRoutineBindings(r.Out, after); refusedRoutines > 0 {
+			return fmt.Errorf("config migrate: %d converted routine bindings refused", refusedRoutines)
+		}
 		// B17: the converter proves it, or writes nothing.
 		if d := resources.Equal(before, after.Config); len(d) > 0 {
 			for _, line := range d {
@@ -103,6 +117,51 @@ func (r Maku) config(ctx context.Context, args []string) error {
 				}
 			}
 			return fmt.Errorf("config migrate: the conversion would change %d resolved settings: nothing written", len(d))
+		}
+		if *residual != "" {
+			resClean := filepath.Clean(*residual)
+			if info, err := os.Stat(resClean); err == nil && info.IsDir() {
+				return fmt.Errorf("config migrate: --residual %s is a directory", resClean)
+			}
+			root, err := os.OpenRoot(filepath.Dir(resClean))
+			if err != nil {
+				return fmt.Errorf("config migrate: --residual: %w", err)
+			}
+			_ = root.Close()
+		}
+		if *outDir != "" {
+			dirClean := filepath.Clean(*outDir)
+			info, err := os.Stat(dirClean)
+			switch {
+			case err == nil && !info.IsDir():
+				return fmt.Errorf("config migrate: --out %s is not a directory", dirClean)
+			case err != nil && !errors.Is(err, os.ErrNotExist):
+				return fmt.Errorf("config migrate: --out %s: %w", dirClean, err)
+			case err == nil && !*force:
+				root, err := os.OpenRoot(dirClean)
+				if err != nil {
+					return fmt.Errorf("config migrate: --out %s: %w", dirClean, err)
+				}
+				for _, obj := range objs {
+					fname := manifestFileName(obj)
+					if _, err := root.Stat(fname); err == nil {
+						_ = root.Close()
+						return fmt.Errorf("config migrate: %s exists: --force replaces it", filepath.Join(dirClean, fname))
+					}
+				}
+				_ = root.Close()
+			}
+			var summary bytes.Buffer
+			if err := writeMigratedDir(&summary, dirClean, objs); err != nil {
+				return err
+			}
+			if *residual != "" {
+				if err := writeAtomic(filepath.Clean(*residual), file); err != nil {
+					return fmt.Errorf("config migrate: %w", err)
+				}
+			}
+			_, err = r.Out.Write(summary.Bytes())
+			return err
 		}
 		if *residual != "" {
 			if err := writeAtomic(filepath.Clean(*residual), file); err != nil {
@@ -410,4 +469,124 @@ func samePath(a, b string) bool {
 	sa, err1 := os.Stat(a)
 	sb, err2 := os.Stat(b)
 	return err1 == nil && err2 == nil && os.SameFile(sa, sb)
+}
+
+func hasLegacySchedules(repos []config.Repository) bool {
+	for _, repo := range repos {
+		if len(repo.Schedules) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func migrateSchedulesIntoObjects(repos []config.Repository, objs []resources.Object, ns string) ([]resources.Object, error) {
+	routines, repoBindings, err := resources.MigrateSchedules(repos)
+	if err != nil {
+		return nil, err
+	}
+	for i := range objs {
+		if objs[i].Kind != resources.KindRepository {
+			continue
+		}
+		repoName, _ := objs[i].Spec["repository"].(string)
+		bindings := lookupRepoBindings(repoBindings, repoName)
+		if len(bindings) > 0 {
+			rawBindings, err := toJSONAnySlice(bindings)
+			if err != nil {
+				return nil, err
+			}
+			if existing, ok := objs[i].Spec["routines"].([]any); ok {
+				objs[i].Spec["routines"] = append(existing, rawBindings...)
+			} else {
+				objs[i].Spec["routines"] = rawBindings
+			}
+		}
+		delete(objs[i].Spec, "schedules")
+	}
+	for _, rt := range routines {
+		specMap, err := toJSONMap(rt.Spec.RoutineSpec)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, resources.Object{
+			Kind:      resources.KindRoutine,
+			Name:      rt.Name,
+			Namespace: ns,
+			Spec:      specMap,
+		})
+	}
+	return objs, nil
+}
+
+func lookupRepoBindings(byRepo map[string][]config.RoutineBinding, repoName string) []config.RoutineBinding {
+	if b, ok := byRepo[repoName]; ok {
+		return b
+	}
+	for k, b := range byRepo {
+		if strings.EqualFold(k, repoName) {
+			return b
+		}
+	}
+	return nil
+}
+
+func toJSONAnySlice(v any) ([]any, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out []any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func toJSONMap(v any) (map[string]any, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func refusedRoutineBindings(out io.Writer, res resources.Result) int {
+	n := 0
+	for _, rb := range res.RoutineBindings {
+		if rb.Accepted {
+			continue
+		}
+		n++
+		_, _ = fmt.Fprintf(out, "routine binding: Repository/%s %s: %s: %s\n", rb.Repository, rb.Name, rb.Reason, rb.Message)
+	}
+	return n
+}
+
+func manifestFileName(obj resources.Object) string {
+	return strings.ToLower(string(obj.Kind)) + "-" + obj.Name + ".yaml"
+}
+
+func writeMigratedDir(out io.Writer, dir string, objs []resources.Object) error {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("config migrate: %w", err)
+	}
+	written := make([]string, 0, len(objs))
+	for _, obj := range objs {
+		b, err := resources.Encode([]resources.Object{obj})
+		if err != nil {
+			return fmt.Errorf("config migrate: %w", err)
+		}
+		path := filepath.Join(dir, manifestFileName(obj))
+		if err := writeAtomic(path, b); err != nil {
+			return fmt.Errorf("config migrate: %w", err)
+		}
+		written = append(written, path)
+	}
+	_, err := fmt.Fprintf(out, "equivalent: %d manifests written to %s (%s)\n", len(written), dir, strings.Join(written, ", "))
+	return err
 }

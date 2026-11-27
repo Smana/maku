@@ -418,9 +418,10 @@ func Equal(before, after *config.Config) []string {
 
 func compareSchedulesAndRoutines(repoName, defaultDataClass string, rb, ra config.Repository) []string {
 	var out []string
-	switch {
-	case len(rb.Schedules) > 0 && len(ra.Schedules) == 0:
+	migratedSched := map[string]bool{}
+	if len(rb.Schedules) > 0 && len(ra.Schedules) == 0 {
 		for _, s := range rb.Schedules {
+			migratedSched[s.Name] = true
 			rr, ok := ra.ResolvedRoutines[s.Name]
 			if !ok {
 				out = append(out, fmt.Sprintf("%s schedule %s: missing migrated routine", repoName, s.Name))
@@ -459,7 +460,45 @@ func compareSchedulesAndRoutines(repoName, defaultDataClass string, rb, ra confi
 				out = append(out, fmt.Sprintf("%s schedule %s: maxOpenPRs 1 -> %d", repoName, s.Name, rr.MaxOpenPRs))
 			}
 		}
-	case len(rb.ResolvedRoutines) > 0 || len(ra.ResolvedRoutines) > 0:
+	}
+
+	bBindings := make(map[string]config.RoutineBinding, len(rb.Routines))
+	for _, b := range rb.Routines {
+		bBindings[b.Name] = b
+	}
+	reportedPresence := map[string]bool{}
+	if len(rb.Routines) > 0 || len(ra.Routines) > 0 {
+		aBindings := make(map[string]config.RoutineBinding, len(ra.Routines))
+		keys := map[string]bool{}
+		for _, b := range rb.Routines {
+			keys[b.Name] = true
+		}
+		for _, b := range ra.Routines {
+			aBindings[b.Name] = b
+			keys[b.Name] = true
+		}
+		for _, k := range slices.Sorted(maps.Keys(keys)) {
+			bb, inB := bBindings[k]
+			ba, inA := aBindings[k]
+			if migratedSched[k] && !inB && inA {
+				continue
+			}
+			switch {
+			case !inA:
+				reportedPresence[k] = true
+				out = append(out, fmt.Sprintf("%s routine %s: served before only", repoName, k))
+			case !inB:
+				reportedPresence[k] = true
+				out = append(out, fmt.Sprintf("%s routine %s: served after only", repoName, k))
+			default:
+				for _, f := range fieldDiff(bb, ba) {
+					out = append(out, fmt.Sprintf("%s routine %s: %s %s -> %s", repoName, k, f, jsonOf(jsonMap(bb)[f]), jsonOf(jsonMap(ba)[f])))
+				}
+			}
+		}
+	}
+
+	if len(rb.ResolvedRoutines) > 0 || len(ra.ResolvedRoutines) > 0 {
 		keys := map[string]bool{}
 		for k := range rb.ResolvedRoutines {
 			keys[k] = true
@@ -470,11 +509,21 @@ func compareSchedulesAndRoutines(repoName, defaultDataClass string, rb, ra confi
 		for _, k := range slices.Sorted(maps.Keys(keys)) {
 			rrb, inB := rb.ResolvedRoutines[k]
 			rra, inA := ra.ResolvedRoutines[k]
+			if migratedSched[k] && !inB && inA {
+				continue
+			}
+			if len(rb.ResolvedRoutines) == 0 && !inB && inA && bBindings[k].Mode == config.RoutineModePR {
+				continue
+			}
 			switch {
 			case !inA:
-				out = append(out, fmt.Sprintf("%s routine %s: served before only", repoName, k))
+				if !reportedPresence[k] {
+					out = append(out, fmt.Sprintf("%s routine %s: served before only", repoName, k))
+				}
 			case !inB:
-				out = append(out, fmt.Sprintf("%s routine %s: served after only", repoName, k))
+				if !reportedPresence[k] {
+					out = append(out, fmt.Sprintf("%s routine %s: served after only", repoName, k))
+				}
 			default:
 				for _, f := range fieldDiff(rrb, rra) {
 					out = append(out, fmt.Sprintf("%s routine %s: %s %s -> %s", repoName, k, f, jsonOf(jsonMap(rrb)[f]), jsonOf(jsonMap(rra)[f])))
