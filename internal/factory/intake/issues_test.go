@@ -917,3 +917,31 @@ func TestRevertLabelOnAMaintainersMergeAnswers(t *testing.T) {
 		t.Fatalf("label not consumed: %v", f.Removed(12))
 	}
 }
+
+// Developer review gap 5: the images a request carries reach no run unless the repository has
+// screenshots on, and the author is told so once, with what to do instead.
+func TestRemovedImagesAreNamedOnce(t *testing.T) {
+	body := "The total sits above the list.\n\n![cart](https://github.com/user-attachments/assets/1)\n<img src=\"https://example.com/x.png\">"
+	for name, shots := range map[string]*config.Screenshots{"off": nil, "on": {}} {
+		f := forgetest.NewFake()
+		labelled(f, 7, "Smana")
+		f.SetIssue(forge.Issue{Number: 7, Title: "Move the total", Body: body})
+		p, c := poller(t, f)
+		p.Cfg.Current().Repositories[0].Screenshots = shots
+		for range 2 {
+			f.SetLabeled("factory/ready", forge.Item{Number: 7})
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cs := f.Comments(7)
+		switch {
+		case len(tasks(t, c)) != 1:
+			t.Fatalf("%s: the task is created either way", name)
+		case shots == nil && (len(cs) != 1 || !strings.Contains(cs[0], "2 images in this issue were removed") || !strings.Contains(cs[0], "in words")):
+			t.Errorf("%s: %q", name, cs)
+		case shots != nil && len(cs) != 0:
+			t.Errorf("%s: a screenshots repository hands its images to the run: %q", name, cs)
+		}
+	}
+}

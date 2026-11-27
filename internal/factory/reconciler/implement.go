@@ -369,6 +369,10 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 		}
 		return r.recordExisting(ctx, cfg, t, x)
 	}
+	started := narrate.Started(t, s, cfg.RoomsURL)
+	if note := r.sandboxNote(ctx, t, s); note != "" {
+		started.Body += "\n\n" + note
+	}
 	now := metav1.NewTime(r.Now())
 	r.runWait(ctx, t, s.Role, now.Time)
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Persona: s.Persona, Trigger: trigger,
@@ -377,7 +381,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	t.Status.NextTrigger = ""
 	r.recordInputTrust(ctx, cfg, t, trigger) // hardening audit or enforce only (UH7)
 	r.to(t, phaseFor(s.Role), "")
-	narrateLater(t, narrate.Started(t, s, cfg.RoomsURL))
+	narrateLater(t, started)
 	if unbriefed {
 		r.unbriefedReviewer(ctx, t)
 	}

@@ -228,7 +228,8 @@ func (r *Reconciler) onDefaultBranch(ctx context.Context, sha string) (bool, err
 // checksDecl is the part of .github/agent-checks.yaml a contract is held to: the paths a tester may write
 // and the runner's own files, which are never a contract.
 type checksDecl struct {
-	Tests struct {
+	CIOnly []narrate.SkippedCheck `json:"ciOnly"`
+	Tests  struct {
 		Paths  []string `json:"paths"`
 		Runner []string `json:"runner"`
 	} `json:"tests"`
@@ -245,6 +246,32 @@ func (r *Reconciler) checksAt(ctx context.Context, ref string) (checksDecl, erro
 		return checksDecl{}, nil
 	}
 	return d, nil
+}
+
+// sandboxNote is what the task's first implementer run's start comment adds (developer review gap
+// 3): what the sandbox does not run, and that CI is the judge. A later run, another role, or a
+// declaration the factory cannot read adds nothing.
+func (r *Reconciler) sandboxNote(ctx context.Context, t *v1alpha1.Task, s runs.Spec) string {
+	if s.Role != "implementer" || slices.ContainsFunc(t.Status.Runs, func(rec v1alpha1.RunRecord) bool { return rec.Role == "implementer" }) {
+		return ""
+	}
+	l := narrate.Limits{Checks: s.Checks}
+	if s.Checks {
+		raw, err := r.merger(ctx).FileAt(ctx, ".github/agent-checks.yaml", defaultBranch)
+		if err != nil {
+			r.log().Info("checks declaration unread: the start comment leaves the sandbox note out", "task.id", t.Name, "err", err)
+			return ""
+		}
+		var d checksDecl
+		l.Declared = raw != ""
+		if l.Declared && yaml.Unmarshal([]byte(raw), &d) == nil {
+			l.CIOnly = d.CIOnly
+		}
+	}
+	if l.Silent() {
+		return ""
+	}
+	return narrate.SandboxNote(l)
 }
 
 // testPaths are the paths the default branch's declaration lets a tester write.
