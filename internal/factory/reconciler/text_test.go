@@ -749,3 +749,25 @@ func TestTheReviewersBriefAsksForCorrectnessOnly(t *testing.T) {
 		t.Fatalf("brief must not ask to report style or naming:\n%s", got)
 	}
 }
+
+// Developer review gap 6: the brief asks for a body a tech lead reads in five minutes, in a fixed order.
+func TestFirstBriefAsksForTheFourHeadings(t *testing.T) {
+	for _, tk := range []*v1alpha1.Task{issueTask("3buqdlot", 7, "fix it"), func() *v1alpha1.Task {
+		tk := issueTask("3buqdlot", 0, "rotate the certificates")
+		tk.Spec.Source = v1alpha1.Source{Kind: "schedule", Ref: "weekly-certs", Trust: "trusted"}
+		return tk
+	}()} {
+		b := FirstBrief(tk, "n0nce234")
+		last := -1
+		for _, h := range []string{"## What changed", "## Why", "## How it was verified", "## What was left out"} {
+			i := strings.Index(b, h)
+			if i <= last {
+				t.Fatalf("heading %q missing or out of order:\n%s", h, b)
+			}
+			last = i
+		}
+		if fence := strings.Index(b, "\nTASK-DATA-n0nce234\n"); last > fence {
+			t.Fatal("the headings belong to the factory's preamble, before the fenced task")
+		}
+	}
+}

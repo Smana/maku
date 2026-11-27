@@ -142,12 +142,12 @@ func TestTheClosingCommentCarriesTheSettledTotal(t *testing.T) {
 	window := 2*g.r.Cfg.Current().Poll.Meter.Duration + 30*time.Second
 	g.r.Now = func() time.Time { return now.Add(window - time.Second) }
 	g.reconcile(t, "3buqdlot", 1)
-	if say := strings.Join(g.f.Comments(7), "\n"); strings.Contains(say, "Tokens used") {
+	if say := strings.Join(g.f.Comments(7), "\n"); strings.Contains(say, "\n\nSpent") {
 		t.Fatalf("the closing comment waits for the settle: %q", say)
 	}
 	g.r.Now = func() time.Time { return now.Add(window) }
 	g.reconcile(t, "3buqdlot", 1)
-	if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "Tokens used: 650 k.") || strings.Count(say, "Tokens used") != 1 {
+	if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "Spent: 650 k tokens.") || strings.Count(say, "\n\nSpent") != 1 {
 		t.Fatalf("the closing total is the settled one: %q", say)
 	}
 }
@@ -166,7 +166,7 @@ func TestAClosingTotalMissingARunsUsageIsAFloor(t *testing.T) {
 	g.reconcile(t, "3buqdlot", 1)
 	g.r.Now = func() time.Time { return now.Add(2*g.r.Cfg.Current().Poll.Meter.Duration + 30*time.Second) }
 	g.reconcile(t, "3buqdlot", 1)
-	if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "Tokens used: at least 400 k") {
+	if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "Spent: at least 400 k tokens") {
 		t.Fatalf("%q", say)
 	}
 }

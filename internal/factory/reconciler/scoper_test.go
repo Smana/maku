@@ -182,7 +182,7 @@ func TestAQuestionBouncesToTheAuthor(t *testing.T) {
 	c := g.f.Comments(7)[before:]
 	if len(c) != 1 || !strings.Contains(c[0], "Which dashboard should the panel move to") ||
 		!strings.Contains(c[0], "Assumption: agent-run") || !strings.Contains(c[0], "/factory retry") ||
-		!strings.Contains(c[0], "factory/ready") || strings.Contains(c[0], "Tokens used") {
+		!strings.Contains(c[0], "factory/ready") || strings.Contains(c[0], "\n\nSpent") {
 		t.Fatalf("comments %q", c)
 	}
 	if !slices.Equal(g.f.Added(7), []string{"factory/needs-author"}) || !slices.Contains(g.metrics.recorded, "scoper review question") {

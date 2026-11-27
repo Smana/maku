@@ -88,7 +88,7 @@ func (a *Applier) find(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RunR
 		if err != nil {
 			return "", false, err
 		}
-		wantBody := hardening.WithFooter(o.Body, prov)
+		wantBody := prBody(t, o.Body, prov, a.RoomsURL)
 		ok := pr.Number > 0 &&
 			footerOutput(pr.Body) == prov.Output &&
 			sameLogin(pr.Author, a.AgentsLogin) &&
@@ -225,7 +225,7 @@ func (a *Applier) applyPR(ctx context.Context, t *v1alpha1.Task, pub Publisher, 
 			"run.id", p.Run, "output.id", p.Output, "pr", pr.Number)
 		return "", hardening.RefuseTarget, nil
 	}
-	body := hardening.WithFooter(o.Body, p)
+	body := prBody(t, o.Body, p, a.RoomsURL)
 	if pr.Number > 0 {
 		if pr, err = pub.EditPR(ctx, pr.Number, o.Title, body); err != nil {
 			return "", "", fmt.Errorf("edit the pull request: %w", err)
