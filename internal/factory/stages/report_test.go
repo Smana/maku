@@ -108,3 +108,49 @@ func TestCacheColdReturnsZeroAndWarmReturnsTypical(t *testing.T) {
 		t.Fatal("expired cache still returned ok")
 	}
 }
+
+// The model fold (Gemini plan A9): each task counts under its implementer's model, each stage under
+// the model of the role that ran it. A run's served model wins, then the profile's frozen model for
+// its roles (a model:<alias> label, the evaluation's treatment), then the budget's alias.
+func TestTheReportFoldsByModel(t *testing.T) {
+	onGemini := func(tk v1alpha1.Task, roles ...string) v1alpha1.Task {
+		tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "standard", Model: "gemini-standard", ModelRoles: roles, ModelSource: "label"}
+		return tk
+	}
+	glm := func(tk v1alpha1.Task) v1alpha1.Task { tk.Spec.Budget.Model = "agent-default"; return tk }
+	tasks := []v1alpha1.Task{
+		glm(ended("docs", "accepted", stage("implement", 400_000, ""), stage("review", 100_000, "approve_agreed"))),
+		glm(ended("docs", "accepted", stage("implement", 600_000, ""), stage("review", 100_000, "approve_agreed"))),
+		glm(ended("docs", "failed", stage("implement", 1_000_000, ""))),
+		onGemini(glm(ended("docs", "accepted", stage("implement", 900_000, ""), stage("review", 300_000, "changes_requested"))), "implementer", "reviewer"),
+		onGemini(glm(ended("docs", "closed", stage("implement", 1_500_000, ""))), "implementer", "reviewer"),
+		// The implementer on Gemini, the reviewer on agent-default: each stage under its own model.
+		onGemini(glm(ended("docs", "merged_human", stage("implement", 600_000, ""), stage("review", 200_000, "approve_agreed"))), "implementer"),
+	}
+	rep := Fold("owner/repo", tasks, 500)
+	by := map[string]ModelReport{}
+	for _, m := range rep.Models {
+		by[m.Model] = m
+	}
+	d, g := by["agent-default"], by["gemini-standard"]
+	if len(rep.Models) != 2 || d.Tasks != 3 || d.Merged != 2 || g.Tasks != 3 || g.Merged != 2 {
+		t.Fatalf("models %+v", rep.Models)
+	}
+	if d.USD != 2.2 || d.USDPerMerged != 1.1 || g.USD != 3.5 || g.USDPerMerged != 1.75 {
+		t.Fatalf("usd: default %v/%v, gemini %v/%v", d.USD, d.USDPerMerged, g.USD, g.USDPerMerged)
+	}
+	if got := d.Stage("review"); got.Tasks != 3 || got.USD != 0.4 || got.Effects["approve_agreed"] != 3 {
+		t.Fatalf("agent-default's review takes the sixth task's reviewer too: %+v", got)
+	}
+	if got := g.Stage("review"); got.Tasks != 1 || got.Effects["changes_requested"] != 1 {
+		t.Fatalf("gemini's review: %+v", got)
+	}
+	if got := g.Stage("implement"); got.Tasks != 3 || got.USD != 3 {
+		t.Fatalf("gemini's implement: %+v", got)
+	}
+	served := glm(ended("docs", "accepted", stage("implement", 100_000, "")))
+	served.Status.Runs = []v1alpha1.RunRecord{{ID: "r", Role: "implementer", Provenance: v1alpha1.RunProvenance{ServedModels: []string{"gemini-4-neon"}}}}
+	if rep := Fold("owner/repo", []v1alpha1.Task{served}, 500); len(rep.Models) != 1 || rep.Models[0].Model != "gemini-4-neon" {
+		t.Fatalf("a run's served model wins: %+v", rep.Models)
+	}
+}

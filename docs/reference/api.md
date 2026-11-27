@@ -1591,6 +1591,8 @@ Query parameters:
 ```
 
 `typicalUSD` and `p90USD` are present only once a class has at least 30 merged tasks in the window.
+`models` holds the same tasks by model: `{model, tasks, merged, usd, usdPerMerged, stages}`, each task
+under its implementer's model and each stage under the model of the role that ran it.
 The broker proxies this route at `GET /api/stages` for `maku stages`.
 
 ### `POST /v1/workflows/dry-run`

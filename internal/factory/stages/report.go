@@ -7,6 +7,7 @@ package stages
 import (
 	"cmp"
 	"context"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -36,6 +37,29 @@ type Report struct {
 	Tasks      int           `json:"tasks"`
 	Merged     int           `json:"merged"`
 	Classes    []ClassReport `json:"classes"`
+	// Models is the same tasks by model (Gemini plan A9): `maku stages --by model`.
+	Models []ModelReport `json:"models,omitempty"`
+}
+
+// ModelReport is one model's summary: the tasks whose implementer ran on it, their merges and
+// spend, and every stage that ran on it, whichever task it belonged to.
+type ModelReport struct {
+	Model        string        `json:"model"`
+	Tasks        int           `json:"tasks"`
+	Merged       int           `json:"merged"`
+	USD          float64       `json:"usd"`
+	USDPerMerged float64       `json:"usdPerMerged,omitempty"`
+	Stages       []StageReport `json:"stages"`
+}
+
+// Stage returns the named StageReport in m, or a zero StageReport when absent.
+func (m ModelReport) Stage(name string) StageReport {
+	for _, s := range m.Stages {
+		if s.Stage == name {
+			return s
+		}
+	}
+	return StageReport{}
 }
 
 // ClassReport is one class's summary within a repository.
@@ -95,11 +119,6 @@ func Fold(repository string, tasks []v1alpha1.Task, last int) Report {
 		ended = ended[:last]
 	}
 
-	type stageAgg struct {
-		tasks   int
-		micro   int64
-		effects map[string]int
-	}
 	type classAgg struct {
 		tasks     int
 		merged    int
@@ -107,6 +126,20 @@ func Fold(repository string, tasks []v1alpha1.Task, last int) Report {
 		stages    map[string]*stageAgg
 	}
 	byClass := map[string]*classAgg{}
+	type modelAgg struct {
+		tasks, merged int
+		micro         int64
+		stages        map[string]*stageAgg
+	}
+	byModel := map[string]*modelAgg{}
+	modelAt := func(m string) *modelAgg {
+		ma, ok := byModel[m]
+		if !ok {
+			ma = &modelAgg{stages: map[string]*stageAgg{}}
+			byModel[m] = ma
+		}
+		return ma
+	}
 	rep := Report{Repository: repository, Classes: []ClassReport{}}
 
 	for i := range ended {
@@ -126,6 +159,25 @@ func Fold(repository string, tasks []v1alpha1.Task, last int) Report {
 		if merged {
 			ca.merged++
 			ca.mergedUSD = append(ca.mergedUSD, float64(taskMicroUSD(t))/1e6)
+		}
+		ma := modelAt(modelOf(t, "implementer"))
+		ma.tasks++
+		ma.micro += taskMicroUSD(t)
+		if merged {
+			ma.merged++
+		}
+		for _, st := range t.Status.Stages {
+			stages := modelAt(modelOf(t, roleOfStage(st.Stage))).stages
+			sa, ok := stages[st.Stage]
+			if !ok {
+				sa = &stageAgg{effects: map[string]int{}}
+				stages[st.Stage] = sa
+			}
+			sa.tasks++
+			sa.micro += st.MicroUSD
+			if st.Effect != "" {
+				sa.effects[st.Effect]++
+			}
 		}
 		for _, st := range t.Status.Stages {
 			sa, ok := ca.stages[st.Stage]
@@ -189,7 +241,74 @@ func Fold(repository string, tasks []v1alpha1.Task, last int) Report {
 		}
 		rep.Classes = append(rep.Classes, cr)
 	}
+	for _, name := range slices.Sorted(maps.Keys(byModel)) {
+		ma := byModel[name]
+		mr := ModelReport{Model: name, Tasks: ma.tasks, Merged: ma.merged, USD: roundCents(float64(ma.micro) / 1e6), Stages: []StageReport{}}
+		if ma.merged > 0 {
+			mr.USDPerMerged = roundCents(float64(ma.micro) / 1e6 / float64(ma.merged))
+		}
+		mr.Stages = orderedStages(ma.stages)
+		rep.Models = append(rep.Models, mr)
+	}
 	return rep
+}
+
+// stageAgg is one stage's running totals while a report folds.
+type stageAgg struct {
+	tasks   int
+	micro   int64
+	effects map[string]int
+}
+
+// orderedStages is aggs as reports, in stageOrder, then any other stage by name.
+func orderedStages(aggs map[string]*stageAgg) []StageReport {
+	names := slices.Clone(stageOrder)
+	for _, st := range slices.Sorted(maps.Keys(aggs)) {
+		if !slices.Contains(names, st) {
+			names = append(names, st)
+		}
+	}
+	out := []StageReport{}
+	for _, st := range names {
+		if sa, ok := aggs[st]; ok {
+			out = append(out, StageReport{Stage: st, Tasks: sa.tasks, USD: roundCents(float64(sa.micro) / 1e6), Effects: sa.effects})
+		}
+	}
+	return out
+}
+
+// roleOfStage is the role whose runs a stage measures (WR5's stageOf, reversed).
+func roleOfStage(stage string) string {
+	switch stage {
+	case "review":
+		return "reviewer"
+	case "tests":
+		return "tester"
+	case "plan", "ask":
+		return "triager"
+	}
+	return "implementer"
+}
+
+// modelOf is the model role ran on in t: a run of role's served model (the meter's
+// gen_ai_request_model), else the profile's frozen model for its roles (a model:<alias> label, the
+// evaluation's treatment), else the budget's alias.
+func modelOf(t *v1alpha1.Task, role string) string {
+	for _, r := range t.Status.Runs {
+		if r.Role == role && len(r.Provenance.ServedModels) > 0 {
+			return r.Provenance.ServedModels[0]
+		}
+	}
+	if p := t.Status.Profile; p != nil && p.Model != "" {
+		roles := p.ModelRoles
+		if len(roles) == 0 {
+			roles = []string{"implementer", "reviewer"}
+		}
+		if slices.Contains(roles, role) {
+			return p.Model
+		}
+	}
+	return cmp.Or(t.Spec.Budget.Model, "unknown")
 }
 
 // FilterClass narrows r to one class, keeping the repository header and matching totals.
