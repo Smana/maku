@@ -45,6 +45,16 @@ qs_port_ok() {
   return 1
 }
 
+# qs_prebuilt_ok TAG IMAGE...: PREBUILT=1 names images that must already be loaded locally.
+qs_prebuilt_ok() {
+  local tag=$1 image
+  shift
+  for image in "$@"; do
+    docker image inspect "ghcr.io/smana/$image:$tag" >/dev/null 2>&1 ||
+      { echo "PREBUILT=1: ghcr.io/smana/$image:$tag is not loaded" >&2; return 1; }
+  done
+}
+
 # qs_retry_webhook TRIES DELAY CMD...: runs CMD, retrying only while an admission webhook does not
 # answer yet. An operator's Deployment reports ready a moment before its webhook serves (CNPG,
 # 2026-10-28: "failed calling webhook mcluster.cnpg.io"). Any other error returns at once.
