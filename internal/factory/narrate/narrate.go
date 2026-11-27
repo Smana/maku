@@ -1435,6 +1435,13 @@ func HarnessRefused(name, code string) Event {
 	return Event{Key: "harness-refused", Class: ClassChanged, Body: fmt.Sprintf("Agent factory: the pinned harness `%s` was not applied: %s", name, sentence)}
 }
 
+// HarnessForModel says a task that resolved to OpenCode runs on OpenHands because its model is one
+// OpenCode cannot use yet (maku#798). One per task: the task stays on OpenHands from then on.
+func HarnessForModel(model string) Event {
+	return Event{Key: "harness-model", Class: ClassChanged,
+		Body: fmt.Sprintf("Agent factory: OpenCode can't use `%s` yet (#798); this task runs on OpenHands.", model)}
+}
+
 // ModelRefused says a model:<alias> label was not applied (Gemini plan A7); the task runs on its
 // tier's model.
 func ModelRefused(name, code string) Event {

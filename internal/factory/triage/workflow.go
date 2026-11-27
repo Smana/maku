@@ -65,6 +65,9 @@ const (
 	HarnessSourceTreatment = "treatment"
 	HarnessSourceDefault   = "default"
 	HarnessSourceRescue    = "rescue"
+	// HarnessSourceModel is OpenHands because the run's model is one OpenCode cannot use
+	// (config.OpenCodeCannot), whatever had chosen OpenCode: the default, the treatment or a label.
+	HarnessSourceModel = "model"
 )
 
 // HarnessFor resolves a task's harness and why:
