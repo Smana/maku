@@ -39,6 +39,27 @@ class FooterTest(unittest.TestCase):
             "Agent-Task-URL: https://github.com/Smana/cloud-native-ref/issues/2112"))
         self.assertNotIn("Agent-Task: https://", pr_footer.footer(ENV), "the URL never lands on Agent-Task")
 
+    def test_routine_and_prompt_sha_fields(self):
+        lines = pr_footer.footer(dict(ENV, AGENT_ROUTINE="dead-code", AGENT_ROUTINE_PROMPT_SHA="0123456789ab")).split("\n")
+        self.assertIn("Agent-Routine: dead-code", lines)
+        self.assertIn("Agent-Routine-Prompt-SHA: 0123456789ab", lines)
+        self.assertEqual(lines.index("Agent-Routine: dead-code") + 1, lines.index("Agent-Routine-Prompt-SHA: 0123456789ab"))
+
+    def test_with_draft_injection(self):
+        env_on = dict(ENV, AGENT_PR_DRAFT="1")
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--fill"], env_on), ["pr", "create", "--fill", "--draft"])
+        self.assertEqual(pr_footer.with_draft(["pr", "new", "-R", "o/r", "--fill"], env_on), ["pr", "new", "-R", "o/r", "--fill", "--draft"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--draft"], env_on), ["pr", "create", "--draft"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "-d"], env_on), ["pr", "create", "-d"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--draft=true"], env_on), ["pr", "create", "--draft=true"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--draft=false"], env_on), ["pr", "create", "--draft"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--help"], env_on), ["pr", "create", "--help"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "-h"], env_on), ["pr", "create", "-h"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--title", "--draft"], env_on), ["pr", "create", "--title", "--draft", "--draft"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--", "--draft=false"], env_on), ["pr", "create", "--draft", "--", "--draft=false"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--fill"], dict(ENV, AGENT_PR_DRAFT="0")), ["pr", "create", "--fill"])
+        self.assertEqual(pr_footer.with_draft(["pr", "create", "--fill"], ENV), ["pr", "create", "--fill"])
+
     def test_a_value_with_a_control_character_is_left_out(self):
         for sep in ("\n", "\r", "\x0b", "\x85", "\x9b", "\u2028", "\u2029", "\x00"):
             env = dict(ENV, TASK_ID="t1" + sep + "Agent-Run: forged")
@@ -137,6 +158,10 @@ class MainTest(unittest.TestCase):
         args, body = calls[-1]
         self.assertEqual(args, [pr_footer.GH, "pr", "edit", PR, "--body-file", "-"])
         self.assertTrue(body.endswith("---\n" + FOOTER + "\n"))
+
+        rc, calls = self.run_main(body="Fixes #2112\n\n---\n" + FOOTER + "\n", env=dict(ENV, AGENT_PR_DRAFT="1"))
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls[0][0], [pr_footer.GH, "pr", "create", "--title", "t", "--fill", "--draft"])
 
     def test_a_failed_create_is_returned_and_nothing_else_runs(self):
         rc, calls = self.run_main(create_rc=1, create_out="")

@@ -664,3 +664,72 @@ func TestProviderAliasesArePublicRunsOnly(t *testing.T) {
 		})
 	}
 }
+
+func TestPRDraftAndRoutineProvenance(t *testing.T) {
+	s := spec()
+	s.PRDraft = true
+	s.Routine = "dead-code"
+	s.RoutinePromptSHA = "0123456789ab"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("valid draft routine spec refused: %v", err)
+	}
+	u := Build(runwatch.DefaultKind, s)
+	if v, ok, _ := unstructured.NestedBool(u.Object, "spec", "prDraft"); !ok || !v {
+		t.Fatalf("spec.prDraft = %v, %v", v, ok)
+	}
+	ann := u.GetAnnotations()
+	if ann[AnnRoutine] != "dead-code" || ann[AnnRoutinePromptSHA] != "0123456789ab" {
+		t.Fatalf("annotations = %v", ann)
+	}
+	r, ok := FromUnstructured(runwatch.DefaultKind, u)
+	if !ok || !r.PRDraft || r.Routine != "dead-code" || r.RoutinePromptSHA != "0123456789ab" {
+		t.Fatalf("FromUnstructured = %+v, ok=%v", r, ok)
+	}
+
+	plain := Build(runwatch.DefaultKind, spec())
+	if _, found, _ := unstructured.NestedFieldNoCopy(plain.Object, "spec", "prDraft"); found {
+		t.Fatal("prDraft written when false")
+	}
+	if plain.GetAnnotations()[AnnRoutine] != "" || plain.GetAnnotations()[AnnRoutinePromptSHA] != "" {
+		t.Fatalf("routine annotations written when empty: %v", plain.GetAnnotations())
+	}
+
+	for name, mut := range map[string]func(*Spec){
+		"bad routine": func(sp *Spec) { sp.Routine = "bad\nRoutine" },
+		"bad sha len": func(sp *Spec) { sp.RoutinePromptSHA = "abc" },
+		"bad sha hex": func(sp *Spec) { sp.RoutinePromptSHA = "zzzzzzzzzzzz" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := spec()
+			mut(&bad)
+			if err := bad.Validate(); err == nil {
+				t.Fatal("expected validation failure")
+			}
+		})
+	}
+
+	var gotStrict bool
+	sch := runtime.NewScheme()
+	cl := fake.NewClientBuilder().WithScheme(sch).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, opts ...client.CreateOption) error {
+			for _, o := range opts {
+				if o == client.FieldValidation("Strict") {
+					gotStrict = true
+				}
+			}
+			return nil
+		},
+	}).Build()
+	c := Client{C: cl, Kind: runwatch.DefaultKind}
+	if err := c.Create(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if !gotStrict {
+		t.Fatal("Client.Create did not request FieldValidation(Strict) when PRDraft=true")
+	}
+	for _, key := range []string{AnnRoutine, AnnRoutinePromptSHA} {
+		if err := c.Annotate(t.Context(), s.RunID, map[string]string{key: "x"}); err == nil {
+			t.Fatalf("Annotate allowed CREATE-only key %s", key)
+		}
+	}
+}

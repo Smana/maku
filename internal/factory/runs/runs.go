@@ -85,6 +85,10 @@ const (
 	// AnnScreenshots is the run's screenshot cap (runwatch.ScreenshotsAnnotation), written at CREATE
 	// beside spec.screenshots: the broker accepts screenshot uploads for such a run only (v5 Q16).
 	AnnScreenshots = runwatch.ScreenshotsAnnotation
+	// AnnRoutine and AnnRoutinePromptSHA carry the routine name and 12-hex prompt fingerprint for
+	// PR provenance footers (Agent-Routine, Agent-Routine-Prompt-SHA, UP13). CREATE only.
+	AnnRoutine          = "agents.ogenki.io/routine"
+	AnnRoutinePromptSHA = "agents.ogenki.io/routine-prompt-sha"
 )
 
 // safeOutputTypes are the types a claim may name as safe outputs: H2's four, and push from stage H3.
@@ -176,6 +180,10 @@ type Spec struct {
 	// Screenshots is spec.screenshots (v5 Q16): the run's screenshot cap, written as
 	// {enabled: true, maxScreenshots: N} only when above 0; 0 gives the run no browser.
 	Screenshots int32
+	// PRDraft is spec.prDraft (UP14, P2-R3), written only when true: immutable once set.
+	PRDraft bool
+	// Routine and RoutinePromptSHA are written as AnnRoutine / AnnRoutinePromptSHA at CREATE only.
+	Routine, RoutinePromptSHA string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -192,8 +200,15 @@ var (
 	githubURL = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]+)/(?:issues|pull)/[1-9][0-9]*$`)
 	// traceparent is W3C Trace Context version 00 in lower-case hex. Any flags byte: level 2
 	// adds the random-trace-id bit (0x02), and refusing it would fail every CREATE.
-	traceparent = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
+	traceparent      = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
+	routinePromptSHA = regexp.MustCompile(`^[0-9a-f]{12}(?:[0-9a-f]{52})?$`)
 )
+
+// ValidRoutine reports whether name is a safe routine name for run annotations and AGENT_ROUTINE.
+func ValidRoutine(name string) bool { return config.ValidRoutineName(name) }
+
+// ValidRoutinePromptSHA reports whether sha is a 12-hex or 64-hex lowercase routine prompt digest.
+func ValidRoutinePromptSHA(sha string) bool { return routinePromptSHA.MatchString(sha) }
 
 // ValidTraceparent reports whether tp is a W3C Trace Context version 00 header the harness can
 // parent on: lower-case hex, and neither the trace id nor the parent id all zero, which W3C calls
@@ -265,6 +280,12 @@ func (s Spec) Validate() error {
 	if err := s.validManifest(); err != nil {
 		errs = append(errs, err)
 	}
+	if s.Routine != "" && !ValidRoutine(s.Routine) {
+		errs = append(errs, fmt.Errorf("routine %q is not a valid routine name", s.Routine))
+	}
+	if s.RoutinePromptSHA != "" && !ValidRoutinePromptSHA(s.RoutinePromptSHA) {
+		errs = append(errs, fmt.Errorf("routinePromptSHA %q is not 12 or 64 lowercase hex digits", s.RoutinePromptSHA))
+	}
 	return errors.Join(errs...)
 }
 
@@ -302,6 +323,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Screenshots > 0 {
 		spec["screenshots"] = map[string]any{"enabled": true, "maxScreenshots": int64(s.Screenshots)}
+	}
+	if s.PRDraft {
+		spec["prDraft"] = true
 	}
 	if l := s.Loop; l != nil || s.Checks || s.Search {
 		loop := map[string]any{}
@@ -383,6 +407,12 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	if s.ReviewChecks != "" {
 		ann[AnnReviewChecks] = clipUTF8(s.ReviewChecks, runwatch.MaxReviewChecks)
 	}
+	if s.Routine != "" {
+		ann[AnnRoutine] = s.Routine
+	}
+	if s.RoutinePromptSHA != "" {
+		ann[AnnRoutinePromptSHA] = s.RoutinePromptSHA
+	}
 	if len(s.SafeOutputs) > 0 {
 		types := slices.Clone(s.SafeOutputs)
 		slices.Sort(types)
@@ -422,6 +452,10 @@ type Run struct {
 	// Deleting: the claim carries a deletion timestamp. Its finalizers can keep it listed, in
 	// whatever phase it had, long after the run itself was stopped (#55).
 	Deleting bool
+	// PRDraft, Routine and RoutinePromptSHA mirror spec.prDraft and the CREATE-only routine
+	// provenance annotations.
+	PRDraft                   bool
+	Routine, RoutinePromptSHA string
 }
 
 // FromUnstructured reads a claim. ok is false for one that is not a run: not named
@@ -441,7 +475,9 @@ func FromUnstructured(k runwatch.Kind, u *unstructured.Unstructured) (Run, bool)
 		TaskText: str("spec", "task", "text"), ChargedTo: u.GetAnnotations()[AnnChargedTo],
 		Cohort: u.GetAnnotations()[AnnCohort], Profile: u.GetAnnotations()[AnnProfile], Canary: u.GetAnnotations()[AnnCanary],
 		FactoryVersion: u.GetAnnotations()[AnnFactoryVersion], CompositionRevision: str("spec", "crossplane", "compositionRevisionRef", "name"),
-		HarnessImage: str("status", "harnessImage")}
+		HarnessImage: str("status", "harnessImage"), Routine: u.GetAnnotations()[AnnRoutine],
+		RoutinePromptSHA: u.GetAnnotations()[AnnRoutinePromptSHA]}
+	r.PRDraft, _, _ = unstructured.NestedBool(u.Object, "spec", "prDraft")
 	// The CREATE-only start seq (R48): absent means the room was empty when the run was created.
 	if v, err := strconv.ParseInt(u.GetAnnotations()[AnnStartSeq], 10, 64); err == nil {
 		r.StartSeq = v
@@ -528,7 +564,7 @@ func (c Client) Create(ctx context.Context, s Spec) error {
 	// A claim carrying a newer spec field is created under Strict field validation: an old schema
 	// would prune it and run with defaults while the Task records the requested policy; refuse instead.
 	var opts []client.CreateOption
-	if s.Loop != nil || s.Checks || s.Search || s.Effort != "" || s.Harness != "" || s.Screenshots > 0 {
+	if s.Loop != nil || s.Checks || s.Search || s.Effort != "" || s.Harness != "" || s.Screenshots > 0 || s.PRDraft {
 		opts = append(opts, client.FieldValidation("Strict"))
 	}
 	claim := Build(c.Kind, s)
@@ -621,7 +657,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnPersona, AnnReviewChecks, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnPersona, AnnReviewChecks, AnnRoutine, AnnRoutinePromptSHA, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

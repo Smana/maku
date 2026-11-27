@@ -10,20 +10,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/statuswriter"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // factoryStatusInputs is what the status writer reads: the Source's outcomes and published
 // config, each repository's GitHub health, the policy watch's snapshots (none while
 // policyManagement.read is off), the latest decisions, each repository's visibility as the last
-// fence pass read it (v4 D3) and the stop object. A stop that cannot be
-// read counts as not stopped and is logged.
+// fence pass read it (v4 D3), persisted routine states, tasks, and the stop object. A stop that
+// cannot be read counts as not stopped and is logged.
 func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, conns *repoConns,
-	watch func() *mergepolicy.Watch, rec *decision.Recorder, visibility func(string) string, log *slog.Logger) func(context.Context) statuswriter.Inputs {
+	watch func() *mergepolicy.Watch, rec *decision.Recorder, visibility func(string) string,
+	routineState *upkeep.StateStore, log *slog.Logger) func(context.Context) statuswriter.Inputs {
 	return func(ctx context.Context) statuswriter.Inputs {
 		outcomes, synced := src.Outcomes()
 		in := statuswriter.Inputs{
@@ -38,6 +41,22 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 		}
 		if w := watch(); w != nil {
 			in.Snapshot = w.Snapshot
+		}
+		if routineState != nil {
+			states, err := routineState.List(ctx)
+			if err != nil {
+				log.Warn("status: routine state not read", "error", err)
+			} else {
+				in.RoutineStates = states
+			}
+		}
+		if c != nil {
+			var taskList factoryv1.TaskList
+			if err := c.List(ctx, &taskList, client.InNamespace(ns)); err != nil {
+				log.Warn("status: tasks not read", "error", err)
+			} else {
+				in.Tasks = taskList.Items
+			}
 		}
 		stopped, err := killswitch.Engaged(ctx, c, ns)
 		if err != nil {

@@ -11,7 +11,7 @@ import (
 )
 
 // harnessKeys are the footer keys pr_footer.py writes (images/maku-harness/pr_footer.py, FIELDS).
-var harnessKeys = []string{"Agent-Room", "Agent-Run", "Agent-Role", "Agent-Task", "Agent-Task-URL", "Agent-Model"}
+var harnessKeys = []string{"Agent-Room", "Agent-Run", "Agent-Role", "Agent-Task", "Agent-Task-URL", "Agent-Model", "Agent-Routine", "Agent-Routine-Prompt-SHA"}
 
 // Provenance is what the factory's footer says about an applied pull request (HR4): the harness's
 // fields, and the output that wrote it (HR16).

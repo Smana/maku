@@ -26,6 +26,7 @@ import (
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // LabelPublish asks the factory to file an investigate task's proposal as a new issue (RunLore
@@ -109,6 +110,8 @@ func (p *IssuePoller) publishOne(ctx context.Context, cfg *config.Config, n int,
 		return p.refusePublish(ctx, cfg, n, last, "task_not_ended")
 	case t.Status.Phase != v1alpha1.PhaseDone: // a stopped, closed or empty task's handoff is no proposal
 		return p.refusePublish(ctx, cfg, n, last, "no_proposal")
+	case t.Spec.DataClass == "public": // public proposals are already filed directly; factory/publish is only for internal investigate tasks
+		return p.refusePublish(ctx, cfg, n, last, "no_proposal")
 	}
 	// Filing is made idempotent by a marker label on the new issue, which grants nothing: a crash
 	// between CreateIssue and the record, or a record that failed, leaves an issue the retry finds
@@ -121,8 +124,8 @@ func (p *IssuePoller) publishOne(ctx context.Context, cfg *config.Config, n int,
 	filed, class := forge.Issue{}, ""
 	filedNow := false
 	for _, i := range found {
-		if !forge.SameLogin(i.Author, cfg.FactoryLogin) {
-			continue // a label anyone can apply is no record: only the factory's own issue counts
+		if i.Number == n || !forge.SameLogin(i.Author, cfg.FactoryLogin) {
+			continue // skip the stub issue itself and labels applied by non-factory actors
 		}
 		if filed.Number == 0 || i.Number < filed.Number {
 			filed = i
@@ -164,6 +167,22 @@ func (p *IssuePoller) publishOne(ctx context.Context, cfg *config.Config, n int,
 	by := strings.ToLower(last.Actor)
 	if err := p.recordPublished(ctx, t, iss.Number, by, class); err != nil {
 		p.log().Error("the published issue is not recorded on its task", "task", t.Name, "issue", iss.Number, "error", err)
+	}
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine && t.Spec.Routine != nil && p.Breaker != nil {
+		var brSpec config.ResolvedBreaker
+		if rc := p.repo(cfg); rc != nil {
+			if rr, ok := rc.ResolvedRoutines[t.Spec.Routine.Name]; ok {
+				brSpec = rr.Breaker
+			}
+		}
+		if _, berr := p.Breaker.Record(ctx, t.Spec.Repository, t.Spec.Routine.Name, brSpec, upkeep.BreakerOutcome{
+			ID:        fmt.Sprintf("proposal:%d", n),
+			Outcome:   upkeep.OutcomeProposalAccepted,
+			PromptSHA: t.Spec.Routine.PromptSHA,
+			At:        p.now(),
+		}); berr != nil {
+			p.log().Warn("routine breaker proposal_accepted failed", "task", t.Name, "issue", n, "err", berr)
+		}
 	}
 	e := narrate.Published(n, iss.Number, by)
 	if started != "" {

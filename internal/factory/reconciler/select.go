@@ -124,6 +124,9 @@ func decideAmong(in ArmInputs, cfg *config.Config, rc *config.Repository, classe
 	if in.DiffRead && cfg.SteeringOn() && touchesSteering(in.Stats) {
 		return human("steering_path") // no agent pull request changes a note (scoper SC3)
 	}
+	if in.DiffRead && touchesUpkeepPath(rc, in.Stats) {
+		return human("upkeep_path") // no agent pull request changes a routine prompt or bound skill
+	}
 	var live, shadow, liveWait, shadowWait, liveGuards []held
 	var considered []string
 	for _, name := range candidates(classes, in.Task) {

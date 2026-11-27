@@ -1239,6 +1239,10 @@ type PullRequestRef struct {
 	MergedBy string `json:"mergedBy,omitempty"`
 	// +optional
 	AutoMerged bool `json:"autoMerged,omitempty"`
+	// WasDraft records that this PR was observed as a draft at least once, so marking it Ready for
+	// review early does not trigger draft_mode_mismatch (UP14).
+	// +optional
+	WasDraft bool `json:"wasDraft,omitempty"`
 	// HumanCommits is never cleared: one human commit makes the merge merged_human, not accepted.
 	// +optional
 	HumanCommits bool `json:"humanCommits,omitempty"`

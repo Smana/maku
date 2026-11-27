@@ -70,12 +70,17 @@ func (r *Reconciler) nextImplementer(ctx context.Context, cfg *config.Config, t 
 		return runs.Spec{}, nil, "", err
 	}
 	if t.Status.PullRequest == nil && trigger != TriggerEscalation { // a step continues the run before it, PR or not
+		rp, err := r.hydrateRoutinePrompt(ctx, t)
+		if err != nil {
+			return runs.Spec{}, nil, "", err
+		}
+		history := r.hydrateRoutineHistory(ctx, cfg, t)
 		q, err := r.Rooms.Queue(ctx, t.Status.RoomRef)
 		if err != nil {
 			return runs.Spec{}, nil, "", err
 		}
 		nonce := r.Nonce()
-		text, refs := forThisRun(resumed(t, trigger)+firstBrief(t, nonce, sc), q, nonce)
+		text, refs := forThisRun(resumed(t, trigger)+FirstBriefWithRoutineHistory(t, nonce, sc, rp, history), q, nonce)
 		return r.implementerSpec(cfg, t, text), refs, trigger, nil
 	}
 	// The finished run's handoff and verdict are after its start; brief.Build reads only those.
@@ -177,6 +182,9 @@ func notePR(ref *v1alpha1.PullRequestRef, pr forge.PR) {
 		}
 	}
 	ref.Author, ref.Reviewers = pr.Author, rvs
+	if pr.Draft {
+		ref.WasDraft = true
+	}
 }
 
 // lateReviews re-reads the pull request just before a run starts. A maintainer's review submitted
@@ -665,7 +673,11 @@ func (r *Reconciler) remind(ctx context.Context, cfg *config.Config, t *v1alpha1
 	if t.Status.PhaseSince == nil || pr.HeadRef != "agent/"+t.Name {
 		return nil
 	}
-	if r.Now().Sub(r.quietSince(cfg, t, pr, nil)) < RemindAfter { // spares the thread read
+	minWait := RemindAfter
+	if pr.Draft {
+		minWait = StaleAfter
+	}
+	if r.Now().Sub(r.quietSince(cfg, t, pr, nil)) < minWait { // spares the thread read
 		return nil
 	}
 	thread, err := r.thread(ctx, t, pr)
@@ -674,15 +686,21 @@ func (r *Reconciler) remind(ctx context.Context, cfg *config.Config, t *v1alpha1
 	}
 	since := r.quietSince(cfg, t, pr, thread)
 	waited := r.Now().Sub(since)
-	if waited < RemindAfter {
+	if waited < minWait {
 		return nil
 	}
 	approved := r.approved(cfg, t, pr)
-	reminder := narrate.Reminder(t, r.repo(cfg, t).Maintainers, since, approved)
-	posted, ok := r.postedAt(cfg, t, thread, reminder.Key)
-	if approved || waited < StaleAfter || !ok || r.Now().Sub(posted) < reminderNotice {
-		narrateLater(t, reminder)
-		return nil
+	if pr.Draft {
+		if approved || waited < StaleAfter {
+			return nil
+		}
+	} else {
+		reminder := narrate.Reminder(t, r.repo(cfg, t).Maintainers, since, approved)
+		posted, ok := r.postedAt(cfg, t, thread, reminder.Key)
+		if approved || waited < StaleAfter || !ok || r.Now().Sub(posted) < reminderNotice {
+			narrateLater(t, reminder)
+			return nil
+		}
 	}
 	if err := r.gh(ctx).AddLabels(ctx, pr.Number, labelStale); err != nil {
 		return err

@@ -114,15 +114,33 @@ func TestResolveRoutine(t *testing.T) {
 		}
 	})
 
-	t.Run("repoPrompt false is allowed in phase 1", func(t *testing.T) {
+	t.Run("repoPrompt defaults true, respects false, and binds skill", func(t *testing.T) {
 		rt := RoutineSpec{DefaultPrompt: "Check docs."}
-		b := RoutineBinding{Name: "doc-drift", Mode: RoutineModePR, Cron: "0 4 * * 1", RepoPrompt: new(false)}
-		res, reason, err := ResolveRoutine("doc-drift", rt, b, &Repository{Name: "a/b"}, nil)
+		bDefault := RoutineBinding{Name: "doc-drift", Mode: RoutineModePR, Cron: "0 4 * * 1"}
+		res, reason, err := ResolveRoutine("doc-drift", rt, bDefault, &Repository{Name: "a/b"}, nil)
 		if err != nil || reason != "" {
 			t.Fatalf("unexpected error (%s): %v", reason, err)
 		}
-		if res.RepoPrompt {
-			t.Fatal("RepoPrompt should be false")
+		if !res.RepoPrompt || res.Skill != "" {
+			t.Fatalf("RepoPrompt=%v Skill=%q, want true and empty", res.RepoPrompt, res.Skill)
+		}
+
+		bFalse := RoutineBinding{Name: "doc-drift", Mode: RoutineModePR, Cron: "0 4 * * 1", RepoPrompt: new(false), Skill: "docs-audit"}
+		res, reason, err = ResolveRoutine("doc-drift", rt, bFalse, &Repository{Name: "a/b"}, nil)
+		if err != nil || reason != "" {
+			t.Fatalf("unexpected error (%s): %v", reason, err)
+		}
+		if res.RepoPrompt || res.Skill != "docs-audit" {
+			t.Fatalf("RepoPrompt=%v Skill=%q, want false and docs-audit", res.RepoPrompt, res.Skill)
+		}
+
+		bTrue := RoutineBinding{Name: "doc-drift", Mode: RoutineModePR, Cron: "0 4 * * 1", RepoPrompt: new(true), Skill: "docs-audit"}
+		res, reason, err = ResolveRoutine("doc-drift", rt, bTrue, &Repository{Name: "a/b"}, nil)
+		if err != nil || reason != "" {
+			t.Fatalf("unexpected error (%s): %v", reason, err)
+		}
+		if !res.RepoPrompt || res.Skill != "docs-audit" {
+			t.Fatalf("RepoPrompt=%v Skill=%q, want true and docs-audit", res.RepoPrompt, res.Skill)
 		}
 	})
 
@@ -225,22 +243,22 @@ func TestResolveRoutine(t *testing.T) {
 			bind:    func(b *RoutineBinding) { b.OracleClass = "docs" },
 			wantRsn: ReasonInvalid,
 		},
-		"mode propose refused in phase 1": {
-			bind:    func(b *RoutineBinding) { b.Mode = RoutineModePropose },
-			wantRsn: ReasonInvalid,
-			wantMsg: "mode_requires_phase2",
+		"mode propose allowed": {
+			bind: func(b *RoutineBinding) { b.Mode = RoutineModePropose },
 		},
-		"mode draft refused in phase 1": {
-			bind:    func(b *RoutineBinding) { b.Mode = RoutineModeDraft },
-			wantRsn: ReasonInvalid,
-			wantMsg: "mode_requires_phase2",
+		"mode draft allowed": {
+			bind: func(b *RoutineBinding) { b.Mode = RoutineModeDraft },
 		},
-		"repoPrompt true refused in phase 1": {
-			bind:    func(b *RoutineBinding) { b.RepoPrompt = new(true) },
+		"invalid skill name traversal": {
+			bind:    func(b *RoutineBinding) { b.Skill = "../evil" },
 			wantRsn: ReasonInvalid,
 		},
-		"skill refused in phase 1": {
-			bind:    func(b *RoutineBinding) { b.Skill = "docs-audit" },
+		"invalid skill name uppercase": {
+			bind:    func(b *RoutineBinding) { b.Skill = "Bad_Skill" },
+			wantRsn: ReasonInvalid,
+		},
+		"invalid skill name slash": {
+			bind:    func(b *RoutineBinding) { b.Skill = "a/b" },
 			wantRsn: ReasonInvalid,
 		},
 		"missing cron when enabled": {

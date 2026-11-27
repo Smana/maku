@@ -18,7 +18,7 @@ import (
 // PrincipalUpkeep is the ledger key for cron upkeep routine runs (Q15).
 const PrincipalUpkeep = "system:upkeep"
 
-// Routine delivery modes (CRD schema supports all 4; Phase 1 ResolveRoutine admits pr and disabled).
+// Routine delivery modes.
 const (
 	RoutineModePropose  = "propose"
 	RoutineModeDraft    = "draft"
@@ -72,6 +72,9 @@ var (
 
 // ValidRoutineName reports whether name is a valid Routine name.
 func ValidRoutineName(name string) bool { return routineNameRE.MatchString(name) }
+
+// ValidSkillName reports whether name is a valid Agent Skill name.
+func ValidSkillName(name string) bool { return skillNameRE.MatchString(name) }
 
 // ProbeSpec configures a routine's pre-run CI or repository probe.
 // +kubebuilder:object:generate=true
@@ -289,7 +292,7 @@ type ResolvedRoutine struct {
 var routineRequiresKeys = []string{"probeWorkflow", "probeArtifact", "probeFile", "probeAuthor", "oracleClass"}
 
 // ResolveRoutine merges a RoutineSpec and a Repository's RoutineBinding, enforcing UP2 ownership,
-// fill-once parameters, probe rules, and Phase 1 restrictions (P1-R1, A1, A8).
+// fill-once parameters, and probe rules (P1-R1, A1, A8).
 func ResolveRoutine(name string, rt RoutineSpec, b RoutineBinding, rc *Repository, c *Config) (ResolvedRoutine, string, error) {
 	res, reason, problems := resolveRoutine(name, rt, b, rc, c)
 	if reason != "" {
@@ -470,20 +473,12 @@ func resolveRoutine(name string, rt RoutineSpec, b RoutineBinding, rc *Repositor
 		return refuse(ReasonInvalid, "routine %s: binding names Routine %q", name, b.Name)
 	}
 	switch b.Mode {
-	case RoutineModePR, RoutineModeDisabled:
-	case RoutineModePropose, RoutineModeDraft:
-		return refuse(ReasonInvalid, "routine %s: mode %q requires Phase 2 (mode_requires_phase2)", name, b.Mode)
+	case RoutineModePropose, RoutineModeDraft, RoutineModePR, RoutineModeDisabled:
 	default:
 		return refuse(ReasonInvalid, "routine %s: mode %q is not one of propose, draft, pr, disabled", name, b.Mode)
 	}
-	if b.RepoPrompt != nil && *b.RepoPrompt {
-		return refuse(ReasonInvalid, "routine %s: repoPrompt is not supported in Phase 1", name)
-	}
-	if b.Skill != "" {
-		if !skillNameRE.MatchString(b.Skill) {
-			return refuse(ReasonInvalid, "routine %s: skill %q is not a valid skill name", name, b.Skill)
-		}
-		return refuse(ReasonInvalid, "routine %s: skill is not supported in Phase 1", name)
+	if b.Skill != "" && !skillNameRE.MatchString(b.Skill) {
+		return refuse(ReasonInvalid, "routine %s: skill %q is not a valid skill name", name, b.Skill)
 	}
 	if probs := routineShapeProblems(name, rt, c); len(probs) > 0 {
 		return ResolvedRoutine{}, ReasonInvalid, probs
@@ -694,5 +689,7 @@ func resolveRoutine(name string, rt RoutineSpec, b RoutineBinding, rc *Repositor
 		MaxCostUSD:     cmp.Or(b.MaxCostUSD, rt.MaxCostUSD, DefaultRoutineMaxCostUSD),
 		Cooldown:       cooldown,
 		Breaker:        breaker,
+		RepoPrompt:     b.RepoPrompt == nil || *b.RepoPrompt,
+		Skill:          b.Skill,
 	}, "", nil
 }

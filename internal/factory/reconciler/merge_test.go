@@ -941,7 +941,7 @@ func TestAnApprovalReturnsATaskToTheGate(t *testing.T) {
 	}{
 		{"no_policy_matched", true}, {"patch_too_large", true}, {"no_approving_verdict", true}, {"maintainer_approved", true},
 		{"policy_pending", true}, {"shadow_would_arm", true}, {"gate_path", false}, {"not_mergeable", false}, {"steering_path", false},
-		{"foreign_trailer", false}, {"human_commit_in_pr", false},
+		{"upkeep_path", false}, {"foreign_trailer", false}, {"human_commit_in_pr", false}, {"draft_pr", false}, {"draft_mode_mismatch", false},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingHuman)
@@ -1083,8 +1083,8 @@ func TestAPausedTaskReturnsWhenThePauseLifts(t *testing.T) {
 func TestTheHandOffTextFollowsTheReason(t *testing.T) {
 	approvable := []string{"no_policy_matched", "patch_too_large", "policy_pending", "policy_absent", "no_approving_verdict",
 		"maintainer_approved", "approval_stale", "closes_parent", "auto_merge_cap", "class_paused", "file_not_allowed"}
-	byHand := []string{"not_agent_authored", "gate_path", "contract_modified", "not_owned", "steering_path", "foreign_trailer",
-		"not_mergeable", "changes_requested", "human_commit_in_pr", "head_unreported"}
+	byHand := []string{"not_agent_authored", "gate_path", "contract_modified", "not_owned", "steering_path", "upkeep_path", "foreign_trailer",
+		"not_mergeable", "changes_requested", "human_commit_in_pr", "head_unreported", "draft_pr", "draft_mode_mismatch"}
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	var tk v1alpha1.Task
 	if err := g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk); err != nil {

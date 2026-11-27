@@ -36,6 +36,7 @@ import (
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/resources"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // Condition types besides Accepted, and the freshness a sync must have for the Factory to be Ready.
@@ -80,6 +81,10 @@ type Inputs struct {
 	// private, internal, VisibilityUnknown after a failed read, "" before the first. nil reads
 	// none: PrivateCode is then NotChecked.
 	Visibility func(repository string) string
+	// RoutineStates holds persisted operational & breaker state keyed by lowercased repository then routine.
+	RoutineStates map[string]map[string]upkeep.RoutineState
+	// Tasks holds the namespace's Task objects for routine status projection.
+	Tasks []v1alpha1.Task
 }
 
 // VisibilityUnknown is a visibility read that failed: it counts as private (D3 fails closed).
@@ -95,11 +100,42 @@ type Status struct {
 
 // Desired returns the status each object should have, conditions stamped with now.
 func Desired(in Inputs, factories []v1alpha1.Factory, repos []v1alpha1.Repository, policies []v1alpha1.MergePolicy, routines []v1alpha1.Routine, now metav1.Time) Status {
-	d := desirer{in: in, now: now, served: map[string]config.Repository{}}
+	d := desirer{
+		in:           in,
+		now:          now,
+		served:       map[string]config.Repository{},
+		repoNames:    map[string]string{},
+		routineTasks: map[string][]*v1alpha1.Task{},
+	}
 	if in.Config != nil {
 		for _, r := range in.Config.Repos() {
 			d.served[strings.ToLower(r.Name)] = r
 		}
+	}
+	for i := range in.Outcomes {
+		if o := &in.Outcomes[i]; o.Kind == resources.KindRepository && o.Repository != "" {
+			d.repoNames[o.Name] = strings.ToLower(o.Repository)
+		}
+	}
+	for i := range repos {
+		if repos[i].Spec.Repository != "" {
+			d.repoNames[repos[i].Name] = strings.ToLower(repos[i].Spec.Repository)
+		}
+	}
+	for i := range in.Tasks {
+		t := &in.Tasks[i]
+		if t.Spec.Source.Kind != v1alpha1.SourceKindRoutine {
+			continue
+		}
+		rtName := t.Spec.Source.Ref
+		if t.Spec.Routine != nil && t.Spec.Routine.Name != "" {
+			rtName = t.Spec.Routine.Name
+		}
+		if rtName == "" {
+			continue
+		}
+		key := strings.ToLower(t.Spec.Repository) + "\x00" + rtName
+		d.routineTasks[key] = append(d.routineTasks[key], t)
 	}
 	out := Status{
 		Factories:     map[string]v1alpha1.FactoryStatus{},
@@ -123,9 +159,11 @@ func Desired(in Inputs, factories []v1alpha1.Factory, repos []v1alpha1.Repositor
 }
 
 type desirer struct {
-	in     Inputs
-	now    metav1.Time
-	served map[string]config.Repository // lowercased owner/name
+	in           Inputs
+	now          metav1.Time
+	served       map[string]config.Repository // lowercased owner/name
+	repoNames    map[string]string            // Repository CR name -> lowercased owner/name
+	routineTasks map[string][]*v1alpha1.Task  // lowercased owner/name + "\x00" + routine -> tasks
 }
 
 // observed is the generation the Source observed when it has an outcome, the object's otherwise:
@@ -314,13 +352,42 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, r *v1alpha1.Re
 	}
 	var refusedRoutines []string
 	if o != nil {
+		repoLower := strings.ToLower(rc.Name)
+		repoStates := d.in.RoutineStates[repoLower]
 		for _, rb := range o.RoutineBindings {
+			rtTasks := d.routineTasks[repoLower+"\x00"+rb.Name]
+			rr, hasRR := rc.ResolvedRoutines[rb.Name]
+			rtState := repoStates[rb.Name]
+			window := config.DefaultBreakerWindow
+			if hasRR && rr.Breaker.Window > 0 {
+				window = rr.Breaker.Window
+			}
+			sum := upkeep.SummarizeTasks(rtTasks, window)
+			promptSHA := latestTaskPromptSHA(rtTasks)
+			if promptSHA == "" && hasRR {
+				promptSHA = upkeep.DefaultPromptEffectiveSHA(rr.DefaultPrompt)
+			}
+			if promptSHA == "" {
+				promptSHA = rtState.TrippedPromptSHA
+			}
+			if len(promptSHA) > 64 {
+				promptSHA = promptSHA[:64]
+			}
 			bs := v1alpha1.RoutineBindingStatus{
-				Name:     rb.Name,
-				Mode:     rb.Mode,
-				Accepted: rb.Accepted,
-				Reason:   rb.Reason,
-				Message:  truncate(rb.Message, maxBindingMessage),
+				Name:          rb.Name,
+				Mode:          rb.Mode,
+				Accepted:      rb.Accepted,
+				Reason:        rb.Reason,
+				Message:       truncate(rb.Message, maxBindingMessage),
+				PromptSHA:     promptSHA,
+				BreakerState:  cmp.Or(rtState.BreakerState, upkeep.BreakerOK),
+				BreakerReason: truncate(rtState.BreakerReason, 64),
+				LastRunAt:     sum.LastRunAt,
+				LastOutcome:   truncate(sum.LastOutcome, 64),
+				OpenCount:     sum.OpenCount,
+				RollingMerged: sum.RollingMerged,
+				RollingClosed: sum.RollingClosed,
+				RollingNoOp:   sum.RollingNoOp,
 			}
 			if rb.Served {
 				bs.RoutineGeneration = rb.RoutineGeneration
@@ -437,12 +504,15 @@ func (d *desirer) routine(rt *v1alpha1.Routine) v1alpha1.RoutineStatus {
 		return st
 	}
 	for _, rb := range o.RoutineConsumers {
+		repoFull := d.repoNames[rb.Repository]
+		rtState := d.in.RoutineStates[repoFull][rt.Name]
+		paused := rb.Paused || rtState.Paused || rtState.BreakerState == upkeep.BreakerPaused
 		cs := v1alpha1.RoutineConsumerStatus{
 			Repository: rb.Repository,
 			Mode:       rb.Mode,
 			Accepted:   rb.Accepted,
 			Reason:     rb.Reason,
-			Paused:     rb.Paused,
+			Paused:     paused,
 		}
 		if rb.Served {
 			cs.ServedGeneration = rb.RoutineGeneration
@@ -539,4 +609,21 @@ func truncate(s string, n int) string {
 		return string(r[:n])
 	}
 	return s
+}
+
+func latestTaskPromptSHA(tasks []*v1alpha1.Task) string {
+	var bestTime time.Time
+	var bestName, bestSHA string
+	for _, t := range tasks {
+		if t.Spec.Routine == nil || t.Spec.Routine.PromptSHA == "" {
+			continue
+		}
+		ts := t.CreationTimestamp.Time
+		if bestSHA == "" || ts.After(bestTime) || (ts.Equal(bestTime) && t.Name < bestName) {
+			bestTime = ts
+			bestName = t.Name
+			bestSHA = t.Spec.Routine.PromptSHA
+		}
+	}
+	return bestSHA
 }

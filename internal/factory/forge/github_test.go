@@ -34,7 +34,7 @@ import (
 )
 
 const prJSON = `{"data":{"repository":{"pullRequest":{
- "id":"PR_kwDO1","number":12,"url":"https://github.com/Smana/demo/pull/12","title":"docs: fix a link","state":"OPEN",
+ "id":"PR_kwDO1","number":12,"url":"https://github.com/Smana/demo/pull/12","title":"docs: fix a link","state":"OPEN","isDraft":false,
  "baseRefName":"main","headRefName":"agent/3buqdlot","headRefOid":"abc123","isCrossRepository":false,
  "author":{"__typename":"Bot","login":"ogenki-agents"},
  "mergedBy":null,"mergeCommit":null,"autoMergeRequest":null,
@@ -426,7 +426,19 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 				_, _ = io.WriteString(w, strings.Replace(prJSON, `"baseRefName":"main"`, `"baseRefName":"release-1"`, 1))
 				return
 			}
+			if strings.Contains(string(b), `"number":17`) {
+				_, _ = io.WriteString(w, strings.Replace(prJSON, `"isDraft":false`, `"isDraft":true`, 1))
+				return
+			}
 			_, _ = io.WriteString(w, prJSON)
+			return
+		}
+		if strings.Contains(string(b), `"number":18`) {
+			_, _ = io.WriteString(w, `{"data":{"repository":{"issue":{"number":18,"url":"https://github.com/Smana/demo/issues/18",`+
+				`"title":"Completed proposal","body":"body","state":"CLOSED","stateReason":"COMPLETED",`+
+				`"createdAt":"2026-09-27T08:00:00Z","closedAt":"2026-09-28T10:00:00Z","lastEditedAt":null,`+
+				`"author":{"__typename":"User","login":"dev1"},"authorAssociation":"MEMBER",`+
+				`"labels":{"nodes":[{"name":"factory/proposed"}]},"timelineItems":{"nodes":[]}}}}}`)
 			return
 		}
 		_, _ = io.WriteString(w, issueJSON)
@@ -528,7 +540,7 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			}
 			if q.Get("page") == "" {
 				w.Header().Set("Link", `<https://api.github.com/repos/Smana/demo/issues?page=2>; rel="next"`)
-				_, _ = io.WriteString(w, `[{"number":70,"state":"closed"}]`)
+				_, _ = io.WriteString(w, `[{"number":70,"state":"closed","state_reason":"not_planned","created_at":"2026-10-01T00:00:00Z","closed_at":"2026-10-05T12:00:00Z"}]`)
 				return
 			}
 			_, _ = io.WriteString(w, `[{"number":77,"state":"open","body":"<!-- agent-factory follow-up=3buqdlot -->"},{"number":78,"pull_request":{"url":"x"}}]`)
@@ -2369,6 +2381,20 @@ func TestIssuesLabelledSinceReadsEveryPage(t *testing.T) {
 	if err != nil || len(got) != 2 || got[1].Number != 77 {
 		t.Fatalf("%+v %v", got, err)
 	}
+	wantClosed := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	if !got[0].ClosedAt.Equal(wantClosed) || got[0].StateReason != "not_planned" {
+		t.Fatalf("restIssue ClosedAt/StateReason = %+v, want ClosedAt=%v StateReason=not_planned", got[0], wantClosed)
+	}
+
+	gqlIss, err := r.g.Issue(t.Context(), 18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantGQLCreated := time.Date(2026, 9, 27, 8, 0, 0, 0, time.UTC)
+	wantGQLClosed := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	if gqlIss.StateReason != "completed" || !gqlIss.CreatedAt.Equal(wantGQLCreated) || !gqlIss.ClosedAt.Equal(wantGQLClosed) {
+		t.Fatalf("GraphQL Issue ClosedAt/CreatedAt/StateReason = %+v", gqlIss)
+	}
 }
 
 func TestCommitReadsOneCommitsMessage(t *testing.T) {
@@ -2983,5 +3009,54 @@ func (s staticToken) Token(context.Context) (string, error) { return string(s), 
 func TestAConflictIsNotMergeable(t *testing.T) {
 	if !errors.Is(ErrMergeConflict, ErrNotMergeable) || errors.Is(ErrNotMergeable, ErrMergeConflict) {
 		t.Fatal("ErrMergeConflict wraps ErrNotMergeable, not the other way round")
+	}
+}
+
+func TestPullRequestReadsDraftAndCreatePRSetsDraft(t *testing.T) {
+	r := newRig(t)
+	pr, err := r.g.PullRequest(t.Context(), 12)
+	if err != nil || pr.Draft {
+		t.Fatalf("PR #12: draft=%v err=%v", pr.Draft, err)
+	}
+	draftPR, err := r.g.PullRequest(t.Context(), 17)
+	if err != nil || !draftPR.Draft {
+		t.Fatalf("PR #17: draft=%v err=%v", draftPR.Draft, err)
+	}
+	if !strings.Contains(r.gh.bodies[len(r.gh.bodies)-1], "isDraft") {
+		t.Fatalf("GraphQL query missing isDraft: %s", r.gh.bodies[len(r.gh.bodies)-1])
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/owner/repo/pulls", func(w http.ResponseWriter, r *http.Request) {
+		var in map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		draft, _ := in["draft"].(bool)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number":   21,
+			"node_id":  "PR_21",
+			"html_url": "https://github.com/owner/repo/pull/21",
+			"title":    in["title"],
+			"body":     in["body"],
+			"state":    "open",
+			"draft":    draft,
+			"user":     map[string]any{"login": "ogenki-agents[bot]"},
+			"base":     map[string]any{"ref": in["base"]},
+			"head":     map[string]any{"ref": in["head"], "sha": "abc"},
+		})
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	g, err := ConnectTokens(t.Context(), Options{
+		Repository: "owner/repo", APIURL: srv.URL + "/", UserAgent: "agent-factory/test",
+		HTTP: httpx.New(5*time.Second, roots), Now: time.Now,
+	}, staticToken("ghs_ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := g.CreatePR(t.Context(), "main", "agent/abc", "title", "body", true)
+	if err != nil || !created.Draft {
+		t.Fatalf("CreatePR draft=true: %+v err=%v", created, err)
 	}
 }

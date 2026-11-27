@@ -30,6 +30,7 @@ func scoperPlanned(t *v1alpha1.Task) bool {
 // counts toward the task's caps as every run's does.
 func (r *Reconciler) scoperSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
 	s := r.implementerSpec(cfg, t, text)
+	s.PRDraft = false
 	s.Role = "triager"
 	s.Persona = "scoper"
 	planTier := cfg.Scoper.PlanTierOr()

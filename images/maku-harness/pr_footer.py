@@ -23,7 +23,14 @@ GH = "/usr/local/lib/gh-real"
 PR_URL = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/[0-9]+")
 # SP3 ruling SW: Agent-Task is the task id everywhere; the issue or PR URL has its own key.
 FIELDS = (("Agent-Room", "ROOM_ID"), ("Agent-Run", "RUN_ID"), ("Agent-Role", "ROLE"),
-          ("Agent-Task", "TASK_ID"), ("Agent-Task-URL", "TASK_URL"), ("Agent-Model", "MODEL"))
+          ("Agent-Task", "TASK_ID"), ("Agent-Task-URL", "TASK_URL"), ("Agent-Model", "MODEL"),
+          ("Agent-Routine", "AGENT_ROUTINE"), ("Agent-Routine-Prompt-SHA", "AGENT_ROUTINE_PROMPT_SHA"))
+# gh pr create flags that take a separate value argument so with_draft never mistakes a value for a flag.
+VALUE_FLAGS = frozenset({
+    "-a", "--assignee", "-B", "--base", "-b", "--body", "-F", "--body-file",
+    "-H", "--head", "-l", "--label", "-m", "--milestone", "-p", "--project",
+    "--recover", "-R", "--repo", "-r", "--reviewer", "-T", "--template", "-t", "--title",
+})
 # The whole namespace, so a prefix reader never takes `Agent-Run-Id:` for Agent-Run.
 OWNED = re.compile(r"^[ \t]*agent-[a-z0-9-]*[ \t]*:", re.IGNORECASE | re.MULTILINE)
 MARK = "(agent-written) "
@@ -67,8 +74,42 @@ def with_footer(body: str, env: dict) -> str | None:
     return (clean + "\n\n" if clean else "") + tail + "\n"
 
 
+def with_draft(argv: list, env: dict) -> list:
+    """Inject --draft when AGENT_PR_DRAFT=1 without duplicating existing flags or altering help/positional args."""
+    if env.get("AGENT_PR_DRAFT") != "1":
+        return list(argv)
+    out = list(argv)
+    has_draft = False
+    dashdash_idx = None
+    i = 0
+    while i < len(out):
+        arg = out[i]
+        if arg == "--":
+            dashdash_idx = i
+            break
+        if arg in ("-h", "--help"):
+            return list(argv)
+        if arg in VALUE_FLAGS:
+            i += 2
+            continue
+        low = arg.lower()
+        if arg in ("--draft", "-d") or low in ("--draft=true", "--draft=1"):
+            has_draft = True
+        elif low in ("--draft=false", "--draft=0"):
+            out[i] = "--draft"
+            has_draft = True
+        i += 1
+    if not has_draft:
+        if dashdash_idx is not None:
+            out.insert(dashdash_idx, "--draft")
+        else:
+            out.append("--draft")
+    return out
+
+
 def main(argv: list, env: dict) -> int:
-    created = subprocess.run([GH] + argv, stdout=subprocess.PIPE, text=True)
+    create_argv = with_draft(argv, env)
+    created = subprocess.run([GH] + create_argv, stdout=subprocess.PIPE, text=True)
     sys.stdout.write(created.stdout or "")
     sys.stdout.flush()
     match = PR_URL.search(created.stdout or "")

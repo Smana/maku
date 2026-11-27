@@ -85,9 +85,14 @@ var routineRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
 
 func routineSkipReasons() []string {
 	return []string{
-		"kill_switch", "not_owned", "disabled", "paused_manual",
+		"kill_switch", "not_owned", "disabled", "paused_manual", "breaker_paused",
 		"open_cap", "cooldown", "upkeep_budget", "probe_empty", "probe_refused",
+		"prompt_invalid", "skill_missing", "skill_invalid",
 	}
+}
+
+func routinePromptReadOutcomes() []string {
+	return []string{"repo", "default", "invalid", "skill_missing", "skill_invalid", "error"}
 }
 
 // runRE bounds the run label to a C2 run id: the gauge holds only the runs the meter has not
@@ -288,11 +293,12 @@ type Set struct {
 	maxCost              metric.Float64Counter
 	apiIntake            metric.Int64Counter
 	// agent_factory_human_roles_claim_refused_total{reason}: the broker's twin (v4 D8).
-	rolesClaimRefused metric.Int64Counter
-	routineRuns       metric.Int64Counter
-	routineSkips      metric.Int64Counter
-	routineUSD        metric.Float64Counter
-	coord             coordination
+	rolesClaimRefused  metric.Int64Counter
+	routineRuns        metric.Int64Counter
+	routineSkips       metric.Int64Counter
+	routinePromptReads metric.Int64Counter
+	routineUSD         metric.Float64Counter
+	coord              coordination
 
 	spendMu sync.Mutex
 	spend   map[string]map[string]float64 // the meter's last live spend, run then model
@@ -714,6 +720,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.routineSkips, err = meter.Int64Counter("agent_factory_routine_skips_total",
 		metric.WithDescription("Skipped upkeep routine ticks, by repository, routine and reason."))
+	check(err)
+	s.routinePromptReads, err = meter.Int64Counter("agent_factory_routine_prompt_reads_total",
+		metric.WithDescription("Repo-owned routine prompt and Agent Skill reads, by repository, routine and outcome."))
 	check(err)
 	s.routineUSD, err = meter.Float64Counter("agent_factory_routine_usd_total",
 		metric.WithDescription("USD spent by ended upkeep routine tasks, by repository, routine and outcome."))
@@ -1873,6 +1882,19 @@ func (s *Set) RoutineSkip(ctx context.Context, repository, routine, reason strin
 		attribute.String("repository", s.repository(repository)),
 		attribute.String("routine", s.routine(repository, routine)),
 		attribute.String("reason", oneOf(reason, routineSkipReasons())),
+	))
+}
+
+// RoutinePromptRead records a repo-owned routine prompt and optional Agent Skill load outcome,
+// bounded by repository, configured routine name and closed outcome. Nil-safe.
+func (s *Set) RoutinePromptRead(ctx context.Context, repository, routine, outcome string) {
+	if s == nil {
+		return
+	}
+	s.routinePromptReads.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("routine", s.routine(repository, routine)),
+		attribute.String("outcome", oneOf(outcome, routinePromptReadOutcomes())),
 	))
 }
 

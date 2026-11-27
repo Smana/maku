@@ -71,9 +71,9 @@ var (
 	stages       = []string{"fixed_base", "author_mode", "class", "deny", "requires_approval", "grant", "breaker_and_caps"}
 	stageReasons = map[string][]string{
 		"fixed_base": {"ci_red", "secret_scan_red", "ci_cancelled", "changes_requested", "ci_pending", "ci_wait_expired",
-			"gate_path", "steering_path", "not_owned", "policy_pending", "policy_absent", "no_approving_verdict", "not_mergeable",
+			"gate_path", "steering_path", "upkeep_path", "not_owned", "policy_pending", "policy_absent", "no_approving_verdict", "not_mergeable",
 			"head_unreported", "foreign_trailer", "human_commit_in_pr", "push_unrecorded", "closes_parent", "verdict_stale",
-			"merge_gate_off", "head_moved", "approval_stale", "held"},
+			"merge_gate_off", "head_moved", "approval_stale", "held", "draft_pr", "draft_mode_mismatch"},
 		"author_mode": {"not_agent_authored", "fork_pull_request", "adoption_unread", "not_adopted_author", "branch_not_allowed",
 			"label_not_adopted", "adopt_ref_invalid"},
 		"class": {"class_mismatch", "class_unarmed", "no_policy_matched", "reviewer_verdict_missing", "file_not_allowed", "file_added_or_deleted", "patch_too_large", "holdout_red",

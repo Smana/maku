@@ -463,6 +463,12 @@ func (m *fakeMetrics) RoomClosedAtCap(_ context.Context, reason string) {
 func (m *fakeMetrics) RoutineRun(_ context.Context, repository, routine, outcome string, usd float64) {
 	m.add(fmt.Sprintf("routine_run %s %s %s %v", repository, routine, outcome, usd))
 }
+func (m *fakeMetrics) RoutinePaused(_ context.Context, repository, routine string, paused bool) {
+	m.add(fmt.Sprintf("routine_paused %s %s %t", repository, routine, paused))
+}
+func (m *fakeMetrics) RoutineMergeRate(_ context.Context, repository, routine string, rate float64) {
+	m.add(fmt.Sprintf("routine_merge_rate %s %s %.4f", repository, routine, rate))
+}
 
 var now = time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 

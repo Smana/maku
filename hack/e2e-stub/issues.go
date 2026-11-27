@@ -27,10 +27,12 @@ type Issue struct {
 	Title        string
 	Body         string
 	State        string
+	StateReason  string
 	Author       string
 	Labels       []string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	ClosedAt     *time.Time
 	LastEditedAt *time.Time
 }
 
@@ -79,6 +81,10 @@ func (s *IssueStore) nowLocked() time.Time {
 
 func cloneIssue(issue Issue) Issue {
 	issue.Labels = slices.Clone(issue.Labels)
+	if issue.ClosedAt != nil {
+		closed := *issue.ClosedAt
+		issue.ClosedAt = &closed
+	}
 	if issue.LastEditedAt != nil {
 		edited := *issue.LastEditedAt
 		issue.LastEditedAt = &edited
@@ -134,6 +140,22 @@ func (s *IssueStore) SetBody(number int, body string) (Issue, bool) {
 	record.issue.Body = body
 	record.issue.UpdatedAt = now
 	record.issue.LastEditedAt = &now
+	return cloneIssue(record.issue), true
+}
+
+// CloseIssue transitions an issue to closed with the given state reason and close timestamp.
+func (s *IssueStore) CloseIssue(number int, reason string) (Issue, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.issues[number]
+	if !ok {
+		return Issue{}, false
+	}
+	now := s.nowLocked()
+	record.issue.State = "closed"
+	record.issue.StateReason = strings.ToLower(reason)
+	record.issue.UpdatedAt = now
+	record.issue.ClosedAt = &now
 	return cloneIssue(record.issue), true
 }
 
@@ -294,11 +316,16 @@ func gitHubIssue(issue Issue) map[string]any {
 	for _, label := range issue.Labels {
 		labels = append(labels, map[string]string{"name": label})
 	}
+	var stateReason any
+	if issue.StateReason != "" {
+		stateReason = strings.ToLower(issue.StateReason)
+	}
 	return map[string]any{
 		"id": issue.ID, "number": issue.Number, "title": issue.Title, "body": issue.Body, "state": issue.State,
-		"html_url": fmt.Sprintf("https://example.invalid/owner/repo/issues/%d", issue.Number),
-		"user":     map[string]any{"login": issue.Author}, "labels": labels,
-		"created_at": issue.CreatedAt, "updated_at": issue.UpdatedAt,
+		"state_reason": stateReason,
+		"html_url":     fmt.Sprintf("https://example.invalid/owner/repo/issues/%d", issue.Number),
+		"user":         map[string]any{"login": issue.Author}, "labels": labels,
+		"created_at": issue.CreatedAt, "updated_at": issue.UpdatedAt, "closed_at": issue.ClosedAt,
 	}
 }
 
@@ -595,7 +622,7 @@ func (s *Stub) editComment(w http.ResponseWriter, r *http.Request) {
 }
 
 const issueSnapshotSelection = "repository(owner:$owner,name:$name){issue(number:$number){" +
-	"number,url,title,body,state,author{__typename,login},authorAssociation,lastEditedAt,labels(first:50){nodes{name}}," +
+	"number,url,title,body,state,stateReason,author{__typename,login},authorAssociation,createdAt,closedAt,lastEditedAt,labels(first:50){nodes{name}}," +
 	"timelineItems(itemTypes:[RENAMED_TITLE_EVENT],last:1){nodes{... on RenamedTitleEvent{createdAt}}}}}}"
 
 var graphQLPunctuation = regexp.MustCompile(`\s*([{}():])\s*`)
@@ -673,10 +700,15 @@ func (s *Stub) graphQL(w http.ResponseWriter, r *http.Request) {
 	for _, label := range issue.Labels {
 		labels = append(labels, map[string]string{"name": label})
 	}
+	var stateReason any
+	if issue.StateReason != "" {
+		stateReason = strings.ToUpper(issue.StateReason)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{
 		"number": issue.Number, "url": fmt.Sprintf("https://example.invalid/owner/repo/issues/%d", issue.Number),
-		"title": issue.Title, "body": issue.Body, "state": strings.ToUpper(issue.State),
+		"title": issue.Title, "body": issue.Body, "state": strings.ToUpper(issue.State), "stateReason": stateReason,
 		"author": map[string]any{"__typename": typename, "login": login}, "authorAssociation": association(issue.Author),
-		"lastEditedAt": issue.LastEditedAt, "labels": map[string]any{"nodes": labels}, "timelineItems": map[string]any{"nodes": []any{}},
+		"createdAt": issue.CreatedAt, "closedAt": issue.ClosedAt, "lastEditedAt": issue.LastEditedAt,
+		"labels": map[string]any{"nodes": labels}, "timelineItems": map[string]any{"nodes": []any{}},
 	}}}})
 }

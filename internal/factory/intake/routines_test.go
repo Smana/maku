@@ -38,16 +38,25 @@ func routineScheme() *runtime.Scheme {
 }
 
 type fakeSkipMetrics struct {
-	calls  []skipMetricCall
-	paused map[string]bool
+	calls       []skipMetricCall
+	promptReads []promptReadCall
+	paused      map[string]bool
 }
 
 type skipMetricCall struct {
 	repo, routine, reason string
 }
 
+type promptReadCall struct {
+	repo, routine, outcome string
+}
+
 func (m *fakeSkipMetrics) RoutineSkip(_ context.Context, repository, routine, reason string) {
 	m.calls = append(m.calls, skipMetricCall{repo: repository, routine: routine, reason: reason})
+}
+
+func (m *fakeSkipMetrics) RoutinePromptRead(_ context.Context, repository, routine, outcome string) {
+	m.promptReads = append(m.promptReads, promptReadCall{repo: repository, routine: routine, outcome: outcome})
 }
 
 func (m *fakeSkipMetrics) RoutinePaused(_ context.Context, repository, routine string, paused bool) {
@@ -423,7 +432,7 @@ func TestRoutineProbesAndTaskFields(t *testing.T) {
 		}
 		tk := l.Items[0]
 		sum := sha256.Sum256([]byte(rr.DefaultPrompt))
-		wantPromptSHA := hex.EncodeToString(sum[:])
+		wantPromptSHA := upkeep.EffectivePromptSHA(hex.EncodeToString(sum[:]), "")
 		if tk.Labels[v1alpha1.LabelRoutine] != "renovate-red" ||
 			tk.Spec.Source.Kind != v1alpha1.SourceKindRoutine ||
 			tk.Spec.Source.Ref != "renovate-red" ||
@@ -579,15 +588,18 @@ func TestTriggerManual(t *testing.T) {
 		RoutineGeneration: 2,
 	}
 
-	t.Run("rejects propose/draft with ErrModePhase2 and widening with ErrModeWidening", func(t *testing.T) {
+	t.Run("allows propose and draft overrides, and rejects widening with ErrModeWidening", func(t *testing.T) {
 		cfg := baseRoutineCfg(baseRR)
 		sch, _, _ := newRoutineScheduler(t, forgetest.NewFake(), cfg, now)
 
-		if _, err := sch.TriggerManual(t.Context(), "acme/app", "dead-code", config.RoutineModePropose, "Alice", "k1"); !errors.Is(err, ErrModePhase2) {
-			t.Fatalf("propose override: got %v, want ErrModePhase2", err)
+		tkPropose, err := sch.TriggerManual(t.Context(), "acme/app", "dead-code", config.RoutineModePropose, "Alice", "k1")
+		if err != nil || tkPropose.Spec.Routine == nil || tkPropose.Spec.Routine.Mode != config.RoutineModePropose {
+			t.Fatalf("propose override: tk=%+v err=%v", tkPropose, err)
 		}
-		if _, err := sch.TriggerManual(t.Context(), "acme/app", "dead-code", config.RoutineModeDraft, "Alice", "k2"); !errors.Is(err, ErrModePhase2) {
-			t.Fatalf("draft override: got %v, want ErrModePhase2", err)
+		schDraft, _, _ := newRoutineScheduler(t, forgetest.NewFake(), cfg, now)
+		tkDraft, err := schDraft.TriggerManual(t.Context(), "acme/app", "dead-code", config.RoutineModeDraft, "Alice", "k2")
+		if err != nil || tkDraft.Spec.Routine == nil || tkDraft.Spec.Routine.Mode != config.RoutineModeDraft {
+			t.Fatalf("draft override: tk=%+v err=%v", tkDraft, err)
 		}
 		if _, err := sch.TriggerManual(t.Context(), "acme/app", "dead-code", "bogus", "Alice", "k3"); !errors.Is(err, ErrInvalidMode) {
 			t.Fatalf("unknown override: got %v, want ErrInvalidMode", err)
@@ -598,6 +610,13 @@ func TestTriggerManual(t *testing.T) {
 		schWiden, _, _ := newRoutineScheduler(t, forgetest.NewFake(), baseRoutineCfg(draftRR), now)
 		if _, err := schWiden.TriggerManual(t.Context(), "acme/app", "dead-code", config.RoutineModePR, "Alice", "k4"); !errors.Is(err, ErrModeWidening) {
 			t.Fatalf("widening draft->pr: got %v, want ErrModeWidening", err)
+		}
+
+		proposeRR := baseRR
+		proposeRR.Mode = config.RoutineModePropose
+		schWidenPropose, _, _ := newRoutineScheduler(t, forgetest.NewFake(), baseRoutineCfg(proposeRR), now)
+		if _, err := schWidenPropose.TriggerManual(t.Context(), "acme/app", "dead-code", config.RoutineModeDraft, "Alice", "k5"); !errors.Is(err, ErrModeWidening) {
+			t.Fatalf("widening propose->draft: got %v, want ErrModeWidening", err)
 		}
 	})
 
@@ -801,6 +820,620 @@ func TestRoutineSchedulerSyncsPausedMetrics(t *testing.T) {
 	if !sm.paused["acme/app/decl-paused"] || sm.paused["acme/app/op-paused"] || sm.paused["acme/app/active-job"] {
 		t.Fatalf("paused metrics after resume = %+v", sm.paused)
 	}
+}
+
+func TestRoutinePromptAndSkillIntake(t *testing.T) {
+	now := time.Date(2026, 11, 26, 6, 15, 0, 0, time.UTC)
+	baseRR := config.ResolvedRoutine{
+		Name:          "dead-code",
+		Mode:          config.RoutineModePR,
+		Cron:          "0 6 * * *",
+		DataClass:     "public",
+		DefaultPrompt: "Remove dead code.",
+		Probe:         config.ProbeSpec{Kind: config.ProbeNone, MaxFindings: 1},
+		RepoPrompt:    true,
+		Skill:         "docs-audit",
+		MaxOpenPRs:    1,
+		MaxCostUSD:    2.0,
+	}
+
+	t.Run("tick pins repo prompt and skill EffectiveSHA", func(t *testing.T) {
+		f := forgetest.NewFake()
+		f.SetFile(".github/agent-factory/upkeep/dead-code.md", "## Verify\n- go test ./...\n")
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", "# Docs audit\nCheck headings.\n")
+		_, wantPromptSHA, _, _ := f.DefaultBranchFile(t.Context(), ".github/agent-factory/upkeep/dead-code.md")
+		_, wantSkillSHA, _, _ := f.DefaultBranchFile(t.Context(), ".agents/skills/docs-audit/SKILL.md")
+
+		sch, sm, _ := newRoutineScheduler(t, f, baseRoutineCfg(baseRR), now)
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var l v1alpha1.TaskList
+		_ = sch.Client.List(t.Context(), &l)
+		if len(l.Items) != 1 {
+			t.Fatalf("tasks=%d, want 1", len(l.Items))
+		}
+		r := l.Items[0].Spec.Routine
+		wantEff := upkeep.EffectivePromptSHA(wantPromptSHA, wantSkillSHA)
+		if r == nil || r.PromptSource != "repo" || r.PromptPath != ".github/agent-factory/upkeep/dead-code.md" ||
+			r.PromptSHA != wantEff || r.Skill != "docs-audit" || r.SkillSHA != wantSkillSHA {
+			t.Fatalf("unexpected task routine spec: %+v", r)
+		}
+		if len(sm.promptReads) != 1 || sm.promptReads[0].outcome != "repo" {
+			t.Fatalf("promptReads = %+v", sm.promptReads)
+		}
+	})
+
+	t.Run("tick skips fail-closed on invalid prompt, missing skill, invalid skill", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			setup       func(*forgetest.Fake)
+			wantSkip    string
+			wantOutcome string
+		}{
+			"invalid prompt": {
+				setup: func(f *forgetest.Fake) {
+					f.SetFile(".github/agent-factory/upkeep/dead-code.md", "## Scope\nno verify\n")
+					f.SetFile(".agents/skills/docs-audit/SKILL.md", "# skill\n")
+				},
+				wantSkip:    SkipPromptInvalid,
+				wantOutcome: "invalid",
+			},
+			"missing skill": {
+				setup: func(f *forgetest.Fake) {
+					f.SetFile(".github/agent-factory/upkeep/dead-code.md", "## Verify\n- ok\n")
+				},
+				wantSkip:    SkipSkillMissing,
+				wantOutcome: "skill_missing",
+			},
+			"invalid skill": {
+				setup: func(f *forgetest.Fake) {
+					f.SetFile(".github/agent-factory/upkeep/dead-code.md", "## Verify\n- ok\n")
+					f.SetFile(".agents/skills/docs-audit/SKILL.md", "bad\r\nskill")
+				},
+				wantSkip:    SkipSkillInvalid,
+				wantOutcome: "skill_invalid",
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				f := forgetest.NewFake()
+				tc.setup(f)
+				sch, sm, _ := newRoutineScheduler(t, f, baseRoutineCfg(baseRR), now)
+				if err := sch.Tick(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				var l v1alpha1.TaskList
+				_ = sch.Client.List(t.Context(), &l)
+				if len(l.Items) != 0 {
+					t.Fatalf("expected 0 tasks created, got %d", len(l.Items))
+				}
+				if len(sm.calls) != 1 || sm.calls[0].reason != tc.wantSkip {
+					t.Fatalf("skips = %+v, want %s", sm.calls, tc.wantSkip)
+				}
+				if len(sm.promptReads) != 1 || sm.promptReads[0].outcome != tc.wantOutcome {
+					t.Fatalf("promptReads = %+v, want %s", sm.promptReads, tc.wantOutcome)
+				}
+			})
+		}
+	})
+
+	t.Run("TriggerManual fails closed on invalid prompt and missing/invalid skill", func(t *testing.T) {
+		fBadPrompt := forgetest.NewFake()
+		fBadPrompt.SetFile(".github/agent-factory/upkeep/dead-code.md", "no verify")
+		sch1, _, _ := newRoutineScheduler(t, fBadPrompt, baseRoutineCfg(baseRR), now)
+		if _, err := sch1.TriggerManual(t.Context(), "acme/app", "dead-code", "", "Alice", "k1"); !errors.Is(err, ErrPromptInvalid) {
+			t.Fatalf("got %v, want ErrPromptInvalid", err)
+		}
+
+		fMissingSkill := forgetest.NewFake()
+		sch2, _, _ := newRoutineScheduler(t, fMissingSkill, baseRoutineCfg(baseRR), now)
+		if _, err := sch2.TriggerManual(t.Context(), "acme/app", "dead-code", "", "Alice", "k2"); !errors.Is(err, ErrSkillMissing) {
+			t.Fatalf("got %v, want ErrSkillMissing", err)
+		}
+
+		fBadSkill := forgetest.NewFake()
+		fBadSkill.SetFile(".agents/skills/docs-audit/SKILL.md", "bad\u200bskill")
+		sch3, _, _ := newRoutineScheduler(t, fBadSkill, baseRoutineCfg(baseRR), now)
+		if _, err := sch3.TriggerManual(t.Context(), "acme/app", "dead-code", "", "Alice", "k3"); !errors.Is(err, ErrSkillInvalid) {
+			t.Fatalf("got %v, want ErrSkillInvalid", err)
+		}
+	})
+}
+
+func TestProposeOpenIssuesCountTowardMaxOpenPRs(t *testing.T) {
+	now := time.Date(2026, 11, 26, 6, 15, 0, 0, time.UTC)
+	rr := config.ResolvedRoutine{
+		Name:          "doc-drift",
+		Mode:          config.RoutineModePropose,
+		Cron:          "0 6 * * *",
+		DataClass:     "public",
+		DefaultPrompt: "Audit docs.",
+		Probe:         config.ProbeSpec{Kind: config.ProbeNone, MaxFindings: 1},
+		MaxOpenPRs:    1,
+		MaxCostUSD:    2.0,
+	}
+	cfg := baseRoutineCfg(rr)
+
+	// Open factory/proposed + factory/routine:doc-drift issue blocks both Tick and TriggerManual.
+	f := forgetest.NewFake()
+	f.SetIssue(forge.Issue{Number: 91, State: "OPEN", Labels: []string{"factory/proposed", "factory/routine:doc-drift"}})
+	sch, sm, _ := newRoutineScheduler(t, f, cfg, now)
+	if err := sch.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var l v1alpha1.TaskList
+	_ = sch.Client.List(t.Context(), &l)
+	if len(l.Items) != 0 {
+		t.Fatalf("expected 0 tasks when open factory/proposed issue exists, got %d", len(l.Items))
+	}
+	if len(sm.calls) != 1 || sm.calls[0].reason != SkipOpenCap {
+		t.Fatalf("skips = %+v, want %s", sm.calls, SkipOpenCap)
+	}
+	if _, err := sch.TriggerManual(t.Context(), "acme/app", "doc-drift", "", "Alice", "k-open"); !errors.Is(err, ErrOpenCap) {
+		t.Fatalf("TriggerManual got %v, want ErrOpenCap", err)
+	}
+
+	// Closed factory/proposed issue does NOT count toward maxOpenPRs.
+	fClosed := forgetest.NewFake()
+	fClosed.SetIssue(forge.Issue{Number: 92, State: "CLOSED", Labels: []string{"factory/proposed", "factory/routine:doc-drift"}})
+	sch2, _, _ := newRoutineScheduler(t, fClosed, cfg, now)
+	if err := sch2.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_ = sch2.Client.List(t.Context(), &l)
+	if len(l.Items) != 1 {
+		t.Fatalf("expected 1 task when proposed issue is closed, got %d", len(l.Items))
+	}
+}
+
+func TestRoutineSchedulerBreakerPausePromptResetAndManualTrial(t *testing.T) {
+	now := time.Date(2026, 11, 26, 6, 15, 0, 0, time.UTC)
+	prompt1 := "## Scope\nCheck v1\n\n## Verify\n- go test ./...\n"
+	prompt2 := "## Scope\nCheck v2\n\n## Verify\n- go test ./...\n"
+	skill1 := "# Skill v1\n"
+	skill2 := "# Skill v2\n"
+
+	baseRR := config.ResolvedRoutine{
+		Name:          "dead-code",
+		Mode:          config.RoutineModePR,
+		Cron:          "0 6 * * *",
+		DataClass:     "public",
+		DefaultPrompt: "Remove dead code.",
+		RepoPrompt:    true,
+		Skill:         "docs-audit",
+		Probe:         config.ProbeSpec{Kind: config.ProbeNone, MaxFindings: 1},
+		MaxOpenPRs:    3,
+		MaxCostUSD:    2.0,
+		Breaker: config.ResolvedBreaker{
+			Window:                 10,
+			MinSamples:             5,
+			MinMergeRate:           0.25,
+			MaxConsecutiveClosed:   3,
+			MaxConsecutiveFailures: 3,
+		},
+	}
+
+	t.Run("unrelated commit stays breaker_paused; prompt or skill SHA change transitions to half_open with openCap=1", func(t *testing.T) {
+		f := forgetest.NewFake()
+		f.SetFile(".github/agent-factory/upkeep/dead-code.md", prompt1)
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", skill1)
+
+		cfg := baseRoutineCfg(baseRR)
+		sch, sm, st := newRoutineScheduler(t, f, cfg, now)
+		sch.Breaker = &upkeep.Breaker{Store: st, Now: func() time.Time { return now }}
+		loaded1, err := upkeep.LoadPrompt(t.Context(), f, "acme/app", baseRR)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := st.Mutate(t.Context(), "acme/app", "dead-code", func(s *upkeep.RoutineState, n time.Time) bool {
+			s.BreakerState = upkeep.BreakerPaused
+			s.BreakerReason = upkeep.BreakerReasonConsecutiveClosed
+			s.TrippedPromptSHA = loaded1.EffectiveSHA
+			s.TrippedAt = &n
+			return true
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Same EffectiveSHA (unrelated commit to main) -> skipped with SkipBreakerPaused.
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(sm.calls) != 1 || sm.calls[0].reason != SkipBreakerPaused {
+			t.Fatalf("expected %s, got %+v", SkipBreakerPaused, sm.calls)
+		}
+		var l v1alpha1.TaskList
+		_ = sch.Client.List(t.Context(), &l)
+		if len(l.Items) != 0 {
+			t.Fatalf("expected 0 tasks while breaker_paused, got %d", len(l.Items))
+		}
+
+		// Manual TriggerManual while breaker-paused executes 1 trial without unpausing cron.
+		trial, err := sch.TriggerManual(t.Context(), "acme/app", "dead-code", "", "Alice", "trial-1")
+		if err != nil || trial == nil {
+			t.Fatalf("TriggerManual while breaker_paused failed: %v", err)
+		}
+		gotSt, _ := st.Get(t.Context(), "acme/app", "dead-code")
+		if gotSt.BreakerState != upkeep.BreakerPaused {
+			t.Fatalf("TriggerManual must keep BreakerState=paused, got %q", gotSt.BreakerState)
+		}
+		// Second manual trigger while first trial is open hits ErrOpenCap (openCap=1 even when MaxOpenPRs=3).
+		if _, err := sch.TriggerManual(t.Context(), "acme/app", "dead-code", "", "Alice", "trial-2"); !errors.Is(err, ErrOpenCap) {
+			t.Fatalf("expected ErrOpenCap on 2nd trial while paused, got %v", err)
+		}
+
+		// Close trial-1 so openWork drops to 0, then edit skill -> EffectiveSHA changes -> half_open!
+		ended := metav1.NewTime(now)
+		trial.Status.Phase = v1alpha1.PhaseClosed
+		trial.Status.EndedAt = &ended
+		if err := sch.Client.Update(t.Context(), trial); err != nil {
+			t.Fatal(err)
+		}
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", skill2)
+		now2 := now.Add(5 * time.Minute)
+		sch.Now = func() time.Time { return now2 }
+
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		gotSt, _ = st.Get(t.Context(), "acme/app", "dead-code")
+		if gotSt.BreakerState != upkeep.BreakerHalfOpen {
+			t.Fatalf("expected half_open after skill edit, got %+v", gotSt)
+		}
+		if sm.paused["acme/app/dead-code"] {
+			t.Fatalf("expected RoutinePaused(false) on half_open transition")
+		}
+		_ = sch.Client.List(t.Context(), &l)
+		if len(l.Items) != 2 { // trial-1 + half_open cron task
+			t.Fatalf("expected half_open cron trial task, got %d tasks", len(l.Items))
+		}
+		_ = prompt2
+	})
+
+	t.Run("manual pause is NOT unpaused by prompt SHA change", func(t *testing.T) {
+		f := forgetest.NewFake()
+		f.SetFile(".github/agent-factory/upkeep/dead-code.md", prompt2)
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", skill1)
+
+		cfg := baseRoutineCfg(baseRR)
+		sch, sm, st := newRoutineScheduler(t, f, cfg, now)
+		sch.Breaker = &upkeep.Breaker{Store: st, Now: func() time.Time { return now }}
+		if err := st.Mutate(t.Context(), "acme/app", "dead-code", func(s *upkeep.RoutineState, _ time.Time) bool {
+			s.Paused = true
+			s.PausedReason = "manual"
+			s.PausedBy = "github:alice"
+			s.BreakerState = upkeep.BreakerPaused
+			s.TrippedPromptSHA = strings.Repeat("0", 64)
+			return true
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(sm.calls) != 1 || sm.calls[0].reason != SkipPausedManual {
+			t.Fatalf("expected %s, got %+v", SkipPausedManual, sm.calls)
+		}
+		gotSt, _ := st.Get(t.Context(), "acme/app", "dead-code")
+		if gotSt.BreakerState != upkeep.BreakerPaused {
+			t.Fatalf("manual pause must prevent half_open transition, got %+v", gotSt)
+		}
+	})
+
+	t.Run("cold-start Reconstruct from GitHub PRs trips breaker on first tick", func(t *testing.T) {
+		f := forgetest.NewFake()
+		f.SetFile(".github/agent-factory/upkeep/dead-code.md", prompt1)
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", skill1)
+		for i := range 3 {
+			f.SetPR(forge.PR{
+				Number: 20 + i,
+				State:  "CLOSED",
+				Labels: []string{"factory/routine:dead-code", "factory/stale"},
+			})
+		}
+
+		cfg := baseRoutineCfg(baseRR)
+		sch, sm, st := newRoutineScheduler(t, f, cfg, now)
+		sch.Breaker = &upkeep.Breaker{Store: st, Now: func() time.Time { return now }}
+
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(sm.calls) != 1 || sm.calls[0].reason != SkipBreakerPaused {
+			t.Fatalf("expected cold-start reconstruct to trip and skip %s, got %+v", SkipBreakerPaused, sm.calls)
+		}
+		gotSt, _ := st.Get(t.Context(), "acme/app", "dead-code")
+		if gotSt.BreakerState != upkeep.BreakerPaused || gotSt.BreakerReason != upkeep.BreakerReasonConsecutiveClosed {
+			t.Fatalf("unexpected reconstructed state: %+v", gotSt)
+		}
+	})
+
+	t.Run("cold-start runs reconstructRoutineBreaker before syncProposedIssuesBreaker", func(t *testing.T) {
+		f := forgetest.NewFake()
+		f.SetFile(".github/agent-factory/upkeep/dead-code.md", prompt1)
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", skill1)
+		f.SetPR(forge.PR{Number: 11, State: "CLOSED", Labels: []string{"factory/routine:dead-code"}})
+		f.SetPR(forge.PR{Number: 12, State: "CLOSED", Labels: []string{"factory/routine:dead-code"}})
+		f.SetIssue(forge.Issue{
+			Number:      50,
+			State:       "CLOSED",
+			StateReason: "not_planned",
+			Labels:      []string{"factory/proposed", "factory/routine:dead-code"},
+			CreatedAt:   now.Add(-2 * time.Hour),
+			ClosedAt:    now.Add(-time.Hour),
+		})
+		propTask := &v1alpha1.Task{
+			ObjectMeta: metav1.ObjectMeta{Name: "proptask50", Namespace: "maku"},
+			Spec: v1alpha1.TaskSpec{
+				Repository: "acme/app",
+				Issue:      50,
+				Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-code"},
+				Routine: &v1alpha1.TaskRoutine{
+					Name:      "dead-code",
+					Mode:      config.RoutineModePropose,
+					PromptSHA: strings.Repeat("a", 64),
+				},
+			},
+			Status: v1alpha1.TaskStatus{
+				Phase:   v1alpha1.PhaseDone,
+				Reason:  "proposal_filed",
+				EndedAt: &metav1.Time{Time: now.Add(-2 * time.Hour)},
+			},
+		}
+
+		cfg := baseRoutineCfg(baseRR)
+		sch, sm, st := newRoutineScheduler(t, f, cfg, now, propTask)
+		sch.Breaker = &upkeep.Breaker{Store: st, Now: func() time.Time { return now }}
+		var pausedCalls []string
+		sch.OnRoutinePaused = func(_ context.Context, repo, routine, reason string) {
+			pausedCalls = append(pausedCalls, repo+"/"+routine+":"+reason)
+		}
+
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		gotSt, err := st.Get(t.Context(), "acme/app", "dead-code")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSt.BreakerState != upkeep.BreakerPaused || len(gotSt.BreakerHistory) != 3 {
+			t.Fatalf("expected reconstruct before sync to keep all 3 entries and trip paused, got state=%q history=%+v", gotSt.BreakerState, gotSt.BreakerHistory)
+		}
+		if len(sm.calls) != 1 || sm.calls[0].reason != SkipBreakerPaused {
+			t.Fatalf("expected %s, got %+v", SkipBreakerPaused, sm.calls)
+		}
+		if len(pausedCalls) != 1 || pausedCalls[0] != "acme/app/dead-code:consecutive_closed" {
+			t.Fatalf("OnRoutinePaused calls = %+v", pausedCalls)
+		}
+	})
+
+	t.Run("closing published internal propose stub keeps proposal_accepted", func(t *testing.T) {
+		f := forgetest.NewFake()
+		f.SetFile(".github/agent-factory/upkeep/dead-code.md", prompt1)
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", skill1)
+		f.SetIssue(forge.Issue{
+			Number:      50,
+			State:       "CLOSED",
+			StateReason: "not_planned",
+			Labels:      []string{"factory/proposed", "factory/routine:dead-code"}, // factory/publish removed after publish
+			CreatedAt:   now.Add(-2 * time.Hour),
+			ClosedAt:    now.Add(-time.Minute),
+		})
+		pubTask := &v1alpha1.Task{
+			ObjectMeta: metav1.ObjectMeta{Name: "pubstub50", Namespace: "maku"},
+			Spec: v1alpha1.TaskSpec{
+				Repository: "acme/app",
+				Issue:      50,
+				Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-code"},
+				Routine: &v1alpha1.TaskRoutine{
+					Name:      "dead-code",
+					Mode:      config.RoutineModePropose,
+					PromptSHA: strings.Repeat("a", 64),
+				},
+			},
+			Status: v1alpha1.TaskStatus{
+				Phase:     v1alpha1.PhaseDone,
+				Reason:    "proposal_ready",
+				EndedAt:   &metav1.Time{Time: now.Add(-2 * time.Hour)},
+				Published: &v1alpha1.Published{Issue: 51, By: "alice", At: metav1.NewTime(now.Add(-time.Hour))},
+			},
+		}
+
+		cfg := baseRoutineCfg(baseRR)
+		sch, _, st := newRoutineScheduler(t, f, cfg, now, pubTask)
+		breaker := &upkeep.Breaker{Store: st, Now: func() time.Time { return now }}
+		sch.Breaker = breaker
+		if _, err := breaker.Record(t.Context(), "acme/app", "dead-code", baseRR.Breaker, upkeep.BreakerOutcome{
+			ID:        "proposal:50",
+			Outcome:   upkeep.OutcomeProposalAccepted,
+			PromptSHA: strings.Repeat("a", 64),
+			At:        now.Add(-time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		gotSt, err := st.Get(t.Context(), "acme/app", "dead-code")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gotSt.BreakerHistory) != 1 || gotSt.BreakerHistory[0].Outcome != upkeep.OutcomeProposalAccepted {
+			t.Fatalf("closing published stub flipped outcome: %+v", gotSt.BreakerHistory)
+		}
+	})
+
+	t.Run("syncProposedIssuesBreaker handles zero LastEditedAt post-reset closes and >100 issues without write loops", func(t *testing.T) {
+		f := forgetest.NewFake()
+		f.SetFile(".github/agent-factory/upkeep/dead-code.md", prompt1)
+		f.SetFile(".agents/skills/docs-audit/SKILL.md", skill1)
+		resetAt := now.Add(-time.Hour)
+
+		// Issue #60 created BEFORE BreakerResetAt, closed AFTER BreakerResetAt, with LastEditedAt zero.
+		f.SetIssue(forge.Issue{
+			Number:      60,
+			State:       "CLOSED",
+			StateReason: "not_planned",
+			Labels:      []string{"factory/proposed", "factory/routine:dead-code"},
+			CreatedAt:   resetAt.Add(-2 * time.Hour),
+			ClosedAt:    resetAt.Add(10 * time.Minute),
+		})
+		// Issue #61 created AFTER #60, closed BEFORE #60 (tests ClosedAt ordering).
+		f.SetIssue(forge.Issue{
+			Number:      61,
+			State:       "CLOSED",
+			StateReason: "completed",
+			Labels:      []string{"factory/proposed", "factory/routine:dead-code"},
+			CreatedAt:   resetAt.Add(-time.Hour),
+			ClosedAt:    resetAt.Add(5 * time.Minute),
+		})
+		// Issues #62 and #63 rejected after #60 -> consecutive_closed = 3 (with #60 after #61)!
+		f.SetIssue(forge.Issue{
+			Number:      62,
+			State:       "CLOSED",
+			StateReason: "not_planned",
+			Labels:      []string{"factory/proposed", "factory/routine:dead-code"},
+			CreatedAt:   resetAt.Add(-3 * time.Hour),
+			ClosedAt:    resetAt.Add(20 * time.Minute),
+		})
+		f.SetIssue(forge.Issue{
+			Number:      63,
+			State:       "CLOSED",
+			StateReason: "not_planned",
+			Labels:      []string{"factory/proposed", "factory/routine:dead-code"},
+			CreatedAt:   resetAt.Add(-4 * time.Hour),
+			ClosedAt:    resetAt.Add(30 * time.Minute),
+		})
+		loaded1, err := upkeep.LoadPrompt(t.Context(), f, "acme/app", baseRR)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tasks []client.Object
+		for _, num := range []int{60, 61, 62, 63} {
+			tasks = append(tasks, &v1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("proptask%d", num), Namespace: "maku"},
+				Spec: v1alpha1.TaskSpec{
+					Repository: "acme/app",
+					Issue:      num,
+					Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-code"},
+					Routine: &v1alpha1.TaskRoutine{
+						Name:      "dead-code",
+						Mode:      config.RoutineModePropose,
+						PromptSHA: loaded1.EffectiveSHA,
+					},
+				},
+				Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseDone, Reason: "proposal_filed"},
+			})
+		}
+
+		cfg := baseRoutineCfg(baseRR)
+		sch, _, st := newRoutineScheduler(t, f, cfg, now, tasks...)
+		sch.Breaker = &upkeep.Breaker{Store: st, Now: func() time.Time { return now }}
+		var pausedCalls []string
+		sch.OnRoutinePaused = func(_ context.Context, repo, routine, reason string) {
+			pausedCalls = append(pausedCalls, repo+"/"+routine+":"+reason)
+		}
+		if err := st.Mutate(t.Context(), "acme/app", "dead-code", func(s *upkeep.RoutineState, _ time.Time) bool {
+			s.BreakerState = upkeep.BreakerOK
+			s.BreakerResetAt = &resetAt
+			return true
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := sch.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		gotSt, _ := st.Get(t.Context(), "acme/app", "dead-code")
+		if gotSt.BreakerState != upkeep.BreakerPaused || gotSt.BreakerReason != upkeep.BreakerReasonConsecutiveClosed {
+			t.Fatalf("expected post-reset closes ordered by ClosedAt to trip breaker, got %+v", gotSt)
+		}
+		if len(pausedCalls) != 1 || pausedCalls[0] != "acme/app/dead-code:consecutive_closed" {
+			t.Fatalf("OnRoutinePaused calls = %+v", pausedCalls)
+		}
+
+		// >100 historical closed issues: steady-state ticks must perform zero ConfigMap writes.
+		fMany := forgetest.NewFake()
+		fMany.SetFile(".github/agent-factory/upkeep/dead-code.md", prompt1)
+		fMany.SetFile(".agents/skills/docs-audit/SKILL.md", skill1)
+		var manyTasks []client.Object
+		for i := 1; i <= 105; i++ {
+			closedAt := now.Add(-time.Duration(106-i) * time.Minute)
+			fMany.SetIssue(forge.Issue{
+				Number:      i,
+				State:       "CLOSED",
+				StateReason: "completed",
+				Labels:      []string{"factory/proposed", "factory/routine:dead-code"},
+				CreatedAt:   closedAt.Add(-time.Hour),
+				ClosedAt:    closedAt,
+			})
+			manyTasks = append(manyTasks, &v1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("manytask%03d", i), Namespace: "maku"},
+				Spec: v1alpha1.TaskSpec{
+					Repository: "acme/app",
+					Issue:      i,
+					Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-code"},
+					Routine:    &v1alpha1.TaskRoutine{Name: "dead-code", Mode: config.RoutineModePropose, PromptSHA: strings.Repeat("a", 64)},
+				},
+				Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseDone, Reason: "proposal_filed"},
+			})
+		}
+		baseClient := fake.NewClientBuilder().WithScheme(routineScheme()).WithObjects(manyTasks...).Build()
+		cc := &countingClient{Client: baseClient}
+		stMany := &upkeep.StateStore{Client: cc, Reader: cc, Namespace: "maku", Now: func() time.Time { return now }}
+		schMany := &Scheduler{
+			Forge:          fMany,
+			Merger:         fMany,
+			Client:         cc,
+			APIReader:      cc,
+			Ledger:         cc,
+			State:          stMany,
+			Breaker:        &upkeep.Breaker{Store: stMany, Now: func() time.Time { return now }},
+			RoutineMetrics: &fakeSkipMetrics{},
+			Namespace:      "maku",
+			Cfg:            cfg,
+			Owned:          func(string) bool { return true },
+			Stopped:        func(context.Context) bool { return false },
+			Now:            func() time.Time { return now },
+			Nonce:          func() string { return "abcd1234" },
+			Errors:         &counter{},
+		}
+		if err := schMany.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		writesAfterFirstTick := cc.writes
+		for tick := 1; tick <= 3; tick++ {
+			tNow := now.Add(time.Duration(tick) * time.Minute)
+			schMany.Now = func() time.Time { return tNow }
+			if err := schMany.Tick(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if cc.writes != writesAfterFirstTick {
+			t.Fatalf("ConfigMap writes looped past 100 entries: after tick1=%d, after tick4=%d", writesAfterFirstTick, cc.writes)
+		}
+	})
+}
+
+type countingClient struct {
+	client.Client
+	writes int
+}
+
+func (c *countingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if _, ok := obj.(*corev1.ConfigMap); ok {
+		c.writes++
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
+
+func (c *countingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if _, ok := obj.(*corev1.ConfigMap); ok {
+		c.writes++
+	}
+	return c.Client.Update(ctx, obj, opts...)
 }
 
 var _ = fmt.Sprintf

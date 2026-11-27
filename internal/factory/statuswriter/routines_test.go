@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -25,6 +26,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/resources"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 func routineObj(name string, gen int64) v1alpha1.Routine {
@@ -267,5 +269,97 @@ func TestEnvtestWriteRoutineStatus(t *testing.T) {
 	}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(rtCR), &gotRT); err != nil || gotRT.ResourceVersion != before {
 		t.Fatalf("second pass wrote Routine: %s -> %s (%v)", before, gotRT.ResourceVersion, err)
+	}
+}
+
+func TestDesiredRoutineBreakerAndTaskSummaryProjection(t *testing.T) {
+	subSec := metav1.NewTime(now.Add(-500 * time.Millisecond))
+	ended1 := metav1.NewTime(now.Add(-2 * time.Hour))
+	ended2 := metav1.NewTime(now.Add(-time.Hour))
+	sha := strings.Repeat("e", 64)
+
+	c := cfg(config.Repository{
+		Name: repo,
+		ResolvedRoutines: map[string]config.ResolvedRoutine{
+			"doc-drift": {
+				Name:          "doc-drift",
+				Mode:          config.RoutineModePR,
+				DefaultPrompt: "Default prompt.",
+				Breaker:       config.ResolvedBreaker{Window: 10},
+			},
+		},
+	})
+	in := Inputs{
+		Config: c,
+		Outcomes: []configsource.Outcome{
+			{
+				Kind:       resources.KindRepository,
+				Name:       "cnref",
+				Repository: repo,
+				Accepted:   true,
+				RoutineBindings: []resources.RoutineOutcome{
+					{Repository: "cnref", Name: "doc-drift", Mode: config.RoutineModePR, RoutineGeneration: 2, Accepted: true, Served: true},
+				},
+			},
+			{
+				Kind:     resources.KindRoutine,
+				Name:     "doc-drift",
+				Accepted: true,
+				RoutineConsumers: []resources.RoutineOutcome{
+					{Repository: "cnref", Name: "doc-drift", Mode: config.RoutineModePR, RoutineGeneration: 2, Accepted: true, Served: true},
+				},
+			},
+		},
+		RoutineStates: map[string]map[string]upkeep.RoutineState{
+			strings.ToLower(repo): {
+				"doc-drift": {
+					BreakerState:  upkeep.BreakerPaused,
+					BreakerReason: upkeep.BreakerReasonConsecutiveClosed,
+				},
+			},
+		},
+		Tasks: []v1alpha1.Task{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "t-merged", CreationTimestamp: ended1},
+				Spec: v1alpha1.TaskSpec{
+					Repository: repo,
+					Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "doc-drift"},
+					Routine:    &v1alpha1.TaskRoutine{Name: "doc-drift", PromptSHA: strings.Repeat("1", 64)},
+				},
+				Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseDone, EndedAt: &ended1},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "t-noop", CreationTimestamp: ended2},
+				Spec: v1alpha1.TaskSpec{
+					Repository: repo,
+					Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "doc-drift"},
+					Routine:    &v1alpha1.TaskRoutine{Name: "doc-drift", PromptSHA: strings.Repeat("2", 64)},
+				},
+				Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseNoOp, EndedAt: &ended2},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "t-open", CreationTimestamp: subSec},
+				Spec: v1alpha1.TaskSpec{
+					Repository: repo,
+					Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "doc-drift"},
+					Routine:    &v1alpha1.TaskRoutine{Name: "doc-drift", PromptSHA: sha},
+				},
+				Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing},
+			},
+		},
+	}
+
+	out := Desired(in, nil, []v1alpha1.Repository{repoObj("cnref", repo, 1)}, nil, []v1alpha1.Routine{routineObj("doc-drift", 2)}, now)
+	rb := out.Repositories["cnref"].Routines[0]
+	if rb.PromptSHA != sha || rb.BreakerState != upkeep.BreakerPaused || rb.BreakerReason != upkeep.BreakerReasonConsecutiveClosed ||
+		rb.OpenCount != 1 || rb.RollingMerged != 1 || rb.RollingClosed != 0 || rb.RollingNoOp != 1 || rb.LastOutcome != "no_op" {
+		t.Fatalf("unexpected RoutineBindingStatus: %+v", rb)
+	}
+	if rb.LastRunAt == nil || !rb.LastRunAt.Time.Equal(subSec.Truncate(1e9)) {
+		t.Fatalf("LastRunAt = %v, want second-truncated %v", rb.LastRunAt, subSec.Truncate(1e9))
+	}
+	rt := out.Routines["doc-drift"]
+	if rt.PausedCount != 1 || rt.ActiveCount != 0 || !rt.Consumers[0].Paused {
+		t.Fatalf("expected breaker-paused consumer to count as paused, got %+v", rt)
 	}
 }

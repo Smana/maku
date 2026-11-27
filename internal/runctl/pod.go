@@ -172,6 +172,15 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	if s.Task.URL != "" {
 		env = append(env, corev1.EnvVar{Name: "TASK_URL", Value: s.Task.URL})
 	}
+	if s.PRDraft {
+		env = append(env, corev1.EnvVar{Name: "AGENT_PR_DRAFT", Value: "1"})
+	}
+	if rt := r.Annotations[runs.AnnRoutine]; runs.ValidRoutine(rt) {
+		env = append(env, corev1.EnvVar{Name: "AGENT_ROUTINE", Value: rt})
+	}
+	if sha := r.Annotations[runs.AnnRoutinePromptSHA]; runs.ValidRoutinePromptSHA(sha) {
+		env = append(env, corev1.EnvVar{Name: "AGENT_ROUTINE_PROMPT_SHA", Value: sha})
+	}
 	if forgeAPIDenied(r) { // HR37: the gh wrapper refuses forge reads; the run uses forge_read
 		env = append(env, corev1.EnvVar{Name: "FORGE_READ", Value: "1"})
 	}

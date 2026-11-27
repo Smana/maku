@@ -38,9 +38,15 @@ type SkipRecord struct {
 	Reason  string    `json:"reason"`
 }
 
-// RoutineState holds persisted operational state for one (repository, routine) pair.
-// Breaker fields are reserved for Phase 2 and preserved across Phase 1 updates, along with
-// any unknown future JSON fields.
+// BreakerEntry is one non-NoOp routine outcome persisted for rolling yield breaker evaluation.
+type BreakerEntry struct {
+	ID      string    `json:"id"`
+	Outcome string    `json:"outcome"`
+	At      time.Time `json:"at"`
+}
+
+// RoutineState holds persisted operational state and rolling yield circuit breaker state for one
+// (repository, routine) pair, preserving any unknown future JSON fields.
 type RoutineState struct {
 	Paused       bool         `json:"paused,omitempty"`
 	PausedReason string       `json:"pausedReason,omitempty"`
@@ -48,25 +54,29 @@ type RoutineState struct {
 	PausedAt     *time.Time   `json:"pausedAt,omitempty"`
 	Skips        []SkipRecord `json:"skips,omitempty"`
 
-	// Phase 2 yield circuit breaker fields (preserved on read-modify-write).
-	BreakerState     string     `json:"breakerState,omitempty"`
-	BreakerReason    string     `json:"breakerReason,omitempty"`
-	TrippedPromptSHA string     `json:"trippedPromptSHA,omitempty"`
-	TrippedAt        *time.Time `json:"trippedAt,omitempty"`
+	// Phase 2 yield circuit breaker fields.
+	BreakerState     string         `json:"breakerState,omitempty"`
+	BreakerReason    string         `json:"breakerReason,omitempty"`
+	TrippedPromptSHA string         `json:"trippedPromptSHA,omitempty"`
+	TrippedAt        *time.Time     `json:"trippedAt,omitempty"`
+	BreakerResetAt   *time.Time     `json:"breakerResetAt,omitempty"`
+	BreakerHistory   []BreakerEntry `json:"breakerHistory,omitempty"`
 
 	extra map[string]json.RawMessage
 }
 
 type routineStateAlias struct {
-	Paused           bool         `json:"paused,omitempty"`
-	PausedReason     string       `json:"pausedReason,omitempty"`
-	PausedBy         string       `json:"pausedBy,omitempty"`
-	PausedAt         *time.Time   `json:"pausedAt,omitempty"`
-	Skips            []SkipRecord `json:"skips,omitempty"`
-	BreakerState     string       `json:"breakerState,omitempty"`
-	BreakerReason    string       `json:"breakerReason,omitempty"`
-	TrippedPromptSHA string       `json:"trippedPromptSHA,omitempty"`
-	TrippedAt        *time.Time   `json:"trippedAt,omitempty"`
+	Paused           bool           `json:"paused,omitempty"`
+	PausedReason     string         `json:"pausedReason,omitempty"`
+	PausedBy         string         `json:"pausedBy,omitempty"`
+	PausedAt         *time.Time     `json:"pausedAt,omitempty"`
+	Skips            []SkipRecord   `json:"skips,omitempty"`
+	BreakerState     string         `json:"breakerState,omitempty"`
+	BreakerReason    string         `json:"breakerReason,omitempty"`
+	TrippedPromptSHA string         `json:"trippedPromptSHA,omitempty"`
+	TrippedAt        *time.Time     `json:"trippedAt,omitempty"`
+	BreakerResetAt   *time.Time     `json:"breakerResetAt,omitempty"`
+	BreakerHistory   []BreakerEntry `json:"breakerHistory,omitempty"`
 }
 
 var knownRoutineStateKeys = map[string]bool{
@@ -79,6 +89,8 @@ var knownRoutineStateKeys = map[string]bool{
 	"breakerReason":    true,
 	"trippedPromptSHA": true,
 	"trippedAt":        true,
+	"breakerResetAt":   true,
+	"breakerHistory":   true,
 }
 
 // UnmarshalJSON decodes RoutineState while retaining unknown future JSON fields.
@@ -104,6 +116,8 @@ func (s *RoutineState) UnmarshalJSON(data []byte) error {
 		BreakerReason:    alias.BreakerReason,
 		TrippedPromptSHA: alias.TrippedPromptSHA,
 		TrippedAt:        alias.TrippedAt,
+		BreakerResetAt:   alias.BreakerResetAt,
+		BreakerHistory:   alias.BreakerHistory,
 	}
 	if len(raw) > 0 {
 		s.extra = raw
@@ -123,6 +137,8 @@ func (s RoutineState) MarshalJSON() ([]byte, error) {
 		BreakerReason:    s.BreakerReason,
 		TrippedPromptSHA: s.TrippedPromptSHA,
 		TrippedAt:        s.TrippedAt,
+		BreakerResetAt:   s.BreakerResetAt,
+		BreakerHistory:   s.BreakerHistory,
 	}
 	if len(s.extra) == 0 {
 		return json.Marshal(alias)
@@ -146,6 +162,7 @@ func (s RoutineState) MarshalJSON() ([]byte, error) {
 func (s RoutineState) clone() RoutineState {
 	out := s
 	out.Skips = slices.Clone(s.Skips)
+	out.BreakerHistory = slices.Clone(s.BreakerHistory)
 	if s.PausedAt != nil {
 		t := *s.PausedAt
 		out.PausedAt = &t
@@ -153,6 +170,10 @@ func (s RoutineState) clone() RoutineState {
 	if s.TrippedAt != nil {
 		t := *s.TrippedAt
 		out.TrippedAt = &t
+	}
+	if s.BreakerResetAt != nil {
+		t := *s.BreakerResetAt
+		out.BreakerResetAt = &t
 	}
 	if len(s.extra) > 0 {
 		out.extra = maps.Clone(s.extra)
@@ -273,7 +294,7 @@ func (s *StateStore) List(ctx context.Context) (map[string]map[string]RoutineSta
 }
 
 // SetPaused updates the manual pause flags for (repo, routine), performing zero API writes when
-// the state already matches.
+// the state already matches. Resuming (paused=false) also resets a tripped yield breaker to "ok".
 func (s *StateStore) SetPaused(ctx context.Context, repo, routine string, paused bool, reason, by string) error {
 	return s.mutate(ctx, repo, routine, func(st *RoutineState, now time.Time) bool {
 		if paused {
@@ -287,13 +308,22 @@ func (s *StateStore) SetPaused(ctx context.Context, repo, routine string, paused
 			st.PausedAt = &t
 			return true
 		}
-		if !st.Paused && st.PausedReason == "" && st.PausedBy == "" && st.PausedAt == nil {
+		if !st.Paused && st.PausedReason == "" && st.PausedBy == "" && st.PausedAt == nil &&
+			(st.BreakerState == "" || st.BreakerState == "ok") &&
+			st.BreakerReason == "" && st.TrippedPromptSHA == "" && st.TrippedAt == nil {
 			return false
 		}
 		st.Paused = false
 		st.PausedReason = ""
 		st.PausedBy = ""
 		st.PausedAt = nil
+		st.BreakerState = "ok"
+		st.BreakerReason = ""
+		st.TrippedPromptSHA = ""
+		st.TrippedAt = nil
+		st.BreakerHistory = nil
+		t := now
+		st.BreakerResetAt = &t
 		return true
 	})
 }
@@ -335,6 +365,12 @@ func (s *StateStore) RecordSkip(ctx context.Context, repo, routine, slotKey, rea
 		st.Skips = kept
 		return true
 	})
+}
+
+// Mutate reads and updates (repo, routine)'s persisted RoutineState atomically using optimistic
+// concurrency retries on resourceVersion. No API write occurs when fn returns false.
+func (s *StateStore) Mutate(ctx context.Context, repo, routine string, fn func(st *RoutineState, now time.Time) bool) error {
+	return s.mutate(ctx, repo, routine, fn)
 }
 
 func (s *StateStore) mutate(ctx context.Context, repo, routine string, fn func(st *RoutineState, now time.Time) bool) error {

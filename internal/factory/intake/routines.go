@@ -31,15 +31,19 @@ import (
 
 // Bounded skip reasons recorded by the routine scheduler in StateStore and RoutineSkipMetrics.
 const (
-	SkipKillSwitch   = "kill_switch"
-	SkipNotOwned     = "not_owned"
-	SkipDisabled     = "disabled"
-	SkipPausedManual = "paused_manual"
-	SkipOpenCap      = "open_cap"
-	SkipCooldown     = "cooldown"
-	SkipUpkeepBudget = "upkeep_budget"
-	SkipProbeEmpty   = "probe_empty"
-	SkipProbeRefused = "probe_refused"
+	SkipKillSwitch    = "kill_switch"
+	SkipNotOwned      = "not_owned"
+	SkipDisabled      = "disabled"
+	SkipPausedManual  = "paused_manual"
+	SkipBreakerPaused = "breaker_paused"
+	SkipOpenCap       = "open_cap"
+	SkipCooldown      = "cooldown"
+	SkipUpkeepBudget  = "upkeep_budget"
+	SkipProbeEmpty    = "probe_empty"
+	SkipProbeRefused  = "probe_refused"
+	SkipPromptInvalid = "prompt_invalid"
+	SkipSkillMissing  = "skill_missing"
+	SkipSkillInvalid  = "skill_invalid"
 )
 
 // Typed refusal errors returned by Scheduler.TriggerManual for API status mapping.
@@ -49,7 +53,6 @@ var (
 	ErrRoutineNotFound       = errors.New("intake: routine not found")
 	ErrRepoNotOwned          = errors.New("intake: repository not owned by this factory")
 	ErrRoutineDisabled       = errors.New("intake: routine is disabled")
-	ErrModePhase2            = errors.New("intake: mode requires Phase 2 (mode_requires_phase2)")
 	ErrInvalidMode           = errors.New("intake: invalid routine mode")
 	ErrModeWidening          = errors.New("intake: mode cannot widen configured routine mode")
 	ErrInvalidIdempotencyKey = errors.New("intake: invalid idempotency key")
@@ -58,6 +61,9 @@ var (
 	ErrBudgetExhausted       = errors.New("intake: daily budget exhausted")
 	ErrProbeEmpty            = errors.New("intake: routine probe found no work")
 	ErrProbeRefused          = errors.New("intake: routine probe findings refused")
+	ErrPromptInvalid         = errors.New("intake: routine prompt invalid")
+	ErrSkillMissing          = errors.New("intake: routine skill missing")
+	ErrSkillInvalid          = errors.New("intake: routine skill invalid")
 )
 
 const findingRejectMemoryWindow = 30 * 24 * time.Hour
@@ -74,6 +80,52 @@ type skipMetricEntry struct {
 
 type routinePausedMetrics interface {
 	RoutinePaused(ctx context.Context, repository, routine string, paused bool)
+}
+
+type routinePromptReadMetrics interface {
+	RoutinePromptRead(ctx context.Context, repository, routine, outcome string)
+}
+
+func (s *Scheduler) recordRoutinePromptRead(ctx context.Context, repo, routine, outcome string) {
+	if s.RoutineMetrics == nil {
+		return
+	}
+	if pm, ok := s.RoutineMetrics.(routinePromptReadMetrics); ok {
+		pm.RoutinePromptRead(ctx, repo, routine, outcome)
+	}
+}
+
+func (s *Scheduler) loadRoutinePrompt(ctx context.Context, rc *config.Repository, rr *config.ResolvedRoutine) (upkeep.LoadedPrompt, error) {
+	var reader upkeep.DefaultBranchReader
+	if rr.RepoPrompt || rr.Skill != "" {
+		gh, _, err := s.conns(rc)
+		if err != nil {
+			s.recordRoutinePromptRead(ctx, rc.Name, rr.Name, "error")
+			return upkeep.LoadedPrompt{}, err
+		}
+		reader = gh
+	}
+	loaded, err := upkeep.LoadPrompt(ctx, reader, rc.Name, *rr)
+	switch {
+	case errors.Is(err, upkeep.ErrPromptInvalid):
+		s.recordRoutinePromptRead(ctx, rc.Name, rr.Name, "invalid")
+		return upkeep.LoadedPrompt{}, fmt.Errorf("%w: %w", ErrPromptInvalid, err)
+	case errors.Is(err, upkeep.ErrSkillMissing):
+		s.recordRoutinePromptRead(ctx, rc.Name, rr.Name, "skill_missing")
+		return upkeep.LoadedPrompt{}, fmt.Errorf("%w: %w", ErrSkillMissing, err)
+	case errors.Is(err, upkeep.ErrSkillInvalid):
+		s.recordRoutinePromptRead(ctx, rc.Name, rr.Name, "skill_invalid")
+		return upkeep.LoadedPrompt{}, fmt.Errorf("%w: %w", ErrSkillInvalid, err)
+	case err != nil:
+		s.recordRoutinePromptRead(ctx, rc.Name, rr.Name, "error")
+		return upkeep.LoadedPrompt{}, err
+	}
+	outcome := "default"
+	if loaded.Source == "repo" {
+		outcome = "repo"
+	}
+	s.recordRoutinePromptRead(ctx, rc.Name, rr.Name, outcome)
+	return loaded, nil
 }
 
 type routineStateLister interface {
@@ -132,14 +184,15 @@ func (s *Scheduler) syncRoutinePaused(ctx context.Context, cfg *config.Config) {
 			statePaused := false
 			if s.State != nil {
 				if useList {
-					statePaused = repoStates[name].Paused
+					st := repoStates[name]
+					statePaused = st.Paused || st.BreakerState == upkeep.BreakerPaused
 				} else {
 					st, err := s.State.Get(ctx, rc.Name, name)
 					if err != nil {
 						s.log().Warn("routine paused sync state read failed", "repository", rc.Name, "routine", name, "err", err)
 						continue
 					}
-					statePaused = st.Paused
+					statePaused = st.Paused || st.BreakerState == upkeep.BreakerPaused
 				}
 			}
 			pm.RoutinePaused(ctx, rc.Name, name, declPaused || statePaused)
@@ -182,6 +235,38 @@ func (s *Scheduler) tickRoutines(ctx context.Context, cfg *config.Config, rc *co
 		if !hasResolved && !isDisabled {
 			continue
 		}
+		var st upkeep.RoutineState
+		var haveState bool
+		var preloadedPrompt *upkeep.LoadedPrompt
+		if !stopped && owned && !isDisabled && hasResolved && s.Breaker != nil {
+			if s.State != nil {
+				got, err := s.State.Get(ctx, rc.Name, name)
+				if err != nil {
+					s.log().Warn("routine state read failed", "repository", rc.Name, "routine", name, "err", err)
+					errs = append(errs, fmt.Errorf("%s/%s state: %w", rc.Name, name, err))
+					continue
+				}
+				st = got
+			}
+			if st.BreakerState == "" && st.BreakerResetAt == nil && !s.isBreakerReconstructed(rc.Name, name) {
+				reconstructed, loaded, rerr := s.reconstructRoutineBreaker(ctx, rc, &rr, tasks)
+				if rerr != nil {
+					s.log().Warn("routine breaker reconstruct failed", "repository", rc.Name, "routine", name, "err", rerr)
+				} else {
+					st = reconstructed
+					preloadedPrompt = loaded
+					s.markBreakerReconstructed(rc.Name, name)
+					if st.BreakerState == upkeep.BreakerPaused {
+						s.setRoutinePausedMetric(ctx, rc.Name, name, true)
+						if s.OnRoutinePaused != nil {
+							s.OnRoutinePaused(ctx, rc.Name, name, st.BreakerReason)
+						}
+					}
+				}
+			}
+			st = s.syncProposedIssuesBreaker(ctx, rc, &rr, tasks, st)
+			haveState = true
+		}
 		cronExpr := rr.Cron
 		if !hasResolved {
 			cronExpr = b.Cron
@@ -213,22 +298,69 @@ func (s *Scheduler) tickRoutines(ctx context.Context, cfg *config.Config, rc *co
 			continue
 		}
 
-		var statePaused bool
-		if s.State != nil {
-			st, err := s.State.Get(ctx, rc.Name, name)
+		if !haveState && s.State != nil {
+			got, err := s.State.Get(ctx, rc.Name, name)
 			if err != nil {
 				s.log().Warn("routine state read failed", "repository", rc.Name, "routine", name, "err", err)
 				errs = append(errs, fmt.Errorf("%s/%s state: %w", rc.Name, name, err))
 				continue
 			}
-			statePaused = st.Paused
+			st = got
 		}
-		if rr.Paused || statePaused {
+		if rr.Paused || st.Paused {
 			s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipPausedManual, now)
 			continue
 		}
+		if st.BreakerState == upkeep.BreakerPaused {
+			loaded, perr := s.loadRoutinePrompt(ctx, rc, &rr)
+			switch {
+			case errors.Is(perr, ErrPromptInvalid):
+				s.log().Warn("routine prompt invalid", "repository", rc.Name, "routine", name, "err", perr)
+				s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipPromptInvalid, now)
+				continue
+			case errors.Is(perr, ErrSkillMissing):
+				s.log().Warn("routine skill missing", "repository", rc.Name, "routine", name, "err", perr)
+				s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipSkillMissing, now)
+				continue
+			case errors.Is(perr, ErrSkillInvalid):
+				s.log().Warn("routine skill invalid", "repository", rc.Name, "routine", name, "err", perr)
+				s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipSkillInvalid, now)
+				continue
+			case perr != nil:
+				s.log().Warn("routine prompt read failed", "repository", rc.Name, "routine", name, "err", perr)
+				errs = append(errs, fmt.Errorf("%s/%s prompt: %w", rc.Name, name, perr))
+				continue
+			}
+			preloadedPrompt = &loaded
+			if s.Breaker != nil {
+				nextSt, transitioned, rerr := s.Breaker.CheckPromptReset(ctx, rc.Name, name, loaded.EffectiveSHA)
+				if rerr != nil {
+					s.log().Warn("routine breaker prompt check failed", "repository", rc.Name, "routine", name, "err", rerr)
+					errs = append(errs, fmt.Errorf("%s/%s breaker: %w", rc.Name, name, rerr))
+					continue
+				}
+				st = nextSt
+				if transitioned {
+					s.setRoutinePausedMetric(ctx, rc.Name, name, false)
+				}
+			}
+			if st.BreakerState == upkeep.BreakerPaused {
+				s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipBreakerPaused, now)
+				continue
+			}
+		}
 
-		if countOpenRoutineTasks(tasks, rc.Name, name) >= max(1, rr.MaxOpenPRs) {
+		openWork, err := s.countOpenRoutineWork(ctx, rc, name, tasks)
+		if err != nil {
+			s.log().Warn("routine open work count failed", "repository", rc.Name, "routine", name, "err", err)
+			errs = append(errs, fmt.Errorf("%s/%s open work: %w", rc.Name, name, err))
+			continue
+		}
+		openCap := max(1, rr.MaxOpenPRs)
+		if st.BreakerState == upkeep.BreakerHalfOpen {
+			openCap = 1
+		}
+		if openWork >= openCap {
 			s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipOpenCap, now)
 			continue
 		}
@@ -272,7 +404,32 @@ func (s *Scheduler) tickRoutines(ctx context.Context, cfg *config.Config, rc *co
 			continue
 		}
 
-		tk := s.buildRoutineTask(cfg, rc, &rr, rr.Mode, taskName, key, "system:scheduler", res)
+		var loaded upkeep.LoadedPrompt
+		if preloadedPrompt != nil {
+			loaded = *preloadedPrompt
+		} else {
+			loaded, err = s.loadRoutinePrompt(ctx, rc, &rr)
+			switch {
+			case errors.Is(err, ErrPromptInvalid):
+				s.log().Warn("routine prompt invalid", "repository", rc.Name, "routine", name, "err", err)
+				s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipPromptInvalid, now)
+				continue
+			case errors.Is(err, ErrSkillMissing):
+				s.log().Warn("routine skill missing", "repository", rc.Name, "routine", name, "err", err)
+				s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipSkillMissing, now)
+				continue
+			case errors.Is(err, ErrSkillInvalid):
+				s.log().Warn("routine skill invalid", "repository", rc.Name, "routine", name, "err", err)
+				s.recordRoutineSkip(ctx, rc.Name, name, slotKey, SkipSkillInvalid, now)
+				continue
+			case err != nil:
+				s.log().Warn("routine prompt read failed", "repository", rc.Name, "routine", name, "err", err)
+				errs = append(errs, fmt.Errorf("%s/%s prompt: %w", rc.Name, name, err))
+				continue
+			}
+		}
+
+		tk := s.buildRoutineTask(cfg, rc, &rr, rr.Mode, taskName, key, "system:scheduler", res, loaded)
 		if err := s.Client.Create(ctx, tk); err != nil && !apierrors.IsAlreadyExists(err) {
 			errs = append(errs, err)
 			continue
@@ -349,6 +506,22 @@ func countOpenRoutineTasks(tasks []v1alpha1.Task, repo, routine string) int {
 		}
 	}
 	return n
+}
+
+func (s *Scheduler) countOpenRoutineWork(ctx context.Context, rc *config.Repository, routine string, tasks []v1alpha1.Task) (int, error) {
+	n := countOpenRoutineTasks(tasks, rc.Name, routine)
+	gh, _, err := s.conns(rc)
+	if err != nil {
+		return 0, err
+	}
+	if gh == nil {
+		return n, nil
+	}
+	issues, err := gh.OpenIssuesLabelled(ctx, "factory/proposed", "factory/routine:"+routine)
+	if err != nil {
+		return 0, err
+	}
+	return n + len(issues), nil
 }
 
 func taskEndedTime(t *v1alpha1.Task) *time.Time {
@@ -639,10 +812,15 @@ func isFindingsRefused(err error) bool {
 	return errors.Is(err, upkeep.ErrFindingsRefused) || errors.Is(err, ErrFindingsRefused)
 }
 
-func (s *Scheduler) buildRoutineTask(cfg *config.Config, rc *config.Repository, rr *config.ResolvedRoutine, mode, taskName, key, requestedBy string, res routineProbeResult) *v1alpha1.Task {
+func (s *Scheduler) buildRoutineTask(cfg *config.Config, rc *config.Repository, rr *config.ResolvedRoutine, mode, taskName, key, requestedBy string, res routineProbeResult, loaded upkeep.LoadedPrompt) *v1alpha1.Task {
 	dataClass := cmp.Or(rr.DataClass, cfg.Defaults.DataClass)
 	textSum := sha256.Sum256([]byte(res.text))
-	promptSum := sha256.Sum256([]byte(rr.DefaultPrompt))
+	promptSource := cmp.Or(loaded.Source, "routine")
+	effectiveSHA := loaded.EffectiveSHA
+	if effectiveSHA == "" {
+		promptSum := sha256.Sum256([]byte(rr.DefaultPrompt))
+		effectiveSHA = upkeep.EffectivePromptSHA(hex.EncodeToString(promptSum[:]), "")
+	}
 	genFromCfg, _, _ := cfg.RoutineGenerations(rc.Name, rr.Name)
 	routineGen := cmp.Or(rr.RoutineGeneration, genFromCfg)
 	maxMicro := config.MicroUSD(cmp.Or(rr.MaxCostUSD, config.DefaultRoutineMaxCostUSD))
@@ -674,8 +852,11 @@ func (s *Scheduler) buildRoutineTask(cfg *config.Config, rc *config.Repository, 
 				Name:              rr.Name,
 				Mode:              mode,
 				RoutineGeneration: routineGen,
-				PromptSource:      "routine",
-				PromptSHA:         hex.EncodeToString(promptSum[:]),
+				PromptSource:      promptSource,
+				PromptSHA:         effectiveSHA,
+				PromptPath:        loaded.Path,
+				Skill:             rr.Skill,
+				SkillSHA:          loaded.SkillSHA,
 				FindingIDs:        res.findingIDs,
 			},
 		},
@@ -708,7 +889,7 @@ func validIdempotencyKey(repo, name, idempotencyKey string) bool {
 }
 
 // TriggerManual creates (or idempotently returns) a manually triggered routine Task for (repo, name).
-// It enforces kill switch, ownership, disabled status, Phase 1 mode constraints, open_cap, and Q15
+// It enforces kill switch, ownership, disabled status, mode tightening, open_cap, and Q15
 // budget pre-checks while bypassing cooldown and paused_manual.
 func (s *Scheduler) TriggerManual(ctx context.Context, repo, name, modeOverride, login, idempotencyKey string) (*v1alpha1.Task, error) {
 	if !validIdempotencyKey(repo, name, idempotencyKey) {
@@ -750,10 +931,7 @@ func (s *Scheduler) TriggerManual(ctx context.Context, repo, name, modeOverride,
 		}
 		effectiveMode = modeOverride
 	}
-	if effectiveMode == config.RoutineModePropose || effectiveMode == config.RoutineModeDraft {
-		return nil, ErrModePhase2
-	}
-	if effectiveMode != config.RoutineModePR {
+	if effectiveMode != config.RoutineModePropose && effectiveMode != config.RoutineModeDraft && effectiveMode != config.RoutineModePR {
 		return nil, ErrInvalidMode
 	}
 
@@ -781,7 +959,19 @@ func (s *Scheduler) TriggerManual(ctx context.Context, repo, name, modeOverride,
 	if err := s.Client.List(ctx, &l, client.InNamespace(s.Namespace)); err != nil {
 		return nil, err
 	}
-	if countOpenRoutineTasks(l.Items, rc.Name, rr.Name) >= max(1, rr.MaxOpenPRs) {
+	openWork, err := s.countOpenRoutineWork(ctx, rc, rr.Name, l.Items)
+	if err != nil {
+		return nil, err
+	}
+	openCap := max(1, rr.MaxOpenPRs)
+	if s.State != nil {
+		if st, serr := s.State.Get(ctx, rc.Name, rr.Name); serr == nil {
+			if st.BreakerState == upkeep.BreakerPaused || st.BreakerState == upkeep.BreakerHalfOpen {
+				openCap = 1
+			}
+		}
+	}
+	if openWork >= openCap {
 		return nil, ErrOpenCap
 	}
 
@@ -817,7 +1007,12 @@ func (s *Scheduler) TriggerManual(ctx context.Context, repo, name, modeOverride,
 		return nil, ErrProbeEmpty
 	}
 
-	tk := s.buildRoutineTask(cfg, rc, &rr, effectiveMode, taskName, key, v1alpha1.Person(login), res)
+	loaded, err := s.loadRoutinePrompt(ctx, rc, &rr)
+	if err != nil {
+		return nil, err
+	}
+
+	tk := s.buildRoutineTask(cfg, rc, &rr, effectiveMode, taskName, key, v1alpha1.Person(login), res, loaded)
 	if err := s.Client.Create(ctx, tk); apierrors.IsAlreadyExists(err) {
 		var raced v1alpha1.Task
 		if rerr := reader.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: taskName}, &raced); rerr != nil {
@@ -840,4 +1035,221 @@ func manualTaskMatches(t *v1alpha1.Task, repo, routine, mode, key string) bool {
 		t.Spec.Routine != nil &&
 		t.Spec.Routine.Name == routine &&
 		t.Spec.Routine.Mode == mode
+}
+
+type pullsWithLabelReader interface {
+	PullsWithLabel(ctx context.Context, label string) ([]forge.LabelledPull, error)
+}
+
+type issuesLabelledReader interface {
+	IssuesLabelled(ctx context.Context, label string) ([]forge.Issue, error)
+}
+
+func (s *Scheduler) isBreakerReconstructed(repo, routine string) bool {
+	s.seenMu.Lock()
+	defer s.seenMu.Unlock()
+	return s.breakerReconstructed[strings.ToLower(repo)+"\x00"+routine]
+}
+
+func (s *Scheduler) markBreakerReconstructed(repo, routine string) {
+	s.seenMu.Lock()
+	defer s.seenMu.Unlock()
+	if s.breakerReconstructed == nil {
+		s.breakerReconstructed = map[string]bool{}
+	}
+	s.breakerReconstructed[strings.ToLower(repo)+"\x00"+routine] = true
+}
+
+func (s *Scheduler) setRoutinePausedMetric(ctx context.Context, repo, routine string, paused bool) {
+	if s.RoutineMetrics == nil {
+		return
+	}
+	if pm, ok := s.RoutineMetrics.(routinePausedMetrics); ok {
+		pm.RoutinePaused(ctx, repo, routine, paused)
+	}
+}
+
+func (s *Scheduler) reconstructRoutineBreaker(ctx context.Context, rc *config.Repository, rr *config.ResolvedRoutine, tasks []v1alpha1.Task) (upkeep.RoutineState, *upkeep.LoadedPrompt, error) {
+	gh, merger, err := s.conns(rc)
+	if err != nil {
+		return upkeep.RoutineState{}, nil, err
+	}
+	label := "factory/routine:" + rr.Name
+	var pulls []forge.LabelledPull
+	if pr, ok := merger.(pullsWithLabelReader); ok && pr != nil {
+		got, perr := pr.PullsWithLabel(ctx, label)
+		switch {
+		case perr == nil:
+			pulls = got
+		case errors.Is(perr, forge.ErrNoMerger):
+		default:
+			return upkeep.RoutineState{}, nil, perr
+		}
+	}
+	if len(pulls) == 0 {
+		if pr, ok := gh.(pullsWithLabelReader); ok && pr != nil {
+			got, perr := pr.PullsWithLabel(ctx, label)
+			if perr != nil && !errors.Is(perr, forge.ErrNoMerger) {
+				return upkeep.RoutineState{}, nil, perr
+			}
+			pulls = got
+		}
+	}
+	var issues []forge.Issue
+	if ir, ok := gh.(issuesLabelledReader); ok && ir != nil {
+		got, ierr := ir.IssuesLabelled(ctx, label)
+		if ierr != nil {
+			return upkeep.RoutineState{}, nil, ierr
+		}
+		issues = got
+	}
+	promptSHA := upkeep.DefaultPromptEffectiveSHA(rr.DefaultPrompt)
+	var preloaded *upkeep.LoadedPrompt
+	if len(pulls) > 0 || len(issues) > 0 || hasRoutineTask(tasks, rc.Name, rr.Name) {
+		if loaded, lerr := s.loadRoutinePrompt(ctx, rc, rr); lerr == nil {
+			preloaded = &loaded
+			if loaded.EffectiveSHA != "" {
+				promptSHA = loaded.EffectiveSHA
+			}
+		}
+	}
+	st, rerr := s.Breaker.Reconstruct(ctx, rc.Name, rr.Name, rr.Breaker, tasks, pulls, issues, promptSHA)
+	return st, preloaded, rerr
+}
+
+func hasRoutineTask(tasks []v1alpha1.Task, repo, routine string) bool {
+	for i := range tasks {
+		t := &tasks[i]
+		if strings.EqualFold(t.Spec.Repository, repo) && t.Spec.Source.Kind == v1alpha1.SourceKindRoutine &&
+			(t.Spec.Source.Ref == routine || (t.Spec.Routine != nil && t.Spec.Routine.Name == routine)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scheduler) syncProposedIssuesBreaker(ctx context.Context, rc *config.Repository, rr *config.ResolvedRoutine, tasks []v1alpha1.Task, st upkeep.RoutineState) upkeep.RoutineState {
+	taskByIssue := map[int]*v1alpha1.Task{}
+	for i := range tasks {
+		t := &tasks[i]
+		if strings.EqualFold(t.Spec.Repository, rc.Name) &&
+			t.Spec.Source.Kind == v1alpha1.SourceKindRoutine &&
+			t.Spec.Routine != nil &&
+			t.Spec.Routine.Name == rr.Name &&
+			t.Spec.Routine.Mode == config.RoutineModePropose &&
+			t.Spec.Issue > 0 {
+			if prev := taskByIssue[t.Spec.Issue]; prev == nil || (prev.Status.Published == nil && t.Status.Published != nil) {
+				taskByIssue[t.Spec.Issue] = t
+			}
+		}
+	}
+	if len(taskByIssue) == 0 {
+		return st
+	}
+	gh, _, err := s.conns(rc)
+	if err != nil {
+		return st
+	}
+	ir, ok := gh.(issuesLabelledReader)
+	if !ok || ir == nil {
+		return st
+	}
+	issues, err := ir.IssuesLabelled(ctx, "factory/routine:"+rr.Name)
+	if err != nil {
+		s.log().Warn("proposed issue breaker sync failed", "repository", rc.Name, "routine", rr.Name, "err", err)
+		return st
+	}
+
+	type proposalCandidate struct {
+		issue   forge.Issue
+		outcome string
+		sha     string
+		at      time.Time
+	}
+	now := s.Now().UTC()
+	var candidates []proposalCandidate
+	for _, iss := range issues {
+		if !slices.Contains(iss.Labels, "factory/proposed") || !strings.EqualFold(iss.State, "CLOSED") {
+			continue
+		}
+		tk := taskByIssue[iss.Number]
+		outcome := upkeep.OutcomeProposalRejected
+		switch {
+		case (tk != nil && tk.Status.Published != nil) || slices.Contains(iss.Labels, LabelPublish) || strings.EqualFold(iss.StateReason, "completed"):
+			outcome = upkeep.OutcomeProposalAccepted
+		case slices.Contains(iss.Labels, "factory/stale"):
+			outcome = upkeep.OutcomeStale
+		}
+		var promptSHA string
+		if tk != nil && tk.Spec.Routine != nil {
+			promptSHA = tk.Spec.Routine.PromptSHA
+		}
+		sha := cmp.Or(promptSHA, upkeep.DefaultPromptEffectiveSHA(rr.DefaultPrompt))
+		at := iss.ClosedAt.UTC()
+		if at.IsZero() {
+			at = iss.LastEditedAt.UTC()
+		}
+		if at.IsZero() {
+			at = now
+		}
+		candidates = append(candidates, proposalCandidate{
+			issue:   iss,
+			outcome: outcome,
+			sha:     sha,
+			at:      at,
+		})
+	}
+	if len(candidates) == 0 {
+		return st
+	}
+	slices.SortStableFunc(candidates, func(a, b proposalCandidate) int {
+		if d := a.at.Compare(b.at); d != 0 {
+			return d
+		}
+		return cmp.Compare(a.issue.Number, b.issue.Number)
+	})
+	if len(st.BreakerHistory) == 0 && len(candidates) > upkeep.MaxBreakerHistory {
+		candidates = candidates[len(candidates)-upkeep.MaxBreakerHistory:]
+	}
+
+	for _, c := range candidates {
+		id := fmt.Sprintf("proposal:%d", c.issue.Number)
+		if idx := slices.IndexFunc(st.BreakerHistory, func(e upkeep.BreakerEntry) bool { return e.ID == id }); idx >= 0 {
+			if st.BreakerHistory[idx].Outcome == c.outcome {
+				continue
+			}
+		} else {
+			if st.BreakerResetAt != nil && c.at.Before(*st.BreakerResetAt) {
+				continue
+			}
+			if len(st.BreakerHistory) >= upkeep.MaxBreakerHistory {
+				oldestAt := st.BreakerHistory[0].At
+				if c.issue.ClosedAt.IsZero() && c.issue.LastEditedAt.IsZero() {
+					if c.issue.CreatedAt.IsZero() || !c.issue.CreatedAt.After(oldestAt) {
+						continue
+					}
+				} else if !c.at.After(oldestAt) {
+					continue
+				}
+			}
+		}
+		res, rerr := s.Breaker.Record(ctx, rc.Name, rr.Name, rr.Breaker, upkeep.BreakerOutcome{
+			ID:        id,
+			Outcome:   c.outcome,
+			PromptSHA: c.sha,
+			At:        c.at,
+		})
+		if rerr != nil {
+			s.log().Warn("proposed issue breaker record failed", "repository", rc.Name, "routine", rr.Name, "issue", c.issue.Number, "err", rerr)
+			continue
+		}
+		st = res.State
+		if res.NewlyTripped {
+			s.setRoutinePausedMetric(ctx, rc.Name, rr.Name, true)
+			if s.OnRoutinePaused != nil {
+				s.OnRoutinePaused(ctx, rc.Name, rr.Name, res.Reason)
+			}
+		}
+	}
+	return st
 }

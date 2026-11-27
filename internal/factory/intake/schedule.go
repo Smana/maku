@@ -49,9 +49,12 @@ func LastSlot(expr string, now time.Time) (time.Time, bool) {
 }
 
 // ScheduleForge is the part of the forge the probe reads as the factory App: the open pull
-// requests, whose checks it then hands to the merger.
+// requests, whose checks it then hands to the merger, plus default-branch routine prompts/skills
+// and open proposed-routine issues.
 type ScheduleForge interface {
 	OpenPullRequests(ctx context.Context) ([]forge.PRSummary, error)
+	OpenIssuesLabelled(ctx context.Context, labels ...string) ([]forge.Issue, error)
+	DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error)
 }
 
 // ScheduleMerger reads a pull request's checks through the merger App (R16): the renovate-red
@@ -69,6 +72,13 @@ type RoutineStateStore interface {
 	RecordSkip(ctx context.Context, repo, routine, slotKey, reason string, at time.Time) error
 }
 
+// RoutineBreaker evaluates, resets, reconstructs, and records yield breaker state.
+type RoutineBreaker interface {
+	CheckPromptReset(ctx context.Context, repo, routine, currentEffectiveSHA string) (upkeep.RoutineState, bool, error)
+	Reconstruct(ctx context.Context, repo, routine string, spec config.ResolvedBreaker, tasks []v1alpha1.Task, pulls []forge.LabelledPull, issues []forge.Issue, currentPromptSHA string) (upkeep.RoutineState, error)
+	Record(ctx context.Context, repo, routine string, spec config.ResolvedBreaker, out upkeep.BreakerOutcome) (upkeep.RecordResult, error)
+}
+
 // RoutineSkipMetrics records bounded routine skip counters.
 type RoutineSkipMetrics interface {
 	RoutineSkip(ctx context.Context, repository, routine, reason string)
@@ -84,14 +94,16 @@ type Scheduler struct {
 	// Clients is v2 D8: a repository's factory App and merger connections. Set, each entry's
 	// probe reads its own repository, and one with no connection probes nothing; nil, Forge and
 	// Merger serve every entry (one repository).
-	Clients        func(repository string) (ScheduleForge, ScheduleMerger, bool)
-	Client         client.Client
-	APIReader      client.Reader
-	Ledger         client.Reader
-	State          RoutineStateStore
-	RoutineMetrics RoutineSkipMetrics
-	Namespace      string
-	Cfg            config.Source
+	Clients         func(repository string) (ScheduleForge, ScheduleMerger, bool)
+	Client          client.Client
+	APIReader       client.Reader
+	Ledger          client.Reader
+	State           RoutineStateStore
+	Breaker         RoutineBreaker
+	RoutineMetrics  RoutineSkipMetrics
+	OnRoutinePaused func(ctx context.Context, repository, routine, reason string)
+	Namespace       string
+	Cfg             config.Source
 	// Owned is v2 D7's fence: an entry not owned by this factory fires nothing; nil owns nothing.
 	Owned   func(repository string) bool
 	Stopped func(context.Context) bool
@@ -103,9 +115,10 @@ type Scheduler struct {
 	seenMu sync.Mutex
 	seen   map[string]weighedRuns // schedule -> the detector run pair last evaluated, outcome final
 	// pending is a pair whose findings await their Task; settle saves it once the Task exists.
-	pending        map[string]weighedRuns
-	routineSeen    map[string]routineCacheEntry
-	routinePending map[string]string
+	pending              map[string]weighedRuns
+	routineSeen          map[string]routineCacheEntry
+	routinePending       map[string]string
+	breakerReconstructed map[string]bool
 
 	skipMetricMu   sync.Mutex
 	skipMetricSeen map[string]skipMetricEntry

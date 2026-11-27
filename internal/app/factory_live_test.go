@@ -541,7 +541,6 @@ func TestRoutineTriggerSentinelMapping(t *testing.T) {
 		{intake.ErrRoutineNotFound, api.ErrRoutineNotFound},
 		{intake.ErrRepoNotOwned, api.ErrRoutineRepoNotOwned},
 		{intake.ErrRoutineDisabled, api.ErrRoutineDisabled},
-		{intake.ErrModePhase2, api.ErrRoutineModePhase2},
 		{intake.ErrInvalidMode, api.ErrRoutineInvalidMode},
 		{intake.ErrModeWidening, api.ErrRoutineModeWidening},
 		{intake.ErrInvalidIdempotencyKey, api.ErrRoutineBadIdempotencyKey},
@@ -550,6 +549,9 @@ func TestRoutineTriggerSentinelMapping(t *testing.T) {
 		{intake.ErrBudgetExhausted, api.ErrRoutineBudgetExhausted},
 		{intake.ErrProbeEmpty, api.ErrRoutineProbeEmpty},
 		{intake.ErrProbeRefused, api.ErrRoutineProbeRefused},
+		{intake.ErrPromptInvalid, api.ErrRoutinePromptInvalid},
+		{intake.ErrSkillMissing, api.ErrRoutineSkillMissing},
+		{intake.ErrSkillInvalid, api.ErrRoutineSkillInvalid},
 	}
 	if len(routineErrorMap) != len(wantPairs) {
 		t.Fatalf("routineErrorMap has %d entries, want %d", len(routineErrorMap), len(wantPairs))

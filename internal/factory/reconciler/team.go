@@ -106,6 +106,7 @@ func otherTier(tier string) string {
 // carries its declared name as Persona, along with its model, effort and brief (WR11).
 func (r *Reconciler) verifierSpec(cfg *config.Config, t *v1alpha1.Task, role string) runs.Spec {
 	s := r.implementerSpec(cfg, t, "")
+	s.PRDraft = false
 	runRole := role
 	customDef, isCustom := cfg.Roles[role]
 	if isCustom {

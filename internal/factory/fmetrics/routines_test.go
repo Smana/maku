@@ -22,6 +22,7 @@ func TestRoutineMetricsAreExposedAndRenamed(t *testing.T) {
 	s.RoutineRun(ctx, "acme/app", "dead-code", "accepted", 1.25)
 	s.RoutineRun(ctx, "Acme/App", "doc-drift", "no_op", 0.15)
 	s.RoutineSkip(ctx, "Acme/App", "dead-code", "upkeep_budget")
+	s.RoutinePromptRead(ctx, "Acme/App", "dead-code", "repo")
 	s.RoutinePaused(ctx, "Acme/App", "doc-drift", true)
 	s.RoutinePaused(ctx, "Acme/App", "dead-code", false)
 	s.RoutineMergeRate(ctx, "Acme/App", "dead-code", 0.75)
@@ -34,6 +35,7 @@ func TestRoutineMetricsAreExposedAndRenamed(t *testing.T) {
 		`maku_factory_routine_usd_total{outcome="accepted",repository="Acme/App",routine="dead-code"} 1.25`,
 		`maku_factory_routine_usd_total{outcome="no_op",repository="Acme/App",routine="doc-drift"} 0.15`,
 		`maku_factory_routine_skips_total{reason="upkeep_budget",repository="Acme/App",routine="dead-code"} 1`,
+		`maku_factory_routine_prompt_reads_total{outcome="repo",repository="Acme/App",routine="dead-code"} 1`,
 		`maku_factory_routine_paused{repository="Acme/App",routine="doc-drift"} 1`,
 		`maku_factory_routine_paused{repository="Acme/App",routine="dead-code"} 0`,
 		`maku_factory_routine_merge_rate{repository="Acme/App",routine="dead-code"} 0.75`,
@@ -77,14 +79,21 @@ func TestRoutineLabelsAreBounded(t *testing.T) {
 	}
 	s.RoutineRun(ctx, "Acme/App", "r02", "bogus_outcome", 0)
 
-	// All 9 Skip* constants pass, bogus collapses to "other"
+	// All 13 Skip* constants pass, bogus collapses to "other"
 	for _, reason := range []string{
-		"kill_switch", "not_owned", "disabled", "paused_manual",
+		"kill_switch", "not_owned", "disabled", "paused_manual", "breaker_paused",
 		"open_cap", "cooldown", "upkeep_budget", "probe_empty", "probe_refused",
+		"prompt_invalid", "skill_missing", "skill_invalid",
 	} {
 		s.RoutineSkip(ctx, "Acme/App", "r01", reason)
 	}
 	s.RoutineSkip(ctx, "Acme/App", "r01", "bogus_skip")
+
+	// All 6 prompt read outcomes pass, bogus collapses to "other"
+	for _, outcome := range routinePromptReadOutcomes() {
+		s.RoutinePromptRead(ctx, "Acme/App", "r01", outcome)
+	}
+	s.RoutinePromptRead(ctx, "Acme/App", "r01", "bogus_prompt_outcome")
 
 	// NaN/Inf ignored; clamp <0 -> 0, >1 -> 1
 	s.RoutineMergeRate(ctx, "Acme/App", "r01", math.NaN())
@@ -101,6 +110,7 @@ func TestRoutineLabelsAreBounded(t *testing.T) {
 		`maku_factory_routine_runs_total{outcome="accepted",repository="other",routine="other"} 1`,
 		`maku_factory_routine_runs_total{outcome="other",repository="Acme/App",routine="r02"} 1`,
 		`maku_factory_routine_skips_total{reason="other",repository="Acme/App",routine="r01"} 1`,
+		`maku_factory_routine_prompt_reads_total{outcome="other",repository="Acme/App",routine="r01"} 1`,
 		`maku_factory_routine_merge_rate{repository="Acme/App",routine="r02"} 0`,
 		`maku_factory_routine_merge_rate{repository="Acme/App",routine="r03"} 1`,
 	} {
@@ -117,13 +127,20 @@ func TestRoutineLabelsAreBounded(t *testing.T) {
 	for _, reason := range []string{
 		"kill_switch", "not_owned", "disabled", "paused_manual",
 		"open_cap", "cooldown", "upkeep_budget", "probe_empty", "probe_refused",
+		"prompt_invalid", "skill_missing", "skill_invalid",
 	} {
 		want := fmt.Sprintf(`maku_factory_routine_skips_total{reason=%q,repository="Acme/App",routine="r01"} 1`, reason)
 		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %s\n%s", want, body)
 		}
 	}
-	for _, unwanted := range []string{`routine="r17"`, `routine="r18"`, `routine="Bad_Name"`, `routine="unconfigured"`, `ignore previous instructions`, `Evil/Repo`, `bogus_outcome`, `bogus_skip`, `routine="r01"` + "}"} {
+	for _, outcome := range routinePromptReadOutcomes() {
+		want := fmt.Sprintf(`maku_factory_routine_prompt_reads_total{outcome=%q,repository="Acme/App",routine="r01"} 1`, outcome)
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{`routine="r17"`, `routine="r18"`, `routine="Bad_Name"`, `routine="unconfigured"`, `ignore previous instructions`, `Evil/Repo`, `bogus_outcome`, `bogus_skip`, `bogus_prompt_outcome`, `routine="r01"` + "}"} {
 		if unwanted == `routine="r01"}` {
 			if strings.Contains(body, `maku_factory_routine_merge_rate{repository="Acme/App",routine="r01"}`) {
 				t.Errorf("NaN/Inf merge rate recorded for r01\n%s", body)
@@ -188,6 +205,7 @@ func TestRoutineMetricsConcurrentAndNilSafe(t *testing.T) {
 	noopSet.SetRoutines(map[string][]string{"Acme/App": {"dead-code"}})
 	noopSet.RoutineRun(ctx, "Acme/App", "dead-code", "accepted", 1)
 	noopSet.RoutineSkip(ctx, "Acme/App", "dead-code", "open_cap")
+	noopSet.RoutinePromptRead(ctx, "Acme/App", "dead-code", "default")
 	noopSet.RoutinePaused(ctx, "Acme/App", "dead-code", true)
 	noopSet.RoutineMergeRate(ctx, "Acme/App", "dead-code", 0.5)
 
@@ -195,6 +213,7 @@ func TestRoutineMetricsConcurrentAndNilSafe(t *testing.T) {
 	nilSet.SetRoutines(map[string][]string{"Acme/App": {"dead-code"}})
 	nilSet.RoutineRun(ctx, "Acme/App", "dead-code", "accepted", 1)
 	nilSet.RoutineSkip(ctx, "Acme/App", "dead-code", "open_cap")
+	nilSet.RoutinePromptRead(ctx, "Acme/App", "dead-code", "default")
 	nilSet.RoutinePaused(ctx, "Acme/App", "dead-code", true)
 	nilSet.RoutineMergeRate(ctx, "Acme/App", "dead-code", 0.5)
 }

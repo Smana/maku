@@ -347,7 +347,7 @@ func (f *Fake) CreatePR(_ context.Context, base, head, title, body string, draft
 	}
 	f.calls = append(f.calls, fmt.Sprintf("create-pr %s %s draft=%t", base, head, draft))
 	p := forge.PR{Number: n, NodeID: fmt.Sprintf("PR_%d", n), URL: fmt.Sprintf("https://github.com/owner/repo/pull/%d", n),
-		Title: title, Body: body, State: "OPEN", Author: f.author(), BaseRef: base, HeadRef: head}
+		Title: title, Body: body, State: "OPEN", Draft: draft, Author: f.author(), BaseRef: base, HeadRef: head}
 	f.prs[n], f.branches[head] = p, n
 	return p, nil
 }
@@ -467,6 +467,9 @@ func (f *Fake) ClosePR(_ context.Context, n int) error {
 	f.calls = append(f.calls, fmt.Sprintf("close %d", n))
 	if p, ok := f.prs[n]; ok {
 		p.State = "CLOSED"
+		if p.ClosedAt.IsZero() {
+			p.ClosedAt = f.now()
+		}
 		f.prs[n] = p
 	}
 	return nil
@@ -499,6 +502,33 @@ func (f *Fake) IssuesLabelled(_ context.Context, label string) ([]forge.Issue, e
 	for _, n := range slices.Sorted(maps.Keys(f.issues)) {
 		if slices.Contains(f.issues[n].Labels, label) {
 			out = append(out, f.issues[n])
+		}
+	}
+	return out, nil
+}
+
+// OpenIssuesLabelled implements OpenIssuesLabelled: open stored issues carrying every label in labels.
+func (f *Fake) OpenIssuesLabelled(_ context.Context, labels ...string) ([]forge.Issue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	var out []forge.Issue
+	for _, n := range slices.Sorted(maps.Keys(f.issues)) {
+		iss := f.issues[n]
+		if iss.State != "" && !strings.EqualFold(iss.State, "OPEN") {
+			continue
+		}
+		all := true
+		for _, lbl := range labels {
+			if !slices.Contains(iss.Labels, lbl) {
+				all = false
+				break
+			}
+		}
+		if all {
+			out = append(out, iss)
 		}
 	}
 	return out, nil
@@ -611,6 +641,8 @@ func (f *Fake) CloseIssue(_ context.Context, n int) error {
 	f.calls = append(f.calls, fmt.Sprintf("close-issue %d", n))
 	if i, ok := f.issues[n]; ok {
 		i.State = "CLOSED"
+		i.StateReason = "completed"
+		i.ClosedAt = f.now()
 		f.issues[n] = i
 	}
 	return nil
@@ -646,6 +678,8 @@ func (f *Fake) CloseIssueNotPlanned(_ context.Context, n int) error {
 	f.calls = append(f.calls, fmt.Sprintf("close-issue-not-planned %d", n))
 	if i, ok := f.issues[n]; ok {
 		i.State = "CLOSED"
+		i.StateReason = "not_planned"
+		i.ClosedAt = f.now()
 		f.issues[n] = i
 	}
 	return nil
@@ -698,6 +732,16 @@ func (f *Fake) PullRequest(_ context.Context, n int) (forge.PR, error) {
 		return forge.PR{}, fmt.Errorf("pull request %d not found", n)
 	}
 	return p, nil
+}
+
+// SetDraft toggles a stored pull request's Draft flag, simulating "Ready for review" or converting to draft.
+func (f *Fake) SetDraft(n int, draft bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if p, ok := f.prs[n]; ok {
+		p.Draft = draft
+		f.prs[n] = p
+	}
 }
 
 // SetCommits sets pull request n's commits, oldest first, as PullRequestCommits returns them.

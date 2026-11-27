@@ -219,3 +219,36 @@ func TestCNPInClusterModel(t *testing.T) {
 		t.Fatal("an external host is not in-cluster")
 	}
 }
+
+func TestPodDraftAndRoutineEnv(t *testing.T) {
+	r := run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Spec.PRDraft = true
+		r.Annotations = map[string]string{
+			"agents.ogenki.io/routine":            "dead-code",
+			"agents.ogenki.io/routine-prompt-sha": "0123456789ab",
+		}
+	})
+	env := harnessEnv(Pod(r, testConfig(t), testModel, "abcdefgh"))
+	if env["AGENT_PR_DRAFT"] != "1" || env["AGENT_ROUTINE"] != "dead-code" || env["AGENT_ROUTINE_PROMPT_SHA"] != "0123456789ab" {
+		t.Fatalf("unexpected draft/routine env: %v", env)
+	}
+
+	plain := harnessEnv(Pod(run("run-abcdefgh"), testConfig(t), testModel, "abcdefgh"))
+	for _, k := range []string{"AGENT_PR_DRAFT", "AGENT_ROUTINE", "AGENT_ROUTINE_PROMPT_SHA"} {
+		if _, ok := plain[k]; ok {
+			t.Fatalf("plain run unexpectedly set %s=%q", k, plain[k])
+		}
+	}
+
+	bad := harnessEnv(Pod(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{
+			"agents.ogenki.io/routine":            "BAD\nINJECT",
+			"agents.ogenki.io/routine-prompt-sha": "not-hex",
+		}
+	}), testConfig(t), testModel, "abcdefgh"))
+	for _, k := range []string{"AGENT_ROUTINE", "AGENT_ROUTINE_PROMPT_SHA"} {
+		if _, ok := bad[k]; ok {
+			t.Fatalf("invalid annotation leaked to %s=%q", k, bad[k])
+		}
+	}
+}

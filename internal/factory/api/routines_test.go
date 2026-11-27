@@ -516,13 +516,12 @@ func TestRoutinesManualTriggerAndSentinelMapping(t *testing.T) {
 		t.Fatalf("created = %+v", created)
 	}
 
-	// All 14 sentinel mappings.
+	// All 17 sentinel mappings.
 	for name, tc := range map[string]struct {
 		err    error
 		code   int
 		reason string
 	}{
-		"phase2":          {ErrRoutineModePhase2, http.StatusBadRequest, "mode_requires_phase2"},
 		"widening":        {ErrRoutineModeWidening, http.StatusBadRequest, "mode_widening"},
 		"invalid_mode":    {ErrRoutineInvalidMode, http.StatusBadRequest, "invalid_mode"},
 		"bad_idem":        {ErrRoutineBadIdempotencyKey, http.StatusBadRequest, "bad_idempotency_key"},
@@ -536,6 +535,9 @@ func TestRoutinesManualTriggerAndSentinelMapping(t *testing.T) {
 		"budget":          {ErrRoutineBudgetExhausted, http.StatusTooManyRequests, "budget_exhausted"},
 		"probe_empty":     {ErrRoutineProbeEmpty, http.StatusConflict, "probe_empty"},
 		"probe_refused":   {ErrRoutineProbeRefused, http.StatusUnprocessableEntity, "probe_refused"},
+		"prompt_invalid":  {ErrRoutinePromptInvalid, http.StatusUnprocessableEntity, "prompt_invalid"},
+		"skill_missing":   {ErrRoutineSkillMissing, http.StatusUnprocessableEntity, "skill_missing"},
+		"skill_invalid":   {ErrRoutineSkillInvalid, http.StatusUnprocessableEntity, "skill_invalid"},
 		"unexpected_fail": {errors.New("boom"), http.StatusServiceUnavailable, "routines_unavailable"},
 	} {
 		t.Run("sentinel_"+name, func(t *testing.T) {
@@ -615,5 +617,34 @@ func TestRoutinesPauseAndResume(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resBody)
 	if resBody["paused"] != true || resBody["declarativePaused"] != true {
 		t.Fatalf("declarative resume body = %+v", resBody)
+	}
+
+	// Breaker-paused routine surfaces paused=true + pausedReason=breakerReason, and /resume resets it.
+	if err := st.Mutate(t.Context(), coordPrimary, "dead-links", func(s *upkeep.RoutineState, at time.Time) bool {
+		s.BreakerState = upkeep.BreakerPaused
+		s.BreakerReason = upkeep.BreakerReasonConsecutiveClosed
+		s.TrippedPromptSHA = strings.Repeat("a", 64)
+		s.TrippedAt = &at
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w = doRoutineReq(h, http.MethodGet, "maint", "/v1/routines/"+coordPrimary+"/dead-links", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("detail = %d %s", w.Code, w.Body.String())
+	}
+	det = RoutineDetail{}
+	if err := json.Unmarshal(w.Body.Bytes(), &det); err != nil {
+		t.Fatal(err)
+	}
+	if !det.Paused || det.BreakerState != upkeep.BreakerPaused || det.PausedReason != upkeep.BreakerReasonConsecutiveClosed || det.NextRunAt != nil {
+		t.Fatalf("unexpected breaker-paused detail = %+v", det)
+	}
+	if w := doRoutineReq(h, http.MethodPost, "maint", resumeURL, `{}`); w.Code != http.StatusOK {
+		t.Fatalf("breaker resume = %d %s", w.Code, w.Body.String())
+	}
+	gotState, err = st.Get(t.Context(), coordPrimary, "dead-links")
+	if err != nil || gotState.BreakerState != upkeep.BreakerOK || gotState.BreakerReason != "" {
+		t.Fatalf("resume did not reset breaker: %+v err=%v", gotState, err)
 	}
 }

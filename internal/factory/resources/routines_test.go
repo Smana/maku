@@ -179,17 +179,32 @@ probe: {kind: none}
 			t.Fatalf("resolved routines after fallback = %+v", rc.ResolvedRoutines)
 		}
 
-		// Phase 2 modes (propose/draft) or repoPrompt/skill must never widen by falling back to pr.
-		proposeRepo := boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 4, anrBindings)
-		proposeRepo.Spec["routines"] = []any{
-			map[string]any{"name": "doc-drift", "mode": "propose", "cron": "0 4 * * 1"},
+		// Unknown mode (bogus) must never widen by falling back to pr, while draft mode resolves cleanly.
+		badModeRepo := boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 4, anrBindings)
+		badModeRepo.Spec["routines"] = []any{
+			map[string]any{"name": "doc-drift", "mode": "bogus", "cron": "0 4 * * 1"},
 		}
-		third, err := Assemble(file(t), append(specPolicies(t), catalogRT, proposeRepo), Options{LastResolvedRoutines: first.ResolvedRoutines})
+		third, err := Assemble(file(t), append(specPolicies(t), catalogRT, badModeRepo), Options{LastResolvedRoutines: first.ResolvedRoutines})
 		if err != nil {
-			t.Fatalf("propose mode refusal should isolate binding without failing Repository: %v", err)
+			t.Fatalf("unknown mode refusal should isolate binding without failing Repository: %v", err)
 		}
-		if ro := routineOutcome(third, "ai-native-ref", "doc-drift"); ro == nil || ro.Accepted || ro.Served || !strings.Contains(ro.Message, "mode_requires_phase2") {
-			t.Fatalf("propose outcome = %+v", ro)
+		if ro := routineOutcome(third, "ai-native-ref", "doc-drift"); ro == nil || ro.Accepted || ro.Served || ro.Reason != config.ReasonInvalid {
+			t.Fatalf("unknown mode outcome = %+v", ro)
+		}
+
+		draftRepo := boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 5, anrBindings)
+		draftRepo.Spec["routines"] = []any{
+			map[string]any{"name": "doc-drift", "mode": "draft", "cron": "0 4 * * 1"},
+		}
+		fourth, err := Assemble(file(t), append(specPolicies(t), catalogRT, draftRepo), Options{LastResolvedRoutines: first.ResolvedRoutines})
+		if err != nil {
+			t.Fatalf("draft mode should resolve cleanly: %v", err)
+		}
+		if ro := routineOutcome(fourth, "ai-native-ref", "doc-drift"); ro == nil || !ro.Accepted || !ro.Served {
+			t.Fatalf("draft mode outcome = %+v", ro)
+		}
+		if rc := fourth.Config.RepositoryFor("Smana/ai-native-ref"); rc == nil || rc.ResolvedRoutines["doc-drift"].Mode != config.RoutineModeDraft {
+			t.Fatalf("resolved doc-drift mode = %+v", rc)
 		}
 	})
 

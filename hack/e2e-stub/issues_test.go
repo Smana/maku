@@ -23,7 +23,7 @@ import (
 const factoryAuthor = "maku-demo[bot]"
 
 // issueSnapshotQuery is the serialization of the Issue query struct in internal/factory/forge/github.go.
-const issueSnapshotQuery = `query($name:String!$number:Int!$owner:String!){repository(owner: $owner, name: $name){issue(number: $number){number,url,title,body,state,author{__typename,login},authorAssociation,lastEditedAt,labels(first: 50){nodes{name}},timelineItems(itemTypes: [RENAMED_TITLE_EVENT], last: 1){nodes{... on RenamedTitleEvent{createdAt}}}}}}`
+const issueSnapshotQuery = `query($name:String!$number:Int!$owner:String!){repository(owner: $owner, name: $name){issue(number: $number){number,url,title,body,state,stateReason,author{__typename,login},authorAssociation,createdAt,closedAt,lastEditedAt,labels(first: 50){nodes{name}},timelineItems(itemTypes: [RENAMED_TITLE_EVENT], last: 1){nodes{... on RenamedTitleEvent{createdAt}}}}}}`
 
 type restIssue struct {
 	ID        int64     `json:"id"`
@@ -314,6 +314,9 @@ func TestIssueStoreLabelsBodyAndEvents(t *testing.T) {
 					Title        string     `json:"title"`
 					Body         string     `json:"body"`
 					State        string     `json:"state"`
+					StateReason  *string    `json:"stateReason"`
+					CreatedAt    time.Time  `json:"createdAt"`
+					ClosedAt     *time.Time `json:"closedAt"`
 					LastEditedAt *time.Time `json:"lastEditedAt"`
 					Author       struct {
 						Typename string `json:"__typename"`
@@ -335,7 +338,8 @@ func TestIssueStoreLabelsBodyAndEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue := snapshot.Data.Repository.Issue
-	if issue.Number != number || issue.Body != "new body" || issue.State != "OPEN" || issue.LastEditedAt == nil ||
+	if issue.Number != number || issue.Body != "new body" || issue.State != "OPEN" || issue.StateReason != nil ||
+		issue.CreatedAt.IsZero() || issue.ClosedAt != nil || issue.LastEditedAt == nil ||
 		issue.Author.Typename != "User" || issue.Author.Login != "dev" || len(issue.Labels.Nodes) != 2 || len(issue.Timeline.Nodes) != 0 {
 		t.Fatalf("GraphQL issue = %+v", issue)
 	}
