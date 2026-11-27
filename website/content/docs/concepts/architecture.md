@@ -21,6 +21,8 @@ the `agents` namespace is one the pod opens.
 
 For listening ports, container images, release signing, Kubernetes resources and Go package layout, see [Components, ports, images and packages]({{< relref "/docs/reference/components.md" >}}).
 
+![Maku at a glance: one task, end to end. A maintainer labels a GitHub issue. The factory controller, maku-factory, turns the issue into a task, starts an agent run in a gVisor sandbox, and opens a room on maku-broker. Every model call crosses agentgateway with per-run identity and budgets, while the agent pushes an agent/** branch and opens a pull request for review.](/images/diagrams/agent-factory-overview.svg)
+
 ## Components
 
 | Component | Runs | Does |

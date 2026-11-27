@@ -16,7 +16,7 @@ Every way to talk to Maku, on one page. Labels and comments go on the GitHub iss
 | `harness:<name>` | Before `factory/ready`: a maintainer picks `harness:opencode` or `harness:openhands` (no label runs the factory's default) |
 | `factory/stop` | Ends the task's runs; its branch stays. On the pinned control issue, it stops every task |
 | `factory/revert` | On a pull request merged automatically, within 7 days: opens the revert |
-| `factory/publish` | On a RunLore proposal's stub issue (`factory/proposed`): files the fix issue ([RunLore](https://github.com/Smana/runlore)) |
+| `factory/publish` | On a RunLore proposal's stub issue (`factory/proposed`): files the fix issue ([RunLore]({{< relref "/docs/concepts/runlore.md" >}})) |
 | `plan-first` | The scoper writes a plan and waits for a maintainer's approval before any change |
 | `report` | Findings on the issue, no branch |
 | `factory/review` | On a person's pull request: one review verdict, no push |
