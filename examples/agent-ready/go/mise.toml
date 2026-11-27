@@ -1,0 +1,4 @@
+# The checks' tools, pinned: the sandbox installs exactly these before it runs a step.
+[tools]
+go = "1.27.4"
+golangci-lint = "2.14.0"

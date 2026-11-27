@@ -1,0 +1,13 @@
+# What an agent runs before it pushes: the CI's fast subset. Read from the default branch only.
+# Maven Central needs the maven registry access on the repository's Repository object. It is not
+# in this release yet (docs/make-a-repository-ready.md): until it is, the resolve step fails on
+# egress and the run says so.
+version: 1
+timeoutMinutes: 15
+tools: [java, maven]
+definedBy: [mise.toml, pom.xml, .github/workflows/ci.yaml]
+steps:
+  - {name: resolve, run: mvn -B -q dependency:go-offline, ci: test, stopOnFailure: true}
+  - {name: unit, run: mvn -B -o test, ci: test}
+ciOnly:
+  - {check: test, part: "mvn verify (Testcontainers)", why: "needs Docker; the sandbox has none"}

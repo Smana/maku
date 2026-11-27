@@ -1,0 +1,12 @@
+# What an agent runs before it pushes: the CI's fast subset. Read from the default branch only.
+# The repository's Repository object names the registry access a run gets: pypi here.
+version: 1
+timeoutMinutes: 10
+tools: [python, uv]
+definedBy: [mise.toml, pyproject.toml, uv.lock, .github/workflows/ci.yaml]
+steps:
+  - {name: sync, run: uv sync --frozen, ci: test, stopOnFailure: true}
+  - {name: unit, run: uv run pytest -m "not warehouse", ci: test}
+  - {name: lint, run: uv run ruff check ., ci: lint}
+ciOnly:
+  - {check: test, part: "pytest -m warehouse", why: "needs the warehouse's credentials; the local tests use DuckDB fixtures instead"}

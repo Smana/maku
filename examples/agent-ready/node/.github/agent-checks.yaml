@@ -1,0 +1,13 @@
+# What an agent runs before it pushes: the CI's fast subset. Read from the default branch only.
+# The repository's Repository object names the registry access a run gets: npm here.
+version: 1
+timeoutMinutes: 12
+tools: [node]
+definedBy: [mise.toml, package.json, package-lock.json, vitest.config.ts, .github/workflows/ci.yaml]
+steps:
+  - {name: install, run: npm ci --no-audit --no-fund, ci: test, stopOnFailure: true}
+  - {name: types, run: npx tsc --noEmit, ci: test}
+  - {name: unit, run: npx vitest run, ci: test}
+  - {name: lint, run: npx eslint ., ci: lint}
+ciOnly:
+  - {check: e2e, part: "Playwright", why: "its browser download host is outside the sandbox's registries"}
