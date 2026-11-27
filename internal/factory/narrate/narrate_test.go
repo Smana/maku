@@ -1056,7 +1056,6 @@ func TestEndedSaysTheSpendInDollars(t *testing.T) {
 	}
 }
 
-
 // Developer review gap 7: pushing to the agent's branch blocks the merge bot for good, so the
 // escalation never suggests it.
 func TestTheEscalationHintSuggestsNoPush(t *testing.T) {
