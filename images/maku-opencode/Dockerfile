@@ -95,6 +95,10 @@ ENV AGENT_HARNESS=opencode
 ENV HOME=/workspace/.opencode/home
 ENV OPENCODE_CONFIG_DIR=/workspace/.opencode/config
 ENV OPENCODE_DISABLE_CLAUDE_CODE=1
+# No boot fetches the run's egress refuses: OpenCode's model catalog (models.opencode.ai, also set by
+# the driver) and LiteLLM's price map, should any Python here load it.
+ENV OPENCODE_DISABLE_MODELS_FETCH=true
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 ENV GIT_TERMINAL_PROMPT=0
 USER 10001
 ENTRYPOINT ["tini", "--", "/usr/local/bin/agent-run"]

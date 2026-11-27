@@ -18,7 +18,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # its toolchain installs, which is all this suite runs, so they are allowed here throughout.
 declare -A HOSTS=(
   [github]="github.com api.github.com"
-  [install]="release-assets.githubusercontent.com objects.githubusercontent.com raw.githubusercontent.com"
+  [install]="release-assets.githubusercontent.com objects.githubusercontent.com"
   [pypi]="pypi.org files.pythonhosted.org"
   [npm]="registry.npmjs.org"
   [golang]="proxy.golang.org sum.golang.org dl.google.com"

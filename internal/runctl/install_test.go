@@ -14,13 +14,14 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
 )
 
-var releaseHosts = []string{"release-assets.githubusercontent.com", "objects.githubusercontent.com", "raw.githubusercontent.com"}
+var releaseHosts = []string{"release-assets.githubusercontent.com", "objects.githubusercontent.com"}
 
 func checksRun(mut ...func(*v1alpha1.AgentRun)) *v1alpha1.AgentRun {
 	return run("run-abcdefgh", append([]func(*v1alpha1.AgentRun){func(r *v1alpha1.AgentRun) { r.Spec.Loop.Checks = true }}, mut...)...)
 }
 
-// The always-on github profile is git and the API; GitHub's release and raw hosts are the install set.
+// The always-on github profile is git and the API; GitHub's release hosts are the install set, and its
+// raw and tarball hosts are in no set.
 func TestDefaultGithubProfileIsGitAndTheAPI(t *testing.T) {
 	c := testConfig(t)
 	if got := c.EgressProfiles["github"]; !slices.Equal(got, []string{"github.com", "api.github.com"}) {
@@ -35,9 +36,14 @@ func TestDefaultGithubProfileIsGitAndTheAPI(t *testing.T) {
 	if w := c.Warnings(); len(w) != 0 {
 		t.Fatalf("the defaults warn of nothing: %v", w)
 	}
-	for _, h := range append(slices.Clone(releaseHosts), "codeload.github.com") {
+	for _, h := range append(slices.Clone(releaseHosts), "codeload.github.com", "raw.githubusercontent.com") {
 		if slices.Contains(c.FQDNs(checksRun()), h) {
 			t.Errorf("%s is not in a run's set", h)
+		}
+	}
+	for _, h := range []string{"codeload.github.com", "raw.githubusercontent.com"} {
+		if slices.Contains(c.InstallFQDNs(checksRun()), h) {
+			t.Errorf("%s is not in the install set", h)
 		}
 	}
 }
@@ -112,7 +118,7 @@ func ctrEnv(ctr corev1.Container) map[string]corev1.EnvVar {
 func TestKubernetesPodCarriesTheInstallSet(t *testing.T) {
 	c := kubeConfig(t)
 	p := Pod(checksRun(), c, testModel, "abcdefgh")
-	if got := p.Annotations[EgressInstallAnnotation]; !strings.HasPrefix(got, "release-assets.githubusercontent.com:443,objects.githubusercontent.com:443,raw.githubusercontent.com:443,pypi.org:443") {
+	if got := p.Annotations[EgressInstallAnnotation]; !strings.HasPrefix(got, "release-assets.githubusercontent.com:443,objects.githubusercontent.com:443,pypi.org:443") {
 		t.Fatalf("install annotation %q", got)
 	}
 	for _, h := range releaseHosts {

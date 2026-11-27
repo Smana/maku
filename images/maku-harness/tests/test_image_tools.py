@@ -21,6 +21,10 @@ class ImageToolsTest(unittest.TestCase):
                              capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(out, yaml.__version__)
 
+    def test_litellm_reads_its_bundled_cost_map(self):
+        # No boot fetch from raw.githubusercontent.com, which the run's egress refuses after its install.
+        self.assertEqual(os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP"), "True")
+
     def test_rsync_and_agent_checks_are_on_path(self):
         self.assertIsNotNone(shutil.which("rsync"))
         self.assertEqual(os.path.realpath(shutil.which("agent-checks")), "/opt/agent/agent_checks.py")

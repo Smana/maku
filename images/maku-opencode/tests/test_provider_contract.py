@@ -160,6 +160,7 @@ class RealServerContractTest(unittest.TestCase):
         d1.paths = opencode_driver.oc_config.workspace_paths(d1.root)
         d1.password = "pw-check"
         self.assertNotIn("OTEL_EXPORTER_OTLP_ENDPOINT", d1._server_env())
+        self.assertEqual(d1._server_env()["OPENCODE_DISABLE_MODELS_FETCH"], "true")
 
         d1.start()
         try:
