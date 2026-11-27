@@ -100,6 +100,11 @@ data:
     browser:
       resources: {{- toYaml $c.browser.resources | nindent 8 }}
     {{- end }}
+    {{- with ($c.runtime | default dict).allowedImages }}
+    # The image prefixes a Repository's spec.runtime.image may start with (developer review gap 2).
+    runtime:
+      allowedImages: {{- toYaml . | nindent 8 }}
+    {{- end }}
     {{- $tr := $c.tracing | default dict }}
     {{- $col := $tr.collector | default dict }}
     {{- if $tr.otlpEndpoint }}

@@ -4,6 +4,7 @@ package reconciler
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -62,5 +63,21 @@ func TestChecksJoinTheLoopPolicyInOneSpecLoop(t *testing.T) {
 	loop, _, _ = unstructured.NestedMap(runs.Build(runwatch.DefaultKind, runs.Spec{Checks: true}).Object, "spec", "loop")
 	if !reflect.DeepEqual(loop, map[string]any{"checks": true}) {
 		t.Fatalf("checks-only loop %v", loop)
+	}
+}
+
+// Developer review gap 2: the implementer, tester and reviewer take the repository's runtime; a
+// triager stays the harness image, small.
+func TestTheRepositorysRuntimeReachesItsRuns(t *testing.T) {
+	g := newRig(t)
+	image := "ghcr.io/acme/maku-harness-jvm@sha256:" + strings.Repeat("d", 64)
+	g.r.Cfg.Current().Repositories[0].Runtime = config.Runtime{Image: image, Size: "large"}
+	tk := issueTask("3buqdlot", 7, "fix")
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
+	cfg := g.r.Cfg.Current()
+	for _, s := range []runs.Spec{g.r.implementerSpec(cfg, tk, "brief"), g.r.testerSpec(cfg, tk, "brief"), g.r.verifierSpec(cfg, tk, "reviewer")} {
+		if s.Image != image || s.Size != "large" {
+			t.Errorf("%s: %q %q", s.Role, s.Image, s.Size)
+		}
 	}
 }

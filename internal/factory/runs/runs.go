@@ -6,6 +6,7 @@
 package runs
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -184,6 +185,9 @@ type Spec struct {
 	PRDraft bool
 	// Routine and RoutinePromptSHA are written as AnnRoutine / AnnRoutinePromptSHA at CREATE only.
 	Routine, RoutinePromptSHA string
+	// Size is spec.size, small when empty; Image is spec.image, the harness image when empty: the
+	// repository's runtime (developer review gap 2).
+	Size, Image string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -251,6 +255,9 @@ func (s Spec) Validate() error {
 	if s.Harness != "" && !config.ValidHarness(s.Harness) {
 		errs = append(errs, fmt.Errorf("harness %q is openhands, opencode or empty", s.Harness))
 	}
+	if s.Size != "" && !slices.Contains(config.RunSizes, s.Size) {
+		errs = append(errs, fmt.Errorf("size %q is not one of %v", s.Size, config.RunSizes))
+	}
 	if s.Screenshots < 0 || s.Screenshots > config.MaxScreenshotsCeiling {
 		errs = append(errs, fmt.Errorf("screenshots %d is not between 0 and %d", s.Screenshots, config.MaxScreenshotsCeiling))
 	}
@@ -300,7 +307,7 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	spec := map[string]any{
 		"role": s.Role, "repository": s.Repository, "principal": s.Principal, "dataClass": s.DataClass,
-		"size": "small", "model": s.Model, "baseRef": s.BaseRef, "branch": s.Branch, "task": task,
+		"size": cmp.Or(s.Size, "small"), "model": s.Model, "baseRef": s.BaseRef, "branch": s.Branch, "task": task,
 		"budget": map[string]any{"maxTokens": s.MaxTokens, "maxMinutes": s.MaxMinutes},
 	}
 	if s.Branch == "" && s.CoordinationManifest != "" { // MR10: an integration run writes no branch
@@ -320,6 +327,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Harness != "" {
 		spec["harness"] = s.Harness
+	}
+	if s.Image != "" {
+		spec["image"] = s.Image
 	}
 	if s.Screenshots > 0 {
 		spec["screenshots"] = map[string]any{"enabled": true, "maxScreenshots": int64(s.Screenshots)}

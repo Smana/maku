@@ -733,3 +733,28 @@ func TestPRDraftAndRoutineProvenance(t *testing.T) {
 		}
 	}
 }
+
+// Developer review gap 2: the repository's runtime size and image reach the claim; none is small
+// and the harness image.
+func TestBuildWritesTheRuntime(t *testing.T) {
+	s := spec()
+	u := Build(runwatch.DefaultKind, s)
+	if got, _, _ := unstructured.NestedString(u.Object, "spec", "size"); got != "small" {
+		t.Errorf("default size %q", got)
+	}
+	if _, found, _ := unstructured.NestedString(u.Object, "spec", "image"); found {
+		t.Error("no image is written by default")
+	}
+	s.Size, s.Image = "medium", "ghcr.io/acme/h@sha256:"+strings.Repeat("c", 64)
+	u = Build(runwatch.DefaultKind, s)
+	if got, _, _ := unstructured.NestedString(u.Object, "spec", "size"); got != "medium" {
+		t.Errorf("size %q", got)
+	}
+	if got, _, _ := unstructured.NestedString(u.Object, "spec", "image"); got != s.Image {
+		t.Errorf("image %q", got)
+	}
+	s.Size = "huge"
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "size") {
+		t.Errorf("a size the claim refuses: %v", err)
+	}
+}

@@ -141,6 +141,16 @@ spec:
                 x-kubernetes-validations:
                 - message: harness is immutable
                   rule: self == oldSelf
+              image:
+                description: |-
+                  Image replaces the OpenHands harness image, pinned by digest: the repository's runtime image
+                  (developer review gap 2). The run-controller places it only under its runtime.allowedImages.
+                maxLength: 512
+                pattern: ^[a-z0-9][a-z0-9._/:-]*@sha256:[a-f0-9]{64}$
+                type: string
+                x-kubernetes-validations:
+                - message: image is immutable
+                  rule: self == oldSelf
               loop:
                 description: 'AgentRunLoop is the run''s loop policy, fixed at creation
                   (v3: the loop policy''s claim object).'

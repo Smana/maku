@@ -205,6 +205,11 @@ type RepositorySpec struct {
 	// write access start one where the factory enforces per-person daily caps.
 	// +optional
 	Access config.RepositoryAccess `json:"access,omitzero"`
+	// Runtime is the image and size of the repository's implementer, tester and reviewer runs. The
+	// image is built from the harness image, pinned by digest, and allowed by the run-controller's
+	// runtime.allowedImages; the network stays the named profiles of checks.egress.
+	// +optional
+	Runtime config.Runtime `json:"runtime,omitzero"`
 }
 
 // RepositoryStatus is what the factory made of its Repository (D11, narrowed for v1).
