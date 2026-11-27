@@ -93,7 +93,7 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 		repository := str(m, "name")
 		name := ObjectName(repository, repoNames)
 		rs := map[string]any{"factoryRef": factory, "repository": repository}
-		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "workflow", "classAuthority", "privateCode"} {
+		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "routines", "workflow", "classAuthority", "privateCode"} {
 			if v, ok := m[k]; ok {
 				rs[k] = v
 			}

@@ -72,6 +72,81 @@ type skipMetricEntry struct {
 	reason  string
 }
 
+type routinePausedMetrics interface {
+	RoutinePaused(ctx context.Context, repository, routine string, paused bool)
+}
+
+type routineStateLister interface {
+	List(ctx context.Context) (map[string]map[string]upkeep.RoutineState, error)
+}
+
+func (s *Scheduler) syncRoutinePaused(ctx context.Context, cfg *config.Config) {
+	if cfg == nil || s.RoutineMetrics == nil {
+		return
+	}
+	pm, ok := s.RoutineMetrics.(routinePausedMetrics)
+	if !ok {
+		return
+	}
+	repos := cfg.Repos()
+	hasAny := false
+	for i := range repos {
+		if len(candidateRoutineNames(&repos[i])) > 0 {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
+		return
+	}
+
+	var states map[string]map[string]upkeep.RoutineState
+	useList := false
+	if s.State != nil {
+		if lister, ok := s.State.(routineStateLister); ok {
+			var err error
+			states, err = lister.List(ctx)
+			if err != nil {
+				s.log().Warn("routine paused sync list failed", "err", err)
+				return
+			}
+			useList = true
+		}
+	}
+
+	for i := range repos {
+		rc := &repos[i]
+		names := candidateRoutineNames(rc)
+		if len(names) == 0 {
+			continue
+		}
+		var repoStates map[string]upkeep.RoutineState
+		if useList {
+			repoStates = states[strings.ToLower(rc.Name)]
+		}
+		for _, name := range names {
+			declPaused := rc.ResolvedRoutines[name].Paused
+			if b, ok := findBinding(rc.Routines, name); ok && b.Paused {
+				declPaused = true
+			}
+			statePaused := false
+			if s.State != nil {
+				if useList {
+					statePaused = repoStates[name].Paused
+				} else {
+					st, err := s.State.Get(ctx, rc.Name, name)
+					if err != nil {
+						s.log().Warn("routine paused sync state read failed", "repository", rc.Name, "routine", name, "err", err)
+						continue
+					}
+					statePaused = st.Paused
+				}
+			}
+			pm.RoutinePaused(ctx, rc.Name, name, declPaused || statePaused)
+		}
+	}
+}
+
 type routineProbeResult struct {
 	found          bool
 	text           string

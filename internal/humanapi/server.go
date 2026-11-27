@@ -224,6 +224,9 @@ type Server struct {
 	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the
 	// settings pages and the policy API. Nil serves neither: each path is the mux's 404.
 	Policy *Policy
+	// Routines forwards /api/routines/* to the factory's /v1/routines* and serves the /routines*
+	// SPA shell routes. Nil serves neither: each path is the mux's 404.
+	Routines RoutinesGateway
 	// RoomActs is human.roomActs (phase G): the room acts enabled over a room's connection.
 	// Nil takes config.DefaultRoomActs ([answer, retry]).
 	RoomActs []string
@@ -323,6 +326,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/ws", s.ws)
 	if s.Policy != nil {
 		s.policyRoutes(mux, index)
+	}
+	if s.Routines != nil {
+		s.routineRoutes(mux, index)
 	}
 	if s.SlackLink != nil {
 		s.slackLinkRoutes(mux)

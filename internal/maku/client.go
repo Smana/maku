@@ -764,8 +764,8 @@ func (c Client) CoordinationDraft(ctx context.Context, parent string, in coordin
 	return out, json.Unmarshal(raw, &out)
 }
 
-// coordCodeRE is a coordination refusal's bounded code; anything else is "refused".
-var coordCodeRE = regexp.MustCompile(`^[a-z][a-z_]{0,47}$`)
+// coordCodeRE is a coordination/routine refusal's bounded code; anything else is "refused".
+var coordCodeRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
 
 // Stages reads GET /api/stages?repository=<owner/name>[&class=<c>][&last=<n>] from the broker (WR5).
 func (c Client) Stages(ctx context.Context, repository, class string, last int) (stages.Report, error) {

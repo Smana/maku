@@ -550,6 +550,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
+	routineState := &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log}
+	syncRoutinePaused(ctx, cfg, routineState, m)
 	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs.Kind, MeteredBy: meteredBy(cfg)}
 	perRun := perRunTokens(cfg, live.Current, mgr.GetClient(), mgr.GetCache(), ledgers, ns, m, log)
 	if perRun != nil {
@@ -869,9 +871,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			},
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log})
 	}
-	wired := &wiring{log: log, conns: conns, pollers: pollers, m: m, kick: fenced.Kick}
+	sched := newRoutineSchedulerWithState(conns.schedule, mgr.GetClient(), mgr.GetAPIReader(), ledgers, routineState, ns, live, startable, stopped, m, log)
+	apiSrv.RoutineState = routineState
+	apiSrv.RoutineTrigger = routineTrigger{s: sched}
+	apiSrv.Tasks = mgr.GetClient()
+	wired := &wiring{log: log, conns: conns, pollers: pollers, m: m, routineState: routineState, kick: fenced.Kick}
 	for _, r := range append(runnables,
-		newRoutineScheduler(conns.schedule, mgr.GetClient(), mgr.GetAPIReader(), ledgers, ns, live, startable, stopped, m, log),
+		sched,
 		// MC10: off unless a class adopts; leader-only, through the Scheduler's connections.
 		&intake.Adopter{Clients: conns.schedule, Owned: startable, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
@@ -1032,18 +1038,26 @@ type publishMetrics interface {
 	ConfigWireError(ctx context.Context, repository string)
 	ListRepositories(names ...string)
 	SetRoutines(byRepo map[string][]string)
+	RoutinePaused(ctx context.Context, repository, routine string, paused bool)
 	ChargePeople(on bool)
 	RunBudgetUSD(ctx context.Context, tier string, usd float64)
 }
 
 func newRoutineScheduler(clients func(string) (intake.ScheduleForge, intake.ScheduleMerger, bool), k8sClient client.Client, apiReader client.Reader, ledgers client.Client, ns string, live config.Source, startable func(string) bool, stopped func(context.Context) bool, m *fmetrics.Set, log *slog.Logger) *intake.Scheduler {
+	return newRoutineSchedulerWithState(clients, k8sClient, apiReader, ledgers, nil, ns, live, startable, stopped, m, log)
+}
+
+func newRoutineSchedulerWithState(clients func(string) (intake.ScheduleForge, intake.ScheduleMerger, bool), k8sClient client.Client, apiReader client.Reader, ledgers client.Client, state *upkeep.StateStore, ns string, live config.Source, startable func(string) bool, stopped func(context.Context) bool, m *fmetrics.Set, log *slog.Logger) *intake.Scheduler {
+	if state == nil {
+		state = &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log}
+	}
 	return &intake.Scheduler{
 		Clients:        clients,
 		Owned:          startable,
 		Client:         k8sClient,
 		APIReader:      apiReader,
 		Ledger:         ledgers,
-		State:          &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log},
+		State:          state,
 		RoutineMetrics: m,
 		Namespace:      ns,
 		Cfg:            live,
@@ -1084,11 +1098,12 @@ func routinesByRepo(cfg *config.Config) map[string][]string {
 // wiring is what follows the served repository set (D12): the connections, the issue pollers,
 // the repository list of the metrics and the fence.
 type wiring struct {
-	log     *slog.Logger
-	conns   *repoConns
-	pollers interface{ Sync(repos []string) }
-	m       publishMetrics
-	kick    func() // a fence refresh, not waiting for it; nil kicks nothing
+	log          *slog.Logger
+	conns        *repoConns
+	pollers      interface{ Sync(repos []string) }
+	m            publishMetrics
+	routineState *upkeep.StateStore
+	kick         func() // a fence refresh, not waiting for it; nil kicks nothing
 
 	// servedMu holds a served() from reading the set to applying it, so a retry that read the set
 	// before a publish changed it cannot apply it after the publish's.
@@ -1136,6 +1151,7 @@ func onPublish(ctx context.Context, w *wiring) func(prev, next *config.Config) {
 		}
 		names := w.served()
 		w.m.SetRoutines(routinesByRepo(next))
+		syncRoutinePaused(ctx, next, w.routineState, w.m)
 		w.m.ChargePeople(next.Budgets.PerPerson.Enabled)
 		budgets := meter.RunUSD(next)
 		for tier := range meter.RunUSD(prev) {
@@ -1484,5 +1500,77 @@ func handoffStarts(broker *rooms.Client) intake.HandoffStarts {
 		}
 		return intake.HandoffStart{Handoff: h.Handoff, Repository: h.Repository, Issue: h.Issue, Sub: h.Sub,
 			Labels: h.Labels, StartedAt: h.StartedAt}, true, nil
+	}
+}
+
+type routineTrigger struct {
+	s *intake.Scheduler
+}
+
+func (r routineTrigger) TriggerManual(ctx context.Context, repo, name, modeOverride, login, idempotencyKey string) (*factoryv1.Task, error) {
+	tk, err := r.s.TriggerManual(ctx, repo, name, modeOverride, login, idempotencyKey)
+	if err != nil {
+		return nil, mapRoutineTriggerError(err)
+	}
+	return tk, nil
+}
+
+var routineErrorMap = []struct {
+	from error
+	to   error
+}{
+	{intake.ErrKillSwitch, api.ErrRoutineKillSwitch},
+	{intake.ErrRepoNotFound, api.ErrRoutineRepoNotFound},
+	{intake.ErrRoutineNotFound, api.ErrRoutineNotFound},
+	{intake.ErrRepoNotOwned, api.ErrRoutineRepoNotOwned},
+	{intake.ErrRoutineDisabled, api.ErrRoutineDisabled},
+	{intake.ErrModePhase2, api.ErrRoutineModePhase2},
+	{intake.ErrInvalidMode, api.ErrRoutineInvalidMode},
+	{intake.ErrModeWidening, api.ErrRoutineModeWidening},
+	{intake.ErrInvalidIdempotencyKey, api.ErrRoutineBadIdempotencyKey},
+	{intake.ErrIdempotencyConflict, api.ErrRoutineIdempotencyConflict},
+	{intake.ErrOpenCap, api.ErrRoutineOpenCap},
+	{intake.ErrBudgetExhausted, api.ErrRoutineBudgetExhausted},
+	{intake.ErrProbeEmpty, api.ErrRoutineProbeEmpty},
+	{intake.ErrProbeRefused, api.ErrRoutineProbeRefused},
+}
+
+func mapRoutineTriggerError(err error) error {
+	for _, m := range routineErrorMap {
+		if errors.Is(err, m.from) {
+			return fmt.Errorf("%w: %w", m.to, err)
+		}
+	}
+	return err
+}
+
+func syncRoutinePaused(ctx context.Context, cfg *config.Config, state *upkeep.StateStore, m interface {
+	RoutinePaused(context.Context, string, string, bool)
+}) {
+	if cfg == nil || m == nil {
+		return
+	}
+	var states map[string]map[string]upkeep.RoutineState
+	if state != nil {
+		var err error
+		states, err = state.List(ctx)
+		if err != nil {
+			return
+		}
+	}
+	for _, rc := range cfg.Repos() {
+		repoStates := states[strings.ToLower(rc.Name)]
+		seen := make(map[string]bool, len(rc.ResolvedRoutines)+len(rc.Routines))
+		for name, rr := range rc.ResolvedRoutines {
+			seen[name] = true
+			m.RoutinePaused(ctx, rc.Name, name, rr.Paused || repoStates[name].Paused)
+		}
+		for _, b := range rc.Routines {
+			if seen[b.Name] {
+				continue
+			}
+			seen[b.Name] = true
+			m.RoutinePaused(ctx, rc.Name, b.Name, b.Paused || repoStates[b.Name].Paused)
+		}
 	}
 }

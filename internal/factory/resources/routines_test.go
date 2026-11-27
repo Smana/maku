@@ -385,6 +385,88 @@ func TestMigrateSchedulesAndEqual(t *testing.T) {
 	}
 }
 
+func TestMigratePreservesRoutinesAndEqualDetectsDroppedRoutines(t *testing.T) {
+	raw := strings.Replace(string(file(t)),
+		"    classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {}}\n",
+		"    classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {}}\n    routines:\n      - name: extra-routine\n        mode: disabled\n        cron: \"0 4 * * 1\"\n",
+		1)
+	if !strings.Contains(raw, "extra-routine") {
+		t.Fatal("failed to construct config with pre-existing routines")
+	}
+	before, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, residual, err := Migrate([]byte(raw), "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoObj := object(objs, KindRepository, "cloud-native-ref")
+	if repoObj == nil {
+		t.Fatal("missing Repository object")
+	}
+	if _, ok := repoObj.Spec["routines"]; !ok {
+		t.Fatalf("Migrate dropped pre-existing routines[] from Repository spec: %+v", repoObj.Spec)
+	}
+
+	after, err := Assemble(residual, objs)
+	if err != nil || len(after.Refused) != 0 {
+		t.Fatalf("Assemble failed: %v %+v", err, after.Refused)
+	}
+	if diffs := Equal(before, after.Config); len(diffs) != 0 {
+		t.Fatalf("Equal reported unexpected diffs when routines[] preserved: %v", diffs)
+	}
+
+	// Dropping routines[] from after must be detected by Equal even when before came from config.Parse.
+	dropped := *after.Config
+	dropped.Repositories = slices.Clone(after.Config.Repositories)
+	dropped.Repositories[0].Routines = nil
+	if diffs := Equal(before, &dropped); len(diffs) == 0 {
+		t.Fatal("Equal failed to detect dropped pre-existing routines[] when before came from config.Parse")
+	}
+
+	// Also verify when before has BOTH schedules and pre-existing routines, Equal detects dropped routine binding.
+	beforeWithSched := *before
+	beforeWithSched.Repositories = slices.Clone(before.Repositories)
+	beforeWithSched.Repositories[0].Schedules = []config.Schedule{
+		{Name: "weekly-docs", Cron: "0 6 * * 1", Text: "Review docs."},
+	}
+	afterWithSched := *after.Config
+	afterWithSched.Repositories = slices.Clone(after.Config.Repositories)
+	afterWithSched.Repositories[0].ResolvedRoutines = map[string]config.ResolvedRoutine{
+		"weekly-docs": {
+			Name:          "weekly-docs",
+			Mode:          config.RoutineModePR,
+			Cron:          "0 6 * * 1",
+			DefaultPrompt: "Review docs.",
+			Workflow:      config.WorkflowQuick,
+			DataClass:     before.Defaults.DataClass,
+			Probe:         config.ProbeSpec{Kind: config.ProbeNone},
+			MaxOpenPRs:    1,
+		},
+	}
+	afterWithSched.Repositories[0].Routines = append(slices.Clone(afterWithSched.Repositories[0].Routines), config.RoutineBinding{
+		Name: "weekly-docs",
+		Mode: config.RoutineModePR,
+		Cron: "0 6 * * 1",
+	})
+	if diffs := Equal(&beforeWithSched, &afterWithSched); len(diffs) != 0 {
+		t.Fatalf("Equal reported unexpected diffs when both schedule and pre-existing routine preserved: %v", diffs)
+	}
+	afterMissingPreExisting := afterWithSched
+	afterMissingPreExisting.Repositories = slices.Clone(afterWithSched.Repositories)
+	afterMissingPreExisting.Repositories[0].Routines = []config.RoutineBinding{
+		{Name: "weekly-docs", Mode: config.RoutineModePR, Cron: "0 6 * * 1"},
+	}
+	if diffs := Equal(&beforeWithSched, &afterMissingPreExisting); len(diffs) == 0 {
+		t.Fatal("Equal failed to detect dropped pre-existing routine binding alongside migrated schedules")
+	}
+}
+
 func mapsClone[K comparable, V any](m map[K]V) map[K]V {
 	out := make(map[K]V, len(m))
 	for k, v := range m {

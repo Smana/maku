@@ -4,6 +4,7 @@ import { mountApprovalMemory } from "./approval-memory";
 import { fetchRoomctl } from "./dashboards";
 import { mountInstallBanner } from "./install-banner";
 import { mountRoom } from "./room";
+import { isRoutines, mountRoutines } from "./routines";
 import { isSettings, mountSettings, settingsFrame } from "./settings";
 import { initTheme } from "./theme";
 import { listRooms } from "./view";
@@ -27,5 +28,6 @@ if (m) {
 }
 // Approval memory is a settings section: the same header and tabs, its own page in main.
 else if (location.pathname === "/settings/approval-memory") mountApprovalMemory(settingsFrame(app, "Approval memory", "/settings/approval-memory", theme), fetch);
+else if (isRoutines(location.pathname)) void mountRoutines(app, location.pathname, fetch, theme);
 else if (isSettings(location.pathname)) void mountSettings(app, location.pathname, fetch, theme);
 else void listRooms(app, fetch, {}, theme);

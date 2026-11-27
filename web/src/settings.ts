@@ -133,7 +133,7 @@ function link(href: string, text: string): HTMLAnchorElement {
 }
 
 // The settings' sections, as tabs: every settings page and approval memory carry the same row.
-const SECTIONS: [href: string, label: string][] = [["/", "Rooms"], ["/settings", "Settings"], ["/settings/merge-policies", "Merge policies"],
+const SECTIONS: [href: string, label: string][] = [["/", "Rooms"], ["/routines", "Routines"], ["/settings", "Settings"], ["/settings/merge-policies", "Merge policies"],
   ["/settings/evidence", "Evidence"], ["/settings/approval-memory", "Approval memory"]];
 export type Section = (typeof SECTIONS)[number][0];
 

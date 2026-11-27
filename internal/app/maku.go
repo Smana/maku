@@ -94,6 +94,18 @@ const makuUsage = `usage: maku <command>
                                   per-stage cost and effect report for ended tasks of a repository
   workflow dry-run <name> [--file definition.yaml] [--repository owner/name] [--last 20] [--json]
                                   simulate a workflow definition over recent ended tasks and estimate cost (stores nothing)
+  routine list [--repo owner/name] [--json]
+                                  list upkeep routines configured on repositories you can read
+  routine status <repo> <name> [--json]
+                                  show one routine's configuration, merge rate, cost and next run
+  routine run <repo> <name> [--mode pr|propose|draft] [--idempotency-key KEY] [--json]
+                                  trigger a manual routine run
+  routine pause <repo> <name> [--reason TEXT] [--json]
+                                  pause cron ticks for a routine operationally
+  routine resume <repo> <name> [--json]
+                                  clear operational pause for a routine
+  routine history <repo> <name> [--json]
+                                  show recent routine runs and skip diagnostics
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
   install --print --out DIR [--answers FILE] [--force] [--no-wait]
                                   ask the install's questions (or read them from FILE) and write the values,
@@ -125,10 +137,11 @@ const makuUsage = `usage: maku <command>
   demo app --dir DIR [--owner ORG] [--name NAME]
                                   create the laptop demo's GitHub App through GitHub's manifest flow and write its
                                   app_id, private_key and slug into DIR
-  config migrate --from FILE [--residual FILE [--force]] [--namespace NS]
+  config migrate --from FILE [--out DIR] [--residual FILE [--force]] [--namespace NS]
                                   convert a config file into a
-                                  Factory, bound Repositories and one MergePolicy per class on stdout,
-                                  offline; refused unless every resolved class is unchanged
+                                  Factory, bound Repositories, MergePolicies and Routines (from schedules) on
+                                  stdout (or individual files in DIR), offline; refused unless every resolved
+                                  class and routine is unchanged
   config validate --config FILE [--base-ref REF | --base-config FILE --base FILE...] [--expect-unchanged]
                   [--resolved] [--allow-refused-bindings] MANIFEST...
                                   check manifests against a config file the way the factory would, offline;
@@ -302,7 +315,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "workflow", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "workflow", "routine", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -380,6 +393,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.stages(ctx, c, args)
 	case "workflow":
 		return r.workflow(ctx, c, args)
+	case "routine":
+		return r.routine(ctx, c, args)
 	case "status":
 		return r.status(ctx, c, args)
 	case "changes":

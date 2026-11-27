@@ -15,8 +15,11 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -136,17 +139,25 @@ func TestRepoConnsSyncReconnectsTheMergerWhenItsNeedChanges(t *testing.T) {
 
 // fakePublishMetrics records what a publish re-derives.
 type fakePublishMetrics struct {
-	repos    []string
-	routines map[string][]string
-	people   bool
-	budgets  map[string]float64
-	holdouts []string
-	cleared  []string
-	wireErrs []string
+	repos         []string
+	routines      map[string][]string
+	routinePaused map[string]bool
+	people        bool
+	budgets       map[string]float64
+	holdouts      []string
+	cleared       []string
+	wireErrs      []string
 }
 
 func (m *fakePublishMetrics) SetRoutines(byRepo map[string][]string) {
 	m.routines = maps.Clone(byRepo)
+}
+
+func (m *fakePublishMetrics) RoutinePaused(_ context.Context, repository, routine string, paused bool) {
+	if m.routinePaused == nil {
+		m.routinePaused = map[string]bool{}
+	}
+	m.routinePaused[repository+"/"+routine] = paused
 }
 
 func (m *fakePublishMetrics) ClassWithHoldout(_ context.Context, repo, class string) {
@@ -517,5 +528,84 @@ func TestRoutineSchedulerAndReconcilerWiring(t *testing.T) {
 	rec := &reconciler.Reconciler{Metrics: m, RoutineMetrics: m}
 	if rec.RoutineMetrics == nil {
 		t.Fatal("Reconciler.RoutineMetrics must accept *fmetrics.Set")
+	}
+}
+
+func TestRoutineTriggerSentinelMapping(t *testing.T) {
+	wantPairs := []struct {
+		intakeErr error
+		apiErr    error
+	}{
+		{intake.ErrKillSwitch, api.ErrRoutineKillSwitch},
+		{intake.ErrRepoNotFound, api.ErrRoutineRepoNotFound},
+		{intake.ErrRoutineNotFound, api.ErrRoutineNotFound},
+		{intake.ErrRepoNotOwned, api.ErrRoutineRepoNotOwned},
+		{intake.ErrRoutineDisabled, api.ErrRoutineDisabled},
+		{intake.ErrModePhase2, api.ErrRoutineModePhase2},
+		{intake.ErrInvalidMode, api.ErrRoutineInvalidMode},
+		{intake.ErrModeWidening, api.ErrRoutineModeWidening},
+		{intake.ErrInvalidIdempotencyKey, api.ErrRoutineBadIdempotencyKey},
+		{intake.ErrIdempotencyConflict, api.ErrRoutineIdempotencyConflict},
+		{intake.ErrOpenCap, api.ErrRoutineOpenCap},
+		{intake.ErrBudgetExhausted, api.ErrRoutineBudgetExhausted},
+		{intake.ErrProbeEmpty, api.ErrRoutineProbeEmpty},
+		{intake.ErrProbeRefused, api.ErrRoutineProbeRefused},
+	}
+	if len(routineErrorMap) != len(wantPairs) {
+		t.Fatalf("routineErrorMap has %d entries, want %d", len(routineErrorMap), len(wantPairs))
+	}
+	for _, tc := range wantPairs {
+		got := mapRoutineTriggerError(errors.Join(tc.intakeErr))
+		if !errors.Is(got, tc.apiErr) {
+			t.Fatalf("mapRoutineTriggerError(%v) = %v, want %v", tc.intakeErr, got, tc.apiErr)
+		}
+	}
+	other := errors.New("unexpected")
+	if got := mapRoutineTriggerError(other); !errors.Is(got, other) {
+		t.Fatalf("non-sentinel error altered: %v", got)
+	}
+}
+
+func TestSyncRoutinePausedOnPublishAndStartup(t *testing.T) {
+	sch := runtime.NewScheme()
+	_ = corev1.AddToScheme(sch)
+	ledgers := fake.NewClientBuilder().WithScheme(sch).Build()
+	st := &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: "agent-system", Now: time.Now}
+	if err := st.SetPaused(t.Context(), "acme/app", "op-paused", true, "manual", "github:alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Repositories: []config.Repository{{
+			Name: "acme/app",
+			Routines: []config.RoutineBinding{
+				{Name: "disabled-paused", Mode: config.RoutineModeDisabled, Paused: true},
+			},
+			ResolvedRoutines: map[string]config.ResolvedRoutine{
+				"decl-paused": {Name: "decl-paused", Mode: config.RoutineModePR, Paused: true},
+				"op-paused":   {Name: "op-paused", Mode: config.RoutineModePR},
+				"active":      {Name: "active", Mode: config.RoutineModePR},
+			},
+		}},
+	}
+	m := &fakePublishMetrics{budgets: map[string]float64{}}
+	syncRoutinePaused(t.Context(), cfg, st, m)
+	if !m.routinePaused["acme/app/decl-paused"] || !m.routinePaused["acme/app/op-paused"] ||
+		!m.routinePaused["acme/app/disabled-paused"] || m.routinePaused["acme/app/active"] {
+		t.Fatalf("syncRoutinePaused = %+v", m.routinePaused)
+	}
+
+	// Verify onPublish calls syncRoutinePaused with wiring.routineState.
+	w := newFakeWiring()
+	conns := w.conns()
+	prev := &config.Config{}
+	m2 := &fakePublishMetrics{budgets: map[string]float64{}}
+	var logs bytes.Buffer
+	kicks := 0
+	wr := newWiring(conns, &fakePollers{}, m2, &logs, &kicks)
+	wr.routineState = st
+	onPublish(t.Context(), wr)(prev, cfg)
+	if !m2.routinePaused["acme/app/decl-paused"] || !m2.routinePaused["acme/app/op-paused"] || m2.routinePaused["acme/app/active"] {
+		t.Fatalf("onPublish routinePaused = %+v", m2.routinePaused)
 	}
 }

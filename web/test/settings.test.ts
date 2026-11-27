@@ -121,7 +121,7 @@ describe("the repository page", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
     const nav = [...app.querySelectorAll("nav.settings-nav a")].map((a) => a.getAttribute("href"));
-    expect(nav).toEqual(["/", "/settings", "/settings/merge-policies", "/settings/evidence", "/settings/approval-memory"]);
+    expect(nav).toEqual(["/", "/routines", "/settings", "/settings/merge-policies", "/settings/evidence", "/settings/approval-memory"]);
   });
 
   it("marks the page's section as the current tab, one tab at a time", async () => {
