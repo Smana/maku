@@ -111,6 +111,45 @@ func TestBrokerRunCreate(t *testing.T) {
 	}
 }
 
+func TestBrokerRoutineDigestAndRetry401(t *testing.T) {
+	var attempts int
+	var gotMethod, gotPath, gotQuery, gotAuth, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		gotAuth = r.Header.Get("Authorization")
+		gotCT = r.Header.Get("Content-Type")
+		if attempts == 1 {
+			http.Error(w, "expired", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"window":"7d","repositories":[{"repository":"Smana/maku","routines":[{"name":"dead-links","runs":2,"merged":1,"costUSD":0.5}]}]}`))
+	}))
+	defer srv.Close()
+
+	var tokSeq int
+	tokens := &Tokens{Fetch: func(context.Context) (*oauth2.Token, error) {
+		tokSeq++
+		return &oauth2.Token{AccessToken: fmt.Sprintf("tok-%d", tokSeq), Expiry: time.Now().Add(time.Hour)}, nil
+	}}
+	b := Broker{URL: srv.URL, Tokens: tokens, HC: srv.Client()}
+	got, err := b.RoutineDigest(t.Context(), []string{"Smana/maku"}, "7d")
+	if err != nil {
+		t.Fatalf("RoutineDigest error: %v", err)
+	}
+	if attempts != 2 || gotMethod != http.MethodGet || gotPath != "/api/routines/digest" || gotAuth != "Bearer tok-2" || gotCT != "" {
+		t.Fatalf("attempts=%d method=%s path=%s auth=%s ct=%q", attempts, gotMethod, gotPath, gotAuth, gotCT)
+	}
+	if !strings.Contains(gotQuery, "window=7d") || !strings.Contains(gotQuery, "repositories=Smana%2Fmaku") {
+		t.Fatalf("query = %q", gotQuery)
+	}
+	if got.Window != "7d" || len(got.Repositories) != 1 || got.Repositories[0].Routines[0].Name != "dead-links" {
+		t.Fatalf("decoded digest = %+v", got)
+	}
+}
+
 // A draft's run_create arguments are exactly today's; a proposal's send handoff and plan_hash in
 // place of title, text and plan (UX2).
 func TestRunCreateSendsTheHandoff(t *testing.T) {

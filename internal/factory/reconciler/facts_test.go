@@ -920,3 +920,40 @@ func TestFactsCarryTheConfirmedCap(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFactsCarrySourceAndRoutine(t *testing.T) {
+	rt := &v1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot", Namespace: "agent-system"},
+		Spec: v1alpha1.TaskSpec{
+			Repository: "Smana/cloud-native-ref",
+			Source:     v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-code"},
+			Routine:    &v1alpha1.TaskRoutine{Name: "dead-code"},
+		},
+		Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing},
+	}
+	f := factsOf(rt)
+	if f.Source != "routine" || f.Routine != "dead-code" {
+		t.Fatalf("routine facts = %+v", f)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("routine facts invalid: %v", err)
+	}
+	// Ended task keeps factsKey stable when Source/Routine are cleared in factsKey.
+	ended := f
+	ended.Phase = v1alpha1.PhaseDone
+	bare := ended
+	bare.Source, bare.Routine = "", ""
+	if factsKey(ended) != factsKey(bare) {
+		t.Fatal("ended task factsKey must strip source and routine")
+	}
+	// Issue task carries source: "issue" with empty routine.
+	iss := issueTask("3buqdlot", 7, "x")
+	iss.Status.Phase = v1alpha1.PhaseImplementing
+	fi := factsOf(iss)
+	if fi.Source != "issue" || fi.Routine != "" {
+		t.Fatalf("issue facts = %+v", fi)
+	}
+	if err := fi.Validate(); err != nil {
+		t.Fatalf("issue facts invalid: %v", err)
+	}
+}

@@ -30,14 +30,16 @@ const minKey = 32
 
 // Event is one delivery's payload: ids, states and reason codes only (R19). No room text.
 type Event struct {
-	Type   string `json:"type"`
-	Room   string `json:"room"`
-	Repo   string `json:"repo,omitempty"`
-	Run    string `json:"run,omitempty"`
-	PR     int    `json:"pr,omitempty"`
-	Reason string `json:"reason,omitempty"`
-	Limit  string `json:"limit,omitempty"`
-	State  string `json:"state,omitempty"`
+	Type    string `json:"type"`
+	Room    string `json:"room,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Routine string `json:"routine,omitempty"`
+	Run     string `json:"run,omitempty"`
+	PR      int    `json:"pr,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Limit   string `json:"limit,omitempty"`
+	State   string `json:"state,omitempty"`
 	// Origin is the room of the task this room's task was started from (RunLore agent-to-agent
 	// RA10), on every event of the room once its facts name one, so a subscriber correlates an
 	// event it missed the start of.
@@ -72,6 +74,13 @@ type Event struct {
 // subscriber, so each subscriber dedupes its own stream (R15).
 func ID(subscriber, room string, seq int64, typ string) string {
 	sum := sha256.Sum256([]byte(subscriber + "\x00" + room + "\x00" + strconv.FormatInt(seq, 10) + "\x00" + typ))
+	return "evt_" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:16]))
+}
+
+// RoutinePausedID is a routine.paused delivery's webhook-id: the same across retries of one trip
+// (keyed by eventKey), distinct per subscriber and per trip.
+func RoutinePausedID(subscriber, repo, routine, eventKey string) string {
+	sum := sha256.Sum256([]byte(subscriber + "\x00routine.paused\x00" + repo + "\x00" + routine + "\x00" + eventKey))
 	return "evt_" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:16]))
 }
 

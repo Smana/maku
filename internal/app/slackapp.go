@@ -153,6 +153,7 @@ func startSlackAppOn(ctx context.Context, log *slog.Logger, args []string, geten
 	serve(&front, runCtx, routed("POST /slack/events", a.Events()), events)
 	serve(&front, runCtx, routed("POST /webhooks", a.Webhooks()), hooks)
 	serve(&bak, opsCtx, ops, opsLn)
+	a.StartDigest(runCtx)
 	log.Info("factory-slack-app starting", "version", version.Version,
 		"events", events.Addr().String(), "webhooks", hooks.Addr().String(), "ops", opsLn.Addr().String())
 

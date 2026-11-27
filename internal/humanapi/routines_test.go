@@ -18,12 +18,14 @@ import (
 type fakeRoutinesGateway struct {
 	tokens  []string
 	repos   []string
+	windows []string
 	targets []string
 	idem    []string
 	bodies  []string
 
 	listRaw   json.RawMessage
 	getRaw    json.RawMessage
+	digestRaw json.RawMessage
 	runStatus int
 	runRaw    json.RawMessage
 	pauseRaw  json.RawMessage
@@ -41,6 +43,13 @@ func (f *fakeRoutinesGateway) GetRoutine(_ context.Context, token, owner, name, 
 	f.tokens = append(f.tokens, token)
 	f.targets = append(f.targets, owner+"/"+name+"/"+routine)
 	return f.getRaw, f.err
+}
+
+func (f *fakeRoutinesGateway) RoutineDigest(_ context.Context, token string, repos []string, window string) (json.RawMessage, error) {
+	f.tokens = append(f.tokens, token)
+	f.repos = append(f.repos, strings.Join(repos, ","))
+	f.windows = append(f.windows, window)
+	return f.digestRaw, f.err
 }
 
 func (f *fakeRoutinesGateway) RunRoutine(_ context.Context, token, owner, name, routine, idempotencyKey string, body json.RawMessage) (int, json.RawMessage, error) {
@@ -78,6 +87,7 @@ var routineRoutesList = []struct{ method, path string }{
 	{http.MethodGet, "/routines"},
 	{http.MethodGet, "/routines/Smana/maku/dead-links"},
 	{http.MethodGet, "/api/routines"},
+	{http.MethodGet, "/api/routines/digest"},
 	{http.MethodGet, "/api/routines/Smana/maku/dead-links"},
 	{http.MethodPost, "/api/routines/Smana/maku/dead-links/runs"},
 	{http.MethodPost, "/api/routines/Smana/maku/dead-links/pause"},
@@ -205,5 +215,70 @@ func TestRoutinesAuthOriginValidationAndForwarding(t *testing.T) {
 	gw.err = errors.New("dial tcp timeout")
 	if code, body := sendJSON(t, e, http.MethodGet, "/api/routines", header("maint"), ""); code != http.StatusServiceUnavailable || !strings.Contains(body, `"routines_unavailable"`) {
 		t.Fatalf("upstream error = %d %s", code, body)
+	}
+}
+
+func TestRoutineDigestRoute(t *testing.T) {
+	gw := &fakeRoutinesGateway{
+		digestRaw: json.RawMessage(`{"window":"7d","repositories":[{"repository":"Smana/maku","routines":[]}]}`),
+	}
+	internalP := sponsoredP
+	internalP.ID = "system:internal-app"
+	internalP.Internal = true
+	noTokP := sponsoredP
+	noTokP.ID = "system:notok"
+	noTokP.AccessToken = ""
+
+	e := setup(t, routinesOn(gw), withSponsored(sponsoredP, internalP, noTokP), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.SponsoredRepositories = map[string]map[string]bool{
+			"system:slack-app": {"Smana/maku": true, "acme/api": true},
+		}
+	})
+
+	// Unauthenticated -> 401.
+	if code, _ := sendJSON(t, e, http.MethodGet, "/api/routines/digest", nil, ""); code != http.StatusUnauthorized {
+		t.Fatalf("unauth = %d", code)
+	}
+	// Internal or tokenless sponsored -> 403 human_only.
+	if code, body := sendJSON(t, e, http.MethodGet, "/api/routines/digest", bearer("internal-app"), ""); code != http.StatusForbidden || !strings.Contains(body, `"human_only"`) {
+		t.Fatalf("internal = %d %s", code, body)
+	}
+	if code, body := sendJSON(t, e, http.MethodGet, "/api/routines/digest", bearer("notok"), ""); code != http.StatusForbidden || !strings.Contains(body, `"human_only"`) {
+		t.Fatalf("notok = %d %s", code, body)
+	}
+	// Bad window / bad repo -> 400 before gateway.
+	if code, body := sendJSON(t, e, http.MethodGet, "/api/routines/digest?window=31d", bearer("slack-app"), ""); code != http.StatusBadRequest || !strings.Contains(body, `"bad_window"`) {
+		t.Fatalf("bad window = %d %s", code, body)
+	}
+	if code, body := sendJSON(t, e, http.MethodGet, "/api/routines/digest?repositories=../evil", bearer("slack-app"), ""); code != http.StatusBadRequest || !strings.Contains(body, `"bad_repository"`) {
+		t.Fatalf("bad repo = %d %s", code, body)
+	}
+	// Sponsored requesting out-of-scope repo -> 403 repository_not_allowed before gateway.
+	if code, body := sendJSON(t, e, http.MethodGet, "/api/routines/digest?repositories=Smana/maku,other/repo", bearer("slack-app"), ""); code != http.StatusForbidden || !strings.Contains(body, `"repository_not_allowed"`) {
+		t.Fatalf("out of scope = %d %s", code, body)
+	}
+	if len(gw.tokens) != 0 {
+		t.Fatalf("rejected calls hit gateway: %+v", gw.tokens)
+	}
+
+	// Sponsored without explicit repo filter forwards sorted allowed repos + sponsored token.
+	code, body := sendJSON(t, e, http.MethodGet, "/api/routines/digest", bearer("slack-app"), "")
+	if code != http.StatusOK || !strings.Contains(body, `"Smana/maku"`) {
+		t.Fatalf("sponsored default = %d %s", code, body)
+	}
+	if gw.tokens[0] != "t" || gw.repos[0] != "Smana/maku,acme/api" || gw.windows[0] != "" {
+		t.Fatalf("gw got tokens=%v repos=%v windows=%v", gw.tokens, gw.repos, gw.windows)
+	}
+
+	// Sponsored with in-scope case-insensitive repo forwards canonical allowed repo.
+	code, _ = sendJSON(t, e, http.MethodGet, "/api/routines/digest?repository=smana/MAKU&window=14d", bearer("slack-app"), "")
+	if code != http.StatusOK || gw.repos[1] != "Smana/maku" || gw.windows[1] != "14d" {
+		t.Fatalf("sponsored scoped = %d repos=%v windows=%v", code, gw.repos, gw.windows)
+	}
+
+	// Human reader forwards human access token.
+	code, _ = sendJSON(t, e, http.MethodGet, "/api/routines/digest?window=7d", header("maint"), "")
+	if code != http.StatusOK || gw.tokens[2] != "tok-maint" {
+		t.Fatalf("human = %d tokens=%v", code, gw.tokens)
 	}
 }

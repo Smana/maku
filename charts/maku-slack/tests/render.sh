@@ -47,7 +47,14 @@ out="$(helm template s . -n agent-system "${base[@]}" --set preset=generic --set
 yq 'select(.metadata.name == "factory-slack-app-config") | .data."config.yaml"' - <<<"$out" >"$tmp/generic.yaml"
 yq -o=json -I0 '.' "$tmp/generic.yaml" | jq -e '(has("projectIDFile") | not) and .preset == "generic" and .audience == "maku-api" and .scopes == ["agents"] and .brokerURL == "http://room-broker.maku.svc.example.test:8080"' >/dev/null ||
   { echo "FAIL: generic: no projectIDFile, the preset's keys, the set brokerURL, config verbatim" >&2; fail=1; }
-(cd ../.. && go run ./charts/maku/tests/loadconfig slack-app "$tmp/zitadel.yaml" "$tmp/generic.yaml") || fail=1
+# upkeep-only channel with digest schedule: no interactive repositories/maxCostUSD required
+out="$(helm template s . -n agent-system --set "image.tag=$digest" --set issuerURL=https://idp.example.test --set roomsURL=https://rooms.example.test \
+  --set config.teamID=T0123ABCD \
+  --set-json 'config.channels={"C0123UPKEEP":{"upkeep":{"repositories":["owner/repo"],"routines":["dead-links"],"notify":["room.pr_opened","routine.paused"],"digest":{"cron":"0 9 * * 1"}}}}')"
+yq 'select(.metadata.name == "factory-slack-app-config") | .data."config.yaml"' - <<<"$out" >"$tmp/upkeep.yaml"
+yq -o=json -I0 '.' "$tmp/upkeep.yaml" | jq -e '.channels.C0123UPKEEP.upkeep.digest.cron == "0 9 * * 1" and .channels.C0123UPKEEP.upkeep.repositories == ["owner/repo"]' >/dev/null ||
+  { echo "FAIL: upkeep channel config did not render as expected" >&2; fail=1; }
+(cd ../.. && go run ./charts/maku/tests/loadconfig slack-app "$tmp/zitadel.yaml" "$tmp/generic.yaml" "$tmp/upkeep.yaml") || fail=1
 # fail closed
 bad 'image.tag is <version>@sha256:<digest>' --set image.tag=v1 "${base[@]:2}"
 bad 'roomsURL is required' "${base[@]}" --set roomsURL=

@@ -13,8 +13,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/robfig/cron/v3"
 	"sigs.k8s.io/yaml"
 
+	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/webhook"
 )
 
@@ -85,6 +87,34 @@ type Channel struct {
 	// defaultNotify — the four transitions a person is told about by default; an explicit empty list
 	// means none, which is a choice, not an omission.
 	Notify []string `json:"notify,omitempty"`
+	// Upkeep subscribes this channel to scheduled routine threads, breaker alerts, and optional
+	// periodic digest scorecards without requiring interactive @factory proposal settings.
+	Upkeep *UpkeepChannel `json:"upkeep,omitempty"`
+}
+
+// UpkeepChannel configures routine notifications and scheduled digest scorecards for a Slack channel.
+type UpkeepChannel struct {
+	Repositories []string        `json:"repositories"`
+	Routines     []string        `json:"routines,omitempty"`
+	Notify       []string        `json:"notify,omitempty"`
+	Digest       *DigestSchedule `json:"digest,omitempty"`
+}
+
+// DigestSchedule configures when an upkeep channel receives its periodic routine scorecard.
+type DigestSchedule struct {
+	Cron string `json:"cron"`
+}
+
+var (
+	defaultUpkeepNotify = []string{"room.pr_opened", "room.waiting_for_human", "room.ended", "routine.paused"}
+	upkeepAllowedNotify = []string{"room.pr_opened", "room.waiting_for_human", "room.ended", "room.merged", "room.reverted", "routine.paused"}
+)
+
+func (u UpkeepChannel) notifies(t string) bool {
+	if u.Notify != nil {
+		return slices.Contains(u.Notify, t)
+	}
+	return slices.Contains(defaultUpkeepNotify, t)
 }
 
 // defaultNotify are the four transitions a channel with no notify list posts (UX8). room.merged and
@@ -183,16 +213,23 @@ func (c Config) validate() error {
 		if !channelRE.MatchString(id) {
 			errs = append(errs, fmt.Errorf("channels: %q is not a Slack channel id", id))
 		}
-		if len(ch.Repositories) == 0 {
-			errs = append(errs, fmt.Errorf("channels.%s: repositories is empty", id))
+		if ch.Upkeep == nil {
+			if len(ch.Repositories) == 0 {
+				errs = append(errs, fmt.Errorf("channels.%s: repositories is empty", id))
+			}
+			if ch.MaxCostUSD < minMaxCost {
+				errs = append(errs, fmt.Errorf("channels.%s: maxCostUSD %v is below %v", id, ch.MaxCostUSD, minMaxCost))
+			}
+		} else {
+			if ch.MaxCostUSD < 0 || (ch.MaxCostUSD > 0 && ch.MaxCostUSD < minMaxCost) {
+				errs = append(errs, fmt.Errorf("channels.%s: maxCostUSD %v is below %v", id, ch.MaxCostUSD, minMaxCost))
+			}
+			errs = append(errs, validateUpkeepChannel(id, ch.Upkeep)...)
 		}
 		for _, r := range ch.Repositories {
 			if !repoRE.MatchString(r) {
 				errs = append(errs, fmt.Errorf("channels.%s: repository %q is not owner/name", id, r))
 			}
-		}
-		if ch.MaxCostUSD < minMaxCost {
-			errs = append(errs, fmt.Errorf("channels.%s: maxCostUSD %v is below %v", id, ch.MaxCostUSD, minMaxCost))
 		}
 		switch ch.Intents {
 		case "", IntentsOff, IntentsShadow, IntentsOn:
@@ -235,6 +272,48 @@ func (c Config) validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func validateUpkeepChannel(id string, u *UpkeepChannel) []error {
+	var errs []error
+	if len(u.Repositories) == 0 {
+		errs = append(errs, fmt.Errorf("channels.%s.upkeep: repositories is empty", id))
+	}
+	for _, r := range u.Repositories {
+		if !repoRE.MatchString(r) {
+			errs = append(errs, fmt.Errorf("channels.%s.upkeep: repository %q is not owner/name", id, r))
+		}
+	}
+	seenRoutines := make(map[string]struct{}, len(u.Routines))
+	for _, rn := range u.Routines {
+		if !fconfig.ValidRoutineName(rn) {
+			errs = append(errs, fmt.Errorf("channels.%s.upkeep: routine %q is not a valid routine name", id, rn))
+			continue
+		}
+		if _, dup := seenRoutines[rn]; dup {
+			errs = append(errs, fmt.Errorf("channels.%s.upkeep: routines lists %q more than once", id, rn))
+		}
+		seenRoutines[rn] = struct{}{}
+	}
+	seenNotify := make(map[string]struct{}, len(u.Notify))
+	for _, typ := range u.Notify {
+		if !slices.Contains(upkeepAllowedNotify, typ) {
+			errs = append(errs, fmt.Errorf("channels.%s.upkeep: notify %q is not an allowed upkeep webhook event", id, typ))
+			continue
+		}
+		if _, dup := seenNotify[typ]; dup {
+			errs = append(errs, fmt.Errorf("channels.%s.upkeep: notify lists %q more than once", id, typ))
+		}
+		seenNotify[typ] = struct{}{}
+	}
+	if u.Digest != nil {
+		if strings.TrimSpace(u.Digest.Cron) == "" {
+			errs = append(errs, fmt.Errorf("channels.%s.upkeep.digest: cron is required", id))
+		} else if _, err := cron.ParseStandard(u.Digest.Cron); err != nil {
+			errs = append(errs, fmt.Errorf("channels.%s.upkeep.digest: cron %q does not parse: %w", id, u.Digest.Cron, err))
+		}
+	}
+	return errs
 }
 
 // canonicalRepo is the channel's own spelling of repo and whether the channel serves it. GitHub's

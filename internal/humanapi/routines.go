@@ -11,6 +11,8 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Smana/maku/internal/authn"
@@ -22,6 +24,7 @@ import (
 // the caller's own bearer token; runrequest.Factory satisfies it.
 type RoutinesGateway interface {
 	ListRoutines(ctx context.Context, accessToken, repo string) (json.RawMessage, error)
+	RoutineDigest(ctx context.Context, accessToken string, repos []string, window string) (json.RawMessage, error)
 	GetRoutine(ctx context.Context, accessToken, owner, name, routine string) (json.RawMessage, error)
 	RunRoutine(ctx context.Context, accessToken, owner, name, routine, idempotencyKey string, body json.RawMessage) (int, json.RawMessage, error)
 	PauseRoutine(ctx context.Context, accessToken, owner, name, routine string, body json.RawMessage) (json.RawMessage, error)
@@ -34,6 +37,7 @@ func (s *Server) routineRoutes(mux *http.ServeMux, index http.Handler) {
 	mux.Handle("GET /routines", withCSP(index))
 	mux.Handle("GET /routines/{owner}/{name}/{routine}", withCSP(index))
 	mux.HandleFunc("GET /api/routines", s.listRoutines)
+	mux.HandleFunc("GET /api/routines/digest", s.routineDigest)
 	mux.HandleFunc("GET /api/routines/{owner}/{name}/{routine}", s.getRoutine)
 	mux.HandleFunc("POST /api/routines/{owner}/{name}/{routine}/runs", s.runRoutine)
 	mux.HandleFunc("POST /api/routines/{owner}/{name}/{routine}/pause", s.pauseRoutine)
@@ -152,6 +156,99 @@ func (s *Server) listRoutines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw, err := s.Routines.ListRoutines(r.Context(), p.AccessToken, repo)
+	writeRoutineAnswer(w, http.StatusOK, raw, err)
+}
+
+func validDigestWindow(window string) bool {
+	if !strings.HasSuffix(window, "d") {
+		return false
+	}
+	numStr := strings.TrimSuffix(window, "d")
+	n, err := strconv.Atoi(numStr)
+	return err == nil && n >= 1 && n <= 30 && strconv.Itoa(n)+"d" == window
+}
+
+func (s *Server) routineDigest(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.sponsoredPrincipal(r)
+	if ok {
+		if p.Internal || p.AccessToken == "" {
+			refuseJSON(w, http.StatusForbidden, "human_only")
+			return
+		}
+		if !s.readAllowedJSON(w, r, p) {
+			return
+		}
+	} else {
+		p, ok = s.policyCaller(w, r)
+		if !ok {
+			return
+		}
+	}
+	if s.Routines == nil {
+		refuseJSON(w, http.StatusNotFound, "routines_unavailable")
+		return
+	}
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	if window != "" && !validDigestWindow(window) {
+		refuseJSON(w, http.StatusBadRequest, "bad_window")
+		return
+	}
+	q := r.URL.Query()
+	var repos []string
+	for _, key := range []string{"repository", "repo", "repositories"} {
+		for _, raw := range q[key] {
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			for _, part := range strings.Split(raw, ",") {
+				item := strings.TrimSpace(part)
+				if !validRoutineRepoString(item) {
+					refuseJSON(w, http.StatusBadRequest, "bad_repository")
+					return
+				}
+				repos = append(repos, item)
+			}
+		}
+	}
+	if p.Sponsored {
+		allowed := s.SponsoredRepositories[p.ID]
+		var allowedList []string
+		for repo, ok := range allowed {
+			if ok {
+				allowedList = append(allowedList, repo)
+			}
+		}
+		slices.Sort(allowedList)
+		if len(repos) > 0 {
+			scoped := make([]string, 0, len(repos))
+			for _, asked := range repos {
+				matched := ""
+				for _, allow := range allowedList {
+					if strings.EqualFold(allow, asked) {
+						matched = allow
+						break
+					}
+				}
+				if matched == "" {
+					refuseJSON(w, http.StatusForbidden, "repository_not_allowed")
+					return
+				}
+				scoped = append(scoped, matched)
+			}
+			repos = scoped
+		} else {
+			if len(allowedList) == 0 {
+				raw, _ := json.Marshal(map[string]any{
+					"window":       cmp.Or(window, "7d"),
+					"repositories": []any{},
+				})
+				writeRoutineAnswer(w, http.StatusOK, raw, nil)
+				return
+			}
+			repos = allowedList
+		}
+	}
+	raw, err := s.Routines.RoutineDigest(r.Context(), p.AccessToken, repos, window)
 	writeRoutineAnswer(w, http.StatusOK, raw, err)
 }
 

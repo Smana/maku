@@ -4,8 +4,10 @@ The factory's Slack App ([docs/slack.md](../../docs/slack.md)) as a chart. Insta
 umbrella chart as `slack` (`slack.enabled: true`, [values-slack.example.yaml](../agent-factory/values-slack.example.yaml)),
 or alone beside a broker and a factory that name it:
 
-- the broker's `broker.webhooks` entry for its `:8081` (`existingSecret` = this chart's `webhookSecret`);
+- the broker's `broker.webhooks` entry for its `:8081` (`existingSecret` = this chart's `webhookSecret`, including `routine.paused` for upkeep channels);
 - `human.mcp.sponsored` on the broker and `config.api.sponsored` on the factory, both naming `principal`.
+
+Channels may configure `upkeep` (`repositories`, optional `routines`, optional `notify`, and optional `digest.cron` in UTC) without setting interactive `repositories` or `maxCostUSD`. Scheduled digests fetch `GET /api/routines/digest` through the existing `brokerURL` (`room-broker:8080`), so no additional NetworkPolicy egress rules are needed.
 
 It renders one replica, its Service (`events` 8080, `webhooks` 8081, `metrics` 9090), a
 ServiceAccount, a Role with `get` and `update` on `factory-slack-threads` alone, the thread map

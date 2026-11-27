@@ -604,7 +604,38 @@ func (c *Client) GitHubLink(ctx context.Context, sub string) (GitHubLink, bool, 
 	return GitHubLink{GitHubID: out.GitHubID, Active: out.Active}, true, nil
 }
 
-const handoffStartRoute = "/v1/handoff-starts"
+const (
+	handoffStartRoute  = "/v1/handoff-starts"
+	routinePausedRoute = "/v1/events/routine-paused"
+)
+
+var (
+	routinePausedRepoRE = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
+	breakerReasons      = []string{"consecutive_closed", "low_merge_rate", "consecutive_failures"}
+)
+
+// RoutinePaused notifies the broker that a routine's yield breaker tripped so matching
+// webhook subscribers receive a routine.paused event.
+func (c *Client) RoutinePaused(ctx context.Context, repository, routine, reason string) error {
+	if len(repository) > 140 || !routinePausedRepoRE.MatchString(repository) {
+		return fmt.Errorf("rooms: %q is not a repository", repository)
+	}
+	if !envelope.ValidRoutineName(routine) {
+		return fmt.Errorf("rooms: %q is not a valid routine name", routine)
+	}
+	if !slices.Contains(breakerReasons, reason) {
+		return fmt.Errorf("rooms: %q is not a known breaker reason", reason)
+	}
+	in := struct {
+		Repository string `json:"repository"`
+		Routine    string `json:"routine"`
+		Reason     string `json:"reason"`
+	}{repository, routine, reason}
+	var out struct {
+		Enqueued bool `json:"enqueued"`
+	}
+	return c.call(ctx, http.MethodPost, routinePausedRoute, routinePausedRoute, "", "", in, maxReplyOverhead, &out)
+}
 
 // ErrHandoffStartsUnserved is a handoff start read the broker will not answer by retrying: 403 (it
 // does not serve the records to the factory) or a 404 without no_handoff_start (an older broker

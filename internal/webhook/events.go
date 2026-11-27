@@ -13,11 +13,11 @@ import (
 	"github.com/Smana/maku/internal/summary"
 )
 
-// types are R19's eleven events, the monitor's verdict and an approval's close, thirteen, in the
-// design's order.
+// types are R19's eleven events, the monitor's verdict, an approval's close and routine.paused,
+// fifteen, in the design's order.
 var types = []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
 	"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
-	"room.budget_reached", "room.stepped_up", "room.ended", "room.approval_closed"}
+	"room.budget_reached", "room.stepped_up", "room.ended", "room.approval_closed", "routine.paused"}
 
 // Types lists the events a subscriber may ask for.
 func Types() []string { return slices.Clone(types) }
@@ -48,6 +48,11 @@ var decisions = []string{"approved", "denied", "expired", "superseded"}
 // Decisions lists the values an event's decision may hold.
 func Decisions() []string { return slices.Clone(decisions) }
 
+var breakerReasons = []string{"consecutive_closed", "low_merge_rate", "consecutive_failures"}
+
+// BreakerReasons lists the closed yield-breaker pause reasons carried by routine.paused.
+func BreakerReasons() []string { return slices.Clone(breakerReasons) }
+
 // Reasons lists the values an event's reason may hold: the wait reasons the summary has prose
 // for, the run ends that escalate a task, the broker's approval, and the three escalations the
 // factory raises on a room it cannot use. They repeat the factory's strings: this package
@@ -57,7 +62,8 @@ func Reasons() []string {
 	out = append(out, "approval", "manual", "revoked", "deleted", "principal_unknown",
 		"budget-run", "budget-principal", "budget-fleet", "budget-person", "budget-upkeep",
 		"foreign_room", "room_log_unreadable", "rooms_crd_outdated",
-		"cancelled", "discarded", "issue_deleted") // #644: a stop's end line says which
+		"cancelled", "discarded", "issue_deleted", // #644: a stop's end line says which
+		"no_op", "consecutive_closed", "low_merge_rate", "consecutive_failures")
 	slices.Sort(out)
 	return slices.Compact(out)
 }
@@ -97,8 +103,9 @@ func protectedPaths(action json.RawMessage) (out []string, more, hidden int) {
 	return out, more, hidden
 }
 
-// Clip is v when kind's vocabulary ("reason", "limit", "state", "verdict" or "decision") holds it, ""
-// for "", else "other": no value outside a closed list leaves the broker or reaches a Slack thread.
+// Clip is v when kind's vocabulary ("reason", "limit", "state", "verdict", "decision" or "source")
+// holds it, "" for "", else "other": no value outside a closed list leaves the broker or reaches a
+// Slack thread.
 func Clip(kind, v string) string {
 	var list []string
 	switch kind {
@@ -112,6 +119,8 @@ func Clip(kind, v string) string {
 		list = envelope.MonitorVerdicts()
 	case "decision":
 		list = decisions
+	case "source":
+		list = envelope.TaskSources()
 	}
 	if v == "" || slices.Contains(list, v) {
 		return v
@@ -132,6 +141,8 @@ type Tracker struct {
 	ended       bool
 	monitorSent bool   // room.monitor_verdict goes out once: a verdict is final once set (MC7)
 	origin      string // the last origin the task facts named: every event after it repeats it (RA10)
+	source      string // the clipped task source kind
+	routine     string // the validated routine name when source is "routine"
 }
 
 // Events is what ev means to a subscriber of room, whose repository is repo: none, one or a few
@@ -140,6 +151,8 @@ func (t *Tracker) Events(room, repo string, ev envelope.Event) []Event {
 	out := t.events(room, repo, ev)
 	for i := range out {
 		out[i].Origin = t.origin
+		out[i].Source = t.source
+		out[i].Routine = t.routine
 	}
 	return out
 }
@@ -213,6 +226,14 @@ func (t *Tracker) task(room, repo string, f envelope.TaskFacts) []Event {
 	if f.Origin != "" {
 		t.origin = f.Origin
 	}
+	if f.Source != "" {
+		t.source = Clip("source", f.Source)
+		if t.source == "routine" && envelope.ValidRoutineName(f.Routine) {
+			t.routine = f.Routine
+		} else {
+			t.routine = ""
+		}
+	}
 	var out []Event
 	if f.PR != nil && f.PR.Number > 0 {
 		t.pr = f.PR.Number
@@ -268,7 +289,11 @@ func (t *Tracker) task(room, repo string, f envelope.TaskFacts) []Event {
 	s := summary.Coarse(f.Phase, "", false)
 	if !t.ended && (s == summary.StateDone || s == summary.StateFailed || s == summary.StateStopped) {
 		t.ended = true
-		out = append(out, Event{Type: "room.ended", Room: room, State: s})
+		endEv := Event{Type: "room.ended", Room: room, State: s}
+		if f.Phase == "NoOp" {
+			endEv.Reason = "no_op"
+		}
+		out = append(out, endEv)
 	}
 	return out
 }

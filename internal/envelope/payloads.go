@@ -288,7 +288,25 @@ type TaskFacts struct {
 	// RetryHeld: the task escalated at its task cap and a plain retry would be refused (F-4), so
 	// no view offers one; a deeper retry, when offered, is decided on its own ceiling.
 	RetryHeld bool `json:"retryHeld,omitempty"`
+	// Source is the task's intake source kind (Task.spec.source.kind enum).
+	Source string `json:"source,omitempty"`
+	// Routine is the upkeep routine name when Source is "routine".
+	Routine string `json:"routine,omitempty"`
 }
+
+var (
+	routineNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
+	taskSources   = []string{"issue", "runlore", "schedule", "routine", "api", "adopt", "coordination", "review"}
+)
+
+// ValidRoutineName reports whether s is a valid upkeep routine name (1..40 lower-kebab bytes).
+func ValidRoutineName(s string) bool { return routineNameRE.MatchString(s) }
+
+// TaskSources lists the valid Task.spec.source.kind enum values.
+func TaskSources() []string { return slices.Clone(taskSources) }
+
+// ValidTaskSource reports whether s is a known Task.spec.source.kind value.
+func ValidTaskSource(s string) bool { return slices.Contains(taskSources, s) }
 
 // MaxPlan bounds TaskFacts.Plan.
 const MaxPlan = 8
@@ -617,6 +635,12 @@ func (f TaskFacts) Validate() error {
 		return errors.New("task facts: outcome is change, plan-first, review or report")
 	case len(f.Plan) > MaxPlan:
 		return fmt.Errorf("task facts: plan is at most %d, got %d", MaxPlan, len(f.Plan))
+	case f.Source != "" && !ValidTaskSource(f.Source):
+		return errors.New("task facts: source is not a known task source")
+	case f.Routine != "" && !ValidRoutineName(f.Routine):
+		return errors.New("task facts: routine is not a valid routine name")
+	case f.Routine != "" && f.Source != "routine":
+		return errors.New("task facts: routine requires source routine")
 	}
 	for i, p := range f.Plan {
 		if !ValidPersona(p) {

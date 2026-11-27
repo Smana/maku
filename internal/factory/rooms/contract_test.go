@@ -409,3 +409,22 @@ func TestTheDrillClientSpeaksTheBrokersDrillRoutes(t *testing.T) {
 		t.Fatal("no stored report read as one")
 	}
 }
+
+func TestTheRoutinePausedClientSpeaksTheBrokerRoute(t *testing.T) {
+	srv := &bridgeapi.Server{Redactor: noRedact{}, Runs: systems{}, Systems: systems{}, Watch: noRuns{}}
+	ts := httptest.NewTLSServer(srv.Routes())
+	defer ts.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(ts.Certificate())
+	tok := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tok, []byte("factory-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(ts.URL, tok, httpx.New(5*time.Second, roots), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RoutinePaused(t.Context(), "Smana/maku", "dead-code", "consecutive_failures"); err != nil {
+		t.Fatalf("RoutinePaused against bridgeapi: %v", err)
+	}
+}

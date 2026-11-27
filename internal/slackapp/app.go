@@ -79,6 +79,8 @@ type BrokerAPI interface {
 	// draft (v4): neither confirms, files nor runs anything.
 	CoordinationPlan(ctx context.Context, in CoordinationPlanRequest) (CoordinationPlanResult, error)
 	CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error)
+	// RoutineDigest reads GET /api/routines/digest for an upkeep channel's weekly scorecard.
+	RoutineDigest(ctx context.Context, repos []string, window string) (RoutineDigest, error)
 }
 
 // Recorder counts requests for maku_slack_app_requests_total{route, outcome}, the proposal actions
@@ -130,6 +132,7 @@ type App struct {
 	events, deliveries seen        // event_id and webhook-id
 	stepped            seen        // rooms whose step-up line was already posted (WR4)
 	answered           seen        // the ✅ refusals said, by draft, user and reason: each is said once
+	digestSent         seen        // channel+UTC-minute digest slots already attempted
 	retried            throttle    // the ✅ passing failures said, by draft, user and reason: once per retryEvery
 	edits              threadLocks // one edit per thread at a time, so two quick replies do not branch a proposal
 
@@ -139,6 +142,11 @@ type App struct {
 	queue    chan func() // eventQueue slots, fed by enqueue, drained by eventWorkers
 	workers  sync.WaitGroup
 	pending  atomic.Int64 // events taken by a worker's queue and not yet finished
+
+	digestMu     sync.Mutex
+	digestStop   chan struct{}
+	digestClosed bool
+	digestWG     sync.WaitGroup
 }
 
 // threadLocks serializes proposal edits per (channel, thread) without blocking unrelated threads.
@@ -335,8 +343,16 @@ func (a *App) Wait(ctx context.Context) error {
 		close(a.queue)
 	}
 	a.poolMu.Unlock()
+	a.digestMu.Lock()
+	if !a.digestClosed {
+		a.digestClosed = true
+		if a.digestStop != nil {
+			close(a.digestStop)
+		}
+	}
+	a.digestMu.Unlock()
 	done := make(chan struct{})
-	go func() { a.workers.Wait(); close(done) }()
+	go func() { a.workers.Wait(); a.digestWG.Wait(); close(done) }()
 	select {
 	case <-done:
 		return nil
@@ -488,6 +504,9 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 		return a.link(ctx, ev, thread)
 	case "unlink":
 		return a.unlink(ctx, ev, thread)
+	}
+	if len(ch.Repositories) == 0 || ch.MaxCostUSD < minMaxCost {
+		return "ignored"
 	}
 	code := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
 	a.proposalUpdate(ctx, countMention)
@@ -826,7 +845,13 @@ const countedInPlace = ""
 
 func (a *App) deliver(ctx context.Context, body []byte) string {
 	var e webhook.Event
-	if json.Unmarshal(body, &e) != nil || !slices.Contains(webhook.Types(), e.Type) || !roomRE.MatchString(e.Room) {
+	if json.Unmarshal(body, &e) != nil || !slices.Contains(webhook.Types(), e.Type) {
+		return "ignored"
+	}
+	if e.Type == "routine.paused" {
+		return a.deliverRoutinePaused(ctx, e)
+	}
+	if !roomRE.MatchString(e.Room) {
 		return "ignored"
 	}
 	// The thread is read before the dispatch: the card needs it as much as the line does, and the
@@ -837,6 +862,9 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 		return "error"
 	}
 	if !found {
+		if e.Source == "routine" {
+			return a.deliverUpkeep(ctx, e)
+		}
 		return "ignored" // a room that was not filed from Slack
 	}
 	// v4: a coordination parent's thread is told only what its channel may see of the family now.
@@ -867,16 +895,27 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	if !served {
 		return "ignored"
 	}
+	isUpkeep := ch.Upkeep != nil && e.Source == "routine"
+	if isUpkeep && e.Type == "room.ended" && e.Reason == "no_op" {
+		return "ignored"
+	}
 	// UX7, G6: room.merged and room.reverted edit the thread's one end line before the notify filter.
 	// Done mentions the one actor once across the entire end-line sequence (th.DoneMentioned).
 	switch e.Type {
 	case "room.merged":
-		if th.EndTS == "" && !ch.notifies("room.ended") && !ch.notifies("room.merged") {
+		wantMerged := ch.notifies("room.ended") || ch.notifies("room.merged")
+		if isUpkeep {
+			wantMerged = ch.Upkeep.notifies("room.ended") || ch.Upkeep.notifies("room.merged")
+		}
+		if th.EndTS == "" && !wantMerged {
 			return "ignored"
 		}
 		return a.upsertEndLine(ctx, e.Room, th, doneEndLine(e, a.taskSummary(ctx, e.Room), th), nil, true)
 	case "room.reverted":
 		wantLine := ch.Notify != nil && slices.Contains(ch.Notify, "room.reverted")
+		if isUpkeep {
+			wantLine = ch.Upkeep.Notify != nil && slices.Contains(ch.Upkeep.Notify, "room.reverted")
+		}
 		if th.EndTS == "" && !wantLine {
 			return "ignored"
 		}
@@ -903,7 +942,11 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	}
 	// UX8, CD11: a line is posted only for a transition the thread's channel is told about (its notify
 	// list, defaultNotify when it gave none), so a run start says nothing by default.
-	if !ch.notifies(e.Type) {
+	notifies := ch.notifies(e.Type)
+	if isUpkeep {
+		notifies = ch.Upkeep.notifies(e.Type)
+	}
+	if !notifies {
 		return "ignored"
 	}
 	switch e.Type {

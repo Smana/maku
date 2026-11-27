@@ -95,7 +95,7 @@ func TestEvents(t *testing.T) {
 	}
 	wantTypes := []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
 		"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
-		"room.budget_reached", "room.stepped_up", "room.ended", "room.approval_closed"}
+		"room.budget_reached", "room.stepped_up", "room.ended", "room.approval_closed", "routine.paused"}
 	if !slices.Equal(Types(), wantTypes) {
 		t.Fatalf("Types() = %v, want %v", Types(), wantTypes)
 	}
@@ -393,5 +393,74 @@ func TestMonitorVerdictIsSentOncePerRoom(t *testing.T) {
 	}
 	if !slices.Contains(Limits(), "budget-upkeep") || !slices.Contains(Reasons(), "budget-upkeep") || Clip("limit", "budget-upkeep") != "budget-upkeep" {
 		t.Fatalf("budget-upkeep missing from webhook Limits/Reasons: limits=%v reasons=%v", Limits(), Reasons())
+	}
+}
+
+func TestSourceRoutineAndNoOpAndRoutinePaused(t *testing.T) {
+	for _, src := range envelope.TaskSources() {
+		if got := Clip("source", src); got != src {
+			t.Fatalf("Clip(source, %q) = %q", src, got)
+		}
+	}
+	if got := Clip("source", "untrusted-prose"); got != "other" {
+		t.Fatalf("Clip(source, untrusted) = %q, want other", got)
+	}
+	if got := Clip("source", ""); got != "" {
+		t.Fatalf("Clip(source, \"\") = %q, want empty", got)
+	}
+	for _, r := range []string{"no_op", "consecutive_closed", "low_merge_rate", "consecutive_failures"} {
+		if !slices.Contains(Reasons(), r) || Clip("reason", r) != r {
+			t.Fatalf("reason %q missing from Reasons()", r)
+		}
+	}
+	if want := []string{"consecutive_closed", "low_merge_rate", "consecutive_failures"}; !slices.Equal(BreakerReasons(), want) {
+		t.Fatalf("BreakerReasons() = %v, want %v", BreakerReasons(), want)
+	}
+
+	// Tracker stamps source and routine across room events and drops invalid routine names.
+	var tr Tracker
+	pr := &envelope.PRFact{Number: 12, URL: "https://github.com/Smana/ai-native-ref/pull/12"}
+	var got []Event
+	for _, ev := range []envelope.Event{
+		fact(1, envelope.TaskFacts{Phase: "Received", Source: "routine", Routine: "dead-code"}),
+		fact(2, envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "needs_author", PR: pr}),
+		fact(3, envelope.TaskFacts{Phase: "Merged", PR: pr}),
+		fact(4, envelope.TaskFacts{Phase: "Done"}),
+	} {
+		got = append(got, tr.Events("room0001", "Smana/ai-native-ref", ev)...)
+	}
+	if len(got) < 5 {
+		t.Fatalf("expected >=5 events, got %+v", got)
+	}
+	for _, e := range got {
+		if e.Source != "routine" || e.Routine != "dead-code" {
+			t.Fatalf("%s missing source/routine: %+v", e.Type, e)
+		}
+		if e.Type == "room.ended" && e.Reason != "" {
+			t.Fatalf("Done room.ended must have empty reason, got %q", e.Reason)
+		}
+	}
+
+	// Invalid routine name is dropped (never leaked).
+	var badTr Tracker
+	badEvs := badTr.Events("room0002", "Smana/ai-native-ref", fact(1, envelope.TaskFacts{Phase: "Received", Source: "routine", Routine: "Bad Prompt Injection!"}))
+	if len(badEvs) != 1 || badEvs[0].Source != "routine" || badEvs[0].Routine != "" {
+		t.Fatalf("invalid routine leaked: %+v", badEvs)
+	}
+
+	// NoOp phase emits room.ended with Reason: "no_op".
+	var noopTr Tracker
+	noopEvs := noopTr.Events("room0003", "Smana/ai-native-ref", fact(1, envelope.TaskFacts{Phase: "NoOp", Source: "routine", Routine: "dead-code"}))
+	if len(noopEvs) != 1 || noopEvs[0].Type != "room.ended" || noopEvs[0].State != "done" || noopEvs[0].Reason != "no_op" || noopEvs[0].Source != "routine" || noopEvs[0].Routine != "dead-code" {
+		t.Fatalf("NoOp events = %+v", noopEvs)
+	}
+
+	// routine.paused JSON omits room and carries only type, repo, routine, reason.
+	b, err := json.Marshal(Event{Type: "routine.paused", Repo: "Smana/ai-native-ref", Routine: "dead-code", Reason: "consecutive_closed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"type":"routine.paused","repo":"Smana/ai-native-ref","routine":"dead-code","reason":"consecutive_closed"}` {
+		t.Fatalf("routine.paused json = %s", b)
 	}
 }

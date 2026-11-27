@@ -411,10 +411,15 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		return fmt.Errorf("room-broker: verdict poster: %w", err)
 	}
 	if len(cfg.Webhooks) > 0 { // R30: no subscriber, no emitter
-		if err := mgr.Add(&webhook.Emitter{Subs: webhookSubscribers(cfg.Webhooks), Events: st,
-			Rooms: roomRepository(mgr.GetClient(), ns), State: st, Metrics: m, Logger: log, Now: time.Now, FactoryPrincipal: fconfig.PrincipalFactory}); err != nil {
+		em := &webhook.Emitter{Subs: webhookSubscribers(cfg.Webhooks), Events: st,
+			Rooms: roomRepository(mgr.GetClient(), ns), State: st, Metrics: m, Logger: log, Now: time.Now, FactoryPrincipal: fconfig.PrincipalFactory}
+		if err := mgr.Add(em); err != nil {
 			return fmt.Errorf("room-broker: webhook emitter: %w", err)
 		}
+		if err := mgr.Add(em.PausedRunner()); err != nil {
+			return fmt.Errorf("room-broker: webhook paused runner: %w", err)
+		}
+		api.RoutinePaused = em
 	}
 	down := newDrainFlag(ctx)
 	ops := withPreflight(opsHandler(st.Ping, st.SchemaReady, boundedSync(rw.synced), down.Draining, exp.Handler()),
@@ -537,9 +542,10 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	if in != nil {
 		coord = &humanapi.CoordinationPlanner{Mode: cfg.Coordination.Mode, Resolve: humanapi.ClassPolicy(in.Classes)}
 	}
-	// A sponsored principal's reach into a family exists only while coordination is not off.
+	// A sponsored principal's configured repositories bound its reach in coordination and digest
+	// endpoints whenever any sponsored principal is declared.
 	var sponsoredRepos map[string]map[string]bool
-	if cfg.Coordination.Mode != "" && cfg.Coordination.Mode != fconfig.CoordinationOff {
+	if len(h.MCP.Sponsored) > 0 {
 		sponsoredRepos = h.MCP.SponsoredRepositories()
 	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
