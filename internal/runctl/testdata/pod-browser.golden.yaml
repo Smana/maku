@@ -3,7 +3,7 @@ metadata:
     agents.ogenki.io/principal: human:a
     agents.ogenki.io/screenshots: "10"
     agents.ogenki.io/vision: "true"
-    maku.ogenki.io/egress: github.com:443,api.github.com:443,proxy.golang.org:443,sum.golang.org:443,dl.google.com:443
+    maku.ogenki.io/egress: github.com:443,api.github.com:443,proxy.golang.org:443,sum.golang.org:443,dl.google.com:443,vuln.go.dev:443,storage.googleapis.com:443
   labels:
     agents.ogenki.io/role: implementer
     agents.ogenki.io/run-id: abcdefgh

@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [The `golang` profile reaches the Go vulnerability database](#the-golang-profile-reaches-the-go-vulnerability-database)
 - [`evaluation.treatmentModel`](#evaluationtreatmentmodel)
 - [The `model:<alias>` label pin](#the-modelalias-label-pin)
 - [Run aliases and per-alias prices](#run-aliases-and-per-alias-prices)
@@ -54,6 +55,15 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## The `golang` profile reaches the Go vulnerability database
+
+No value changes. A run that requests `golang` now also reaches `vuln.go.dev` (govulncheck's
+database) and `storage.googleapis.com`, where `proxy.golang.org` redirects large module zips and the
+go command's toolchain downloads. The egress proxy matches hosts, not paths, so that opens every
+public Cloud Storage object to such a run. An install that overrides `runController.egressProfiles`
+keeps its own list. Separately, `gh run view --log` and `gh api .../actions/.../logs` now exit 3 in a
+run with a message: GitHub serves those logs from Azure blob storage, which no run reaches.
 
 ## `evaluation.treatmentModel`
 

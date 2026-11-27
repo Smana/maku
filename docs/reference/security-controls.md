@@ -238,6 +238,11 @@ namespace). Its guarantees:
   A tunnel to an install host ends within a second of the close or the deadline. The harness checks
   the close with a CONNECT to `install-check.maku.invalid:443`, which the proxy never dials: 409
   while the set is open, 403 (`install_check`) once it is closed.
+- **Hosts, never paths.** The `golang` profile holds `storage.googleapis.com`, where
+  `proxy.golang.org` redirects large module zips and toolchains: a run with that profile reaches any
+  public Cloud Storage object. GitHub Actions job logs redirect to Azure blob storage
+  (`productionresultssa*.blob.core.windows.net`), which no profile opens; the harness's `gh` says so
+  instead of waiting on the refusal, and a server-side read is tracked in maku#804.
 - **No private address.** It refuses an IP literal, and a name that resolves to any loopback,
   private, link-local, CGNAT, NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`), IPv4-compatible (`::/96`)
   or `privateCIDRs` address. It dials the address it checked, never the name again. Its own

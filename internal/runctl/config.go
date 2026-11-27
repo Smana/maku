@@ -432,7 +432,12 @@ var defaultProfiles = map[string][]string{
 	"github": {"github.com", "api.github.com"},
 	"pypi":   {"pypi.org", "files.pythonhosted.org"},
 	"npm":    {"registry.npmjs.org"},
-	"golang": {"proxy.golang.org", "sum.golang.org", "dl.google.com"},
+	// vuln.go.dev is govulncheck's database. storage.googleapis.com is where proxy.golang.org redirects
+	// a large module's zip and a toolchain module (golang.org/toolchain, the go command's toolchain
+	// switch), both verified against sum.golang.org. The proxy matches a host, never a path, so the
+	// whole of it is open to a run with this profile, not only /proxy-golang-org-prod/: any public
+	// object on Google Cloud Storage, the same class of reach as pypi's files host.
+	"golang": {"proxy.golang.org", "sum.golang.org", "dl.google.com", "vuln.go.dev", "storage.googleapis.com"},
 	"crates": {"index.crates.io", "static.crates.io"},
 	// Developer review gap 2 (owner decision D2): Maven Central, and Gradle's plugin portal and
 	// distributions, which the Maven and Gradle wrappers download; Node's release host, where mise
