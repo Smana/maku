@@ -4,7 +4,7 @@ weight: 1
 description: "Guides, architecture, installation seams, operations, and reference for Maku."
 ---
 
-Documentation for **Maku** — the sovereign, Kubernetes-native coding-agent factory (`maku-broker`, `maku-bridge`, `maku-factory`, `maku-run-controller`, `maku-slack`, `maku-gateway`, and the `maku` CLI).
+Documentation for **Maku** — the self-hosted, Kubernetes-native coding-agent factory (`maku-broker`, `maku-bridge`, `maku-factory`, `maku-run-controller`, `maku-slack`, `maku-gateway`, and the `maku` CLI).
 
 {{< cards >}}
   {{< card link="get-started/" title="Get started" icon="play" subtitle="Try Maku on your laptop in 15 minutes, run a Tier-1 Pilot, or evaluate with your team." >}}

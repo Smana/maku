@@ -28,7 +28,7 @@ What alternatives did we consider for each layer of Maku, and why did the curren
 
 ## Where each tool fits
 
-A sovereign coding-agent factory has five layers. Most "agent platforms" cover one or two of them; Maku needs all five.
+A self-hosted coding-agent factory has five layers. Most "agent platforms" cover one or two of them; Maku needs all five.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 400}}}%%

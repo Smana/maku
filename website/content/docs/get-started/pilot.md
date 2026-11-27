@@ -112,7 +112,7 @@ Maku is Apache-2.0 open source and is not a commercial SaaS product. For an engi
 - **What the maintainer provides:** best-effort open-source support to bootstrap Tier-1 Pilot and
   collaborate directly on friction, hardening and workflow improvements driven by your stack — with
   optional paid freelance days if your company wants dedicated hands-on integration work.
-- **What both sides get:** you get a sovereign, zero-seat-tax coding-agent factory on your own
+- **What both sides get:** you get a self-hosted, zero-seat-tax coding-agent factory on your own
   infrastructure; Maku gets real-world private-repository validation and feedback.
 
 Interested in running a pilot? [Get in touch](https://blog.ogenki.io/about/).

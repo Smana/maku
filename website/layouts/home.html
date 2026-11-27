@@ -6,11 +6,11 @@
       <div class="maku-wrap maku-hero-inner">
         <div class="maku-hero-copy">
           <h1 id="hero-title" class="maku-hero-title">
-            Sovereign coding agents on <span class="maku-hero-accent">your own Kubernetes cluster.</span>
+            Run coding agents on Kubernetes <span class="maku-hero-accent">without trusting them.</span>
           </h1>
           <p class="maku-hero-lead">
             Keep Claude Code, OpenCode, or Cursor on your laptop, and hand off asynchronous backlog, maintenance, and SRE issues to <strong>Maku</strong>.
-            Every agent runs in a gVisor sandbox behind hard USD budgets and auditable rooms—bringing back a reviewed pull request without trusting a third-party SaaS control plane or the agents themselves.
+            Every run executes in a gVisor sandbox on your cluster behind gateway-enforced USD budgets and append-only rooms—bringing back a reviewed pull request with no third-party SaaS control plane.
           </p>
           <div class="maku-cta-row">
             <a class="maku-btn maku-btn-primary" href="{{ "docs/get-started/quickstart/" | relURL }}">
@@ -84,7 +84,7 @@
       </div>
     </section>
 
-    {{- /* Band 3: Architecture schematic & four sovereign controls */ -}}
+    {{- /* Band 3: Architecture schematic & four external controls */ -}}
     <section class="maku-band maku-band-tinted" aria-labelledby="controls-title">
       <div class="maku-wrap">
         <div class="maku-band-head">
@@ -154,7 +154,7 @@
           <div class="maku-ledger-item">
             <svg class="maku-ledger-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"/><path d="M9 12l2 2 4-4"/></svg>
             <div>
-              <h3>Sovereign control plane, zero vendor lock-in</h3>
+              <h3>Your cluster, zero vendor lock-in</h3>
               <p>Bring your own Kubernetes cluster, OIDC identity provider (Okta, Entra ID, Keycloak, ZITADEL), OpenAI- or Anthropic-compatible model providers (SaaS or self-hosted), and GitOps controller. Data-class routing keeps private repositories strictly on authorized providers, backed by PostgreSQL 16+ RLS and immutable audit triggers.</p>
               <a href="{{ "docs/concepts/security/" | relURL }}">Threat model &amp; guarantees →</a>
             </div>

@@ -1,4 +1,4 @@
 ---
-title: "Maku — Sovereign Kubernetes Coding-Agent Factory"
-description: "Run coding agents on your own Kubernetes cluster without trusting a third-party SaaS control plane or the agents themselves. Apache-2.0."
+title: "Maku — Run coding agents on Kubernetes without trusting them"
+description: "Self-hosted, Apache-2.0 coding-agent factory on Kubernetes: gVisor sandboxes, gateway-enforced USD budgets, append-only rooms, and GitOps-governed merge policies."
 ---
