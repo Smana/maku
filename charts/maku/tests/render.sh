@@ -944,5 +944,9 @@ out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" \
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.gateway.prices."gemini-standard" | .input + "/" + .output) == "3.30/16.50"' 'per-alias prices reach run-controller config'
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/rc-prices.yaml"
 go run ./tests/loadconfig run-controller-gateway "$tmp/rc-prices.yaml" || fail=1
+# A pinned service sidecar image (postgres, redis) joins the run-pod allow-list too, or every run of
+# a Repository with spec.runtime.services is refused at pod admission (seen live on gcp-0).
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.images.postgres.tag=$digest)"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression) | contains("docker.io/library/postgres")' 'a pinned postgres service image joins the run-pod policy allow-list'
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"
