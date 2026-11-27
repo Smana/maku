@@ -20,7 +20,7 @@ func TestCheckNamed(t *testing.T) {
 		want       []string // the narrowed candidates when nothing is refused
 		refused    string   // a substring of the sentence when refused
 	}{
-		{"the live case", "let's add mistral support to runlore", served, nil, "runlore isn't served here (served: Smana/ai-native-ref)"},
+		{"the live case", "let's add mistral support to runlore", served, nil, "runlore isn't served here (served: Smana/ai-native-ref); ask your platform team to serve it: they run maku repo add"},
 		{"the re-plan reply", "the docs are wrong\nReply 1: you're wrong I specifically asked runlore", served, nil, "runlore isn't served here"},
 		{"owner/name", "add mistral to Smana/runlore please", served, nil, "Smana/runlore isn't served here"},
 		{"an unknown repository by owner/name", "fix Smana/something-else", served, nil, "Smana/something-else isn't served here"},

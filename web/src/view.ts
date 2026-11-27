@@ -10,7 +10,7 @@ import { NEED_TYPES, needType, needTypeRank } from "./needs";
 import { ago } from "./summary";
 import { mountThemeButton, type ThemeController } from "./theme";
 import { mountSettingsLink } from "./settingslink";
-import { newTaskForm } from "./newtask";
+import { newTaskForm, offerServedRepositories } from "./newtask";
 
 // A room's rows by seq, in seq order on the page. A resume the broker clamped can
 // resend a seq: its row is replaced in place, never doubled, and one no longer held
@@ -415,9 +415,14 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   // The normal way to ask for work: the planner drafts an issue, and the factory works on it.
   addTask.title = "Plans your request into a GitHub issue the factory works on";
   addTask.setAttribute("aria-description", addTask.title);
+  let servedOffered = false;
   addTask.onclick = () => {
     form.hidden = true;
     taskForm.hidden = !taskForm.hidden;
+    if (!servedOffered) {
+      servedOffered = true;
+      void offerServedRepositories(taskForm, get);
+    }
   };
   // The advanced path, behind More beside New task: a room tied to no issue, driven by you.
   const more = moreMenu(() => {

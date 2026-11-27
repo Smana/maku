@@ -193,6 +193,23 @@ async function readRefusal(r: Response): Promise<RefusalBody> {
   }
 }
 
+// offers is each New task form's way to add repositories to its picker.
+const offers = new WeakMap<HTMLElement, (names: string[]) => void>();
+
+// offerServedRepositories adds every repository the planner serves to form's picker, not only the
+// rooms' ones: a developer sees none of those on their first day (developer review gap 9). A list
+// that cannot be read leaves the picker as it is.
+export async function offerServedRepositories(form: HTMLElement, get: typeof fetch = fetch): Promise<void> {
+  const offer = offers.get(form);
+  if (!offer) return;
+  try {
+    const r = await api("/api/handoffs/repositories", {}, get);
+    if (r.ok) offer(((await r.json()) as { repositories?: string[] }).repositories ?? []);
+  } catch {
+    // the rooms' repositories stay offered
+  }
+}
+
 // newTaskForm builds the New task planner and confirmation form over POST /api/handoffs,
 // POST /api/handoffs/{id}/check and POST /api/handoffs/{id}/start.
 export function newTaskForm(get: typeof fetch = fetch, repos: string[] = []): HTMLElement {
@@ -205,10 +222,21 @@ export function newTaskForm(get: typeof fetch = fetch, repos: string[] = []): HT
     "What should change?",
   );
   const repository = named(el("select", { name: "repository" }), "repository");
-  repository.append(el("option", { value: "", textContent: "Auto (let Maku choose)" }));
-  for (const r of [...new Set(repos)].sort()) {
-    repository.append(el("option", { value: r, textContent: r }));
-  }
+  const offer = (names: string[]): void => {
+    // GitHub names are case-insensitive: a room's spelling wins over the served list's lower case.
+    const byKey = new Map<string, string>();
+    for (const o of [...repository.options].slice(1)) byKey.set(o.value.toLowerCase(), o.value);
+    for (const r of names) if (r && !byKey.has(r.toLowerCase())) byKey.set(r.toLowerCase(), r);
+    const keep = repository.value;
+    repository.replaceChildren(el("option", { value: "", textContent: "Auto (let Maku choose)" }));
+    for (const key of [...byKey.keys()].sort()) {
+      const r = byKey.get(key) as string;
+      repository.append(el("option", { value: r, textContent: r }));
+    }
+    repository.value = keep;
+  };
+  offer(repos);
+  offers.set(root, offer);
   const planBtn = el("button", { type: "submit", className: "primary", textContent: "Plan" });
   planBtn.dataset.act = "plan-task";
 

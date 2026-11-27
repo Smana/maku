@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { newTaskForm } from "../src/newtask";
+import { newTaskForm, offerServedRepositories } from "../src/newtask";
 
 function jsonResp(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -231,5 +231,30 @@ describe("newTaskForm", () => {
 
     (root.querySelector('button[data-act="accept-rest"]') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(root.querySelector('button[data-act="start-task"]')).not.toBeNull());
+  });
+});
+
+describe("newTaskForm repository picker", () => {
+  it("offers every served repository, beside the rooms' ones", async () => {
+    const get = vi.fn(async (url: string) => {
+      if (url === "/api/handoffs/repositories") {
+        return jsonResp({ repositories: ["acme/api", "smana/maku"] });
+      }
+      return jsonResp({}, 404);
+    });
+    const root = newTaskForm(get as unknown as typeof fetch, ["Smana/maku"]);
+    await offerServedRepositories(root, get as unknown as typeof fetch);
+    await vi.waitFor(() => {
+      const opts = [...root.querySelectorAll('select[name="repository"] option')].map((o) => (o as HTMLOptionElement).value);
+      expect(opts).toEqual(["", "acme/api", "Smana/maku"]);
+    });
+  });
+
+  it("keeps the rooms' repositories when the list cannot be read", async () => {
+    const get = vi.fn(async () => jsonResp({}, 503));
+    const root = newTaskForm(get as unknown as typeof fetch, ["Smana/maku"]);
+    await offerServedRepositories(root, get as unknown as typeof fetch);
+    const opts = [...root.querySelectorAll('select[name="repository"] option')].map((o) => (o as HTMLOptionElement).value);
+    expect(opts).toEqual(["", "Smana/maku"]);
   });
 });

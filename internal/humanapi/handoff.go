@@ -1028,6 +1028,29 @@ func (s *Server) viewerGitHubLogin(ctx context.Context, p authn.Principal, repos
 }
 
 // handoffCreateRoute is POST /api/handoffs: member-authenticated planning over the handoff engine.
+// handoffRepositoriesRoute is GET /api/handoffs/repositories: the repositories the planner serves for
+// the caller (planRepositories), for the New task picker (developer review gap 9). A factory that
+// does not answer leaves the list empty: the picker then offers the rooms' repositories, as before.
+func (s *Server) handoffRepositoriesRoute(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.principal(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
+	defer cancel()
+	repos, err := s.planRepositories(ctx, p)
+	if err != nil {
+		s.log().Warn("served repositories unreadable: the picker offers the rooms' repositories", "err", err)
+		repos = nil
+	}
+	if repos == nil {
+		repos = []string{}
+	}
+	writeJSON(w, struct {
+		Repositories []string `json:"repositories"`
+	}{repos})
+}
+
 func (s *Server) handoffCreateRoute(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
 	if !ok {
