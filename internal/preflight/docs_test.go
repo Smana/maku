@@ -11,7 +11,7 @@ import (
 
 var updateDocs = flag.Bool("update-docs", false, "rewrite docs/install.md's check table from the catalog")
 
-const installDoc = "../../docs/install.md"
+const installDoc = "../../website/content/docs/install/_index.md"
 
 // TestInstallDocTable: docs/install.md's check table is DocTable of the catalog (IN2), between its
 // markers. Rerun with -update-docs after a catalog change.

@@ -31,7 +31,7 @@ group='(^|[^.a-z-])agents\.ogenki\.io(/v1alpha1|_[a-z]+\.yaml|`)|(rooms|tasks|ag
 # export, so the old names are refused everywhere but the history, the upgrade note and the two
 # tests that prove they are no longer served.
 slack_metrics='factory_slack_[a-z_]+'
-slack_allow=(':!docs/upgrading.md' ':!internal/metrics/metrics_test.go' ':!internal/app/slackapp_test.go')
+slack_allow=(':!docs/upgrading.md' ':!website/content/docs/operate/upgrading.md' ':!internal/metrics/metrics_test.go' ':!internal/app/slackapp_test.go')
 # The instruments keep their old strings in Go; the exporter serves maku_ names only (v0.31.0). The
 # list is read from the source, so a new instrument joins the gate; a histogram's series are refused too.
 metric_args=()

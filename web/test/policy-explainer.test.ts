@@ -8,7 +8,7 @@ import { DOCS_SECTION, explainerSource, policyExplainer } from "../src/policy-ex
 
 describe("How merge policies decide (correctness signals W9)", () => {
   it("is the docs section, not a second copy", () => {
-    const doc = readFileSync(join(__dirname, "..", "..", "docs", "merge-policies.md"), "utf8");
+    const doc = readFileSync(join(__dirname, "..", "..", "website", "content", "docs", "use", "merge-policies.md"), "utf8");
     const heading = "## Holds, agreed, signal-checked\n";
     const rest = doc.slice(doc.indexOf(heading) + heading.length);
     const end = rest.indexOf("\n## ");
@@ -25,7 +25,7 @@ describe("How merge policies decide (correctness signals W9)", () => {
     for (const a of box.querySelectorAll("a")) expect(a.getAttribute("href") ?? "").toMatch(/^https:\/\//);
   });
   it("points the docs' relative links at the docs", () => {
-    expect(explainerSource("see [the stage](factory.md#the-tester-stage) and [here](#x)"))
-      .toBe("see [the stage](https://github.com/Smana/maku/blob/main/docs/factory.md#the-tester-stage) and [here](https://github.com/Smana/maku/blob/main/docs/merge-policies.md#x)");
+    expect(explainerSource("see [the stage](concepts/factory.md#the-tester-stage) and [here](#x)"))
+      .toBe("see [the stage](https://maku.ogenki.io/docs/concepts/factory/#the-tester-stage) and [here](https://maku.ogenki.io/docs/use/merge-policies/#x)");
   });
 });

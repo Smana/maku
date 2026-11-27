@@ -1,0 +1,553 @@
+---
+title: "The model gateway"
+weight: 50
+description: "Agent Factory reaches every model through one gateway: agentgateway v1.6, configured by the maku-gateway chart. Runs, the planner and the Slack intent classifier each call it."
+diataxis: reference
+aliases:
+  - /docs/gateway/
+---
+
+Agent Factory reaches every model through one gateway: [agentgateway](https://agentgateway.dev) v1.6,
+configured by the `maku-gateway` chart. Runs, the planner and the Slack intent classifier each call it
+with their own projected ServiceAccount token. The gateway checks the token, then calls the provider
+with a key that only the gateway holds. This page covers the seam, the values, the provider presets and
+the identity model. The chart's own [README](https://github.com/Smana/maku/blob/main/charts/maku-gateway/README.md) lists what it renders.
+
+```mermaid
+flowchart LR
+  R["run pod<br/>token aud maku-gateway.public.tier-light"] -->|"/m/tier-light/v1 :8080"| GW
+  B["broker<br/>tokens aud maku-gateway.client.planner, .classifier"] -->|"/clients/planner/v1 :8082"| GW
+  subgraph GW["Gateway model-gateway"]
+    L["listener: verify the token (issuer, exp, sub, class)"] --> RT["route: require the alias's audience"]
+    RT --> BE["backend: model forced to the alias, preset fields, key from a Secret"]
+  end
+  BE --> P["provider (Z.ai, Anthropic, Kimi, Mistral, OpenAI, custom)"]
+  C["agentgateway controller"] -.->|"xDS, the JWKS"| GW
+```
+
+## Contents
+
+- [The seam](#the-seam)
+- [Values](#values)
+- [Presets](#presets)
+- [Identity](#identity)
+- [Runs through the gateway](#runs-through-the-gateway)
+- [Metering the runs](#metering-the-runs)
+- [The planner and the classifier](#the-planner-and-the-classifier)
+- [Network](#network)
+- [Proving it](#proving-it)
+
+## The seam
+
+| Piece | Who brings it | How |
+|---|---|---|
+| Gateway API standard CRDs, v1.2 or later | the cluster | the [Gateway API release](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) |
+| agentgateway's CRDs, v1.6.0 | `config/agentgateway` (vendored), or yours | applied server-side before the umbrella, apart from any Helm release ([below](#agentgateways-crds)) |
+| agentgateway's controller, v1.6.0 | the umbrella with `agentgateway.enabled: true`, or yours | its GatewayClass `agentgateway` |
+| The Gateway, its policies, backends, routes, catalog and NetworkPolicy | `maku-gateway` (standalone, or the umbrella with `maku-gateway.enabled: true`) | these values |
+| One Secret per provider | you | `kubectl create secret`, ESO, Sealed Secrets: the chart only names it |
+
+### agentgateway's CRDs
+
+agentgateway's four CRDs hold 2.3 MB of schema. Helm stores a release's chart and rendered manifest
+in one Secret, which the API caps at 1 MiB, and these CRDs alone take it to about 1 MB. So no Maku
+chart carries them: `config/agentgateway` holds them, vendored from the upstream chart and pinned
+(`hack/agentgateway.sha256`), to apply server-side before the umbrella. Unlike Maku's own CRDs in
+`agent-factory-crds`, these are applied outside Helm.
+
+With kubectl, from a checkout of the release tag:
+
+```bash
+kubectl apply --server-side -f config/agentgateway
+```
+
+With Flux, a Kustomization over the directory, and the umbrella's HelmRelease depending on it:
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: maku, namespace: flux-system}
+spec:
+  interval: 1h
+  url: https://github.com/Smana/maku
+  ref: {tag: v0.4x.y}            # the release whose charts you install
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: agentgateway-crds, namespace: flux-system}
+spec:
+  interval: 1h
+  sourceRef: {kind: GitRepository, name: maku}
+  path: ./config/agentgateway
+  prune: false                   # removing this Kustomization must never delete the CRDs
+  wait: true
+---
+# on the umbrella's HelmRelease
+spec:
+  dependsOn:
+    - {name: agentgateway-crds, namespace: flux-system}
+```
+
+With Argo CD, an Application synced before the umbrella's:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agentgateway-crds
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "-1"}   # lower than the umbrella's Application
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Smana/maku
+    targetRevision: v0.4x.y      # the release whose charts you install
+    path: config/agentgateway
+  destination: {server: https://kubernetes.default.svc}
+  syncPolicy:
+    automated: {prune: false}
+    syncOptions: [ServerSideApply=true, Prune=false]
+```
+
+These CRDs outlive an uninstall only while pruning is off: a Flux Kustomization with `prune: true`, or
+an Argo CD Application that prunes or is deleted with its resources, deletes them, and every Gateway
+object with them. `kubectl delete -f` does too.
+
+The alternative is the upstream chart, `oci://cr.agentgateway.dev/charts/agentgateway-crds` v1.6.0,
+pinned by digest `sha256:dd7f965d43e54dffa9c95af089b6f762397a23c963a159ad6d4992f6c582292a`. This is how
+cnref installs these CRDs today. Its release Secret is about 912 KB, under the 1 MiB cap with little
+headroom for a larger upstream schema. It sets no keep annotation, so uninstalling it deletes the CRDs.
+
+Both switches are off by default, so a release that sets none of them renders exactly what it did
+before. The umbrella fails the render when `maku-gateway.runs` differs from `maku.runs`, or when the
+gateway's broker ServiceAccount is not `room-broker`. It also fails when the gateway and the broker
+disagree about [the clients](#the-planner-and-the-classifier).
+
+## Values
+
+| Key | Default | What it is |
+|---|---|---|
+| `enabled` | `false` | Renders the gateway |
+| `name` | `model-gateway` | The Gateway and its Service: `<name>.<release namespace>.svc` |
+| `image` | `cr.agentgateway.dev/agentgateway:v1.6.0` by digest | The proxy, pinned by digest (`image.digest` is required); keep it on the controller's version |
+| `listeners` | `public: 8080`, `internal: 8081`, `clients: 8082` | One listener per data class, and one for the broker's clients |
+| `audiencePrefix` | `maku-gateway` | Every accepted audience starts with it |
+| `identity.issuer` | (required) | The cluster's ServiceAccount issuer (`kubectl get --raw /.well-known/openid-configuration`) |
+| `identity.jwks.source` | `url` | `url`: `jwks.url` is the issuer's public JWKS (GKE, EKS). `apiserver`: the in-cluster apiserver's (kind, k3d, kubeadm). `inline`: `jwks.inline`, the keyset itself |
+| `identity.jwks.allowAnonymousDiscovery` | `false` | Required with `source: apiserver`; see [the JWKS](#the-jwks) |
+| `runs` | `agents`, `run-` | The runs this gateway serves; must equal the factory's and the broker's |
+| `broker` | `room-broker` in the release namespace | The clients listener's only caller |
+| `providers.<name>` | none | `preset`, `existingSecret` (required, and refused for `vertex`), `key` (`apiKey`), `dataClasses` (`[public]`), `transformations`, `egress`; `host`, `port`, `path`, `tls` for `custom` only; `projectId` (or a `${variable}` that Flux substitutes after the render) and `region` (`global`, `us`, `eu` or a region, never a variable: the host is derived from it) for `vertex` only, and required there |
+| `aliases.public`, `aliases.internal` | none | `<alias>: {provider, model}`, with aliases from the AgentRun's model names; `internal` takes the four tiers only |
+| `clients.planner`, `clients.classifier` | off | `{enabled, provider, model}`: the planner's `tier-frontier`, the classifier's `tier-light` |
+| `modelCatalog.prices` | none; in the umbrella, `maku-factory.config.meter.prices` | The factory's `meter.prices` rows; each model must be served by an alias or a client. In the umbrella (`modelCatalog.umbrellaPrices: true`), an empty `prices` takes the factory's rows, those of a model an alias or a client serves, so a price has one source; `prices` set here wins |
+| `timeouts` | `runs: 600s`, `clients: 60s` | A long completion must not be cut; the clients' own deadlines are 20 s and 5 s |
+| `networkPolicy.mode` | `""` (kubernetes) | `kubernetes`, `cilium` or `none`; see [Network](#network) |
+| `metrics.allowFrom` | none | NetworkPolicy peers allowed to scrape the proxy's `:15020` |
+| `gcpCredentials` | `source: metadata` | Where a `vertex` provider's token comes from: `metadata` (GKE Workload Identity), or `external` with `configMap` and `key` (`credentials.json`), an `external_account` credential; see [Outside GKE](#outside-gke-workload-identity-federation) |
+| `proxy.env`, `proxy.sidecars`, `proxy.volumes` | none | Merged into the proxy pod the controller generates: env on the `agentgateway` container, sidecars and their volumes. A sidecar brings its own security context, resources, probes and egress |
+
+A smallest working set, with one in-cluster provider:
+
+```yaml
+maku-gateway:
+  enabled: true
+  identity:
+    issuer: https://kubernetes.default.svc.cluster.local
+    jwks: {source: apiserver, allowAnonymousDiscovery: true}
+  providers:
+    zai: {preset: zai, existingSecret: zai-api-key}
+  aliases:
+    public:
+      tier-light: {provider: zai, model: glm-5.3-flash}
+      tier-frontier: {provider: zai, model: glm-5.3}
+```
+
+## Presets
+
+Each provider's quirks live in the chart. A value can add a transformation, but a value that names a
+field the preset sets fails the render with `providers.<name>.transformations.<field>: the <preset> preset
+sets it (<why>); use preset custom to own it`. No value can rewrite `model`: each route forces it.
+
+| Preset | Provider | Always rendered | Always reasons |
+|---|---|---|---|
+| `openai` | native OpenAI | nothing | no |
+| `anthropic` | native Anthropic: Chat Completions in, Messages out | nothing | no |
+| `zai` | `api.z.ai`, `/api/paas/v4/chat/completions` | nothing | `glm-5.3` |
+| `mistral` | `api.mistral.ai`, `/v1/chat/completions` | `reasoning_effort: "none"`: agentgateway 1.6 and 1.7 cannot parse the list `content` Mistral's reasoning answers with (a 502) | no |
+| `moonshot` | `api.kimi.ai`, `/coding/v1/chat/completions` (the Kimi Code plan's host) | `temperature: 1` and no `top_p`: K3.1 Pro fixes both | every model: `reasoning_content` spends `max_tokens` first |
+| `gemini` | `generativelanguage.googleapis.com`, `/v1beta/openai/chat/completions` (the Gemini API, an AI Studio key) | nothing | every model: Gemini 4 cannot stop thinking |
+| `vertex` | native Vertex AI: `projectId` and `region`, no key ([Gemini on Vertex AI](#gemini-on-vertex-ai)) | `thinking_config` from `reasoning_effort`: agentgateway 1.6 sends Gemini 4 a `thinkingBudget`, which it refuses with a 400 | every model |
+| `custom` | your `host`, `port`, `path`, `tls` | only yours | no |
+
+A classifier mapped to a model that always reasons fails the render: its 64 tokens would be spent
+reasoning, and its reply would be empty. The planner may run on one, beside its `reasoningEffort: low`.
+Whether K3.1 Pro refuses `temperature: 0` or ignores it is unverified; the preset sets 1 either way.
+
+### Gemini on Vertex AI
+
+The `vertex` preset calls Gemini with the proxy's own Google identity, so no key exists in a Secret,
+in OpenBao or in a pod. Probe P7 established how agentgateway 1.6 does it:
+
+| Fact | What the probe saw |
+|---|---|
+| The path | `generateContent` on `/v1/projects/<projectId>/locations/<region>/publishers/google/models/<model>`: agentgateway translates Chat Completions itself, and never calls Vertex's `endpoints/openapi` |
+| The host | `global`: `aiplatform.googleapis.com`; `us`, `eu`: `aiplatform.<region>.rep.googleapis.com`; a region: `<region>-aiplatform.googleapis.com` |
+| The token | An access token from the metadata server, as `Authorization: Bearer` |
+| Thought signatures | Each tool call's id carries its signature (`<id>__thought__<signature>`), so a caller that sends the tool call id back round-trips it, whatever else it drops |
+| Effort | `reasoning_effort` low (and none, minimal) is `thinkingLevel: low`, medium is medium, anything else is high; without `reasoning_effort` no thinking config is sent |
+| Metering | Thinking tokens count as output and are priced at the output rate; the catalog key is `gcp.vertex_ai` |
+
+```yaml
+maku-gateway:
+  providers:
+    vertex: {preset: vertex, projectId: my-project, region: eu}   # no existingSecret
+  aliases:
+    public:
+      gemini-standard: {provider: vertex, model: gemini-4-neon}
+      gemini-light: {provider: vertex, model: gemini-4-hydrogen}
+```
+
+What the operator binds, on GKE with Workload Identity:
+
+- **The ServiceAccount:** the proxy runs as the Gateway's name, `model-gateway` (`name`), in the
+  release namespace. Bind that subject directly
+  (`principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<project>.svc.id.goog/subject/ns/<namespace>/sa/model-gateway`).
+- **The role:** `aiplatform.endpoints.predict` is all a call needs. Prefer a custom role holding only
+  it to `roles/aiplatform.user`, which can also create and delete Vertex resources.
+- **The API:** `aiplatform.googleapis.com` enabled on the project.
+- **The network:** the policy opens the region's host and the GKE metadata server
+  (`169.254.169.254` and `169.254.169.252`, ports 80 and 988).
+
+#### Outside GKE: Workload Identity Federation
+
+With `gcpCredentials.source: external` the proxy reads an `external_account` credential (Google's
+ADC format for Workload Identity Federation) from a ConfigMap you create, mounted at
+`/var/run/maku-gateway/gcp/credentials.json` and named by `GOOGLE_APPLICATION_CREDENTIALS`. The file
+holds no secret: a pool provider's name, the subject token type and where the subject token comes
+from. The network policy then opens `sts.googleapis.com:443` instead of the metadata server.
+
+On EKS, one gap: agentgateway 1.6's Google client (`google-cloud-auth` 1.16) reads AWS credentials
+for an `aws1` source only from `AWS_ACCESS_KEY_ID` and friends or from an IMDS-shaped `url`, never
+from EKS Pod Identity. A sidecar that serves the Pod Identity session on loopback in IMDS's shape
+closes it; set `credential_source.url` to the sidecar and `AWS_REGION` in `proxy.env`:
+
+```yaml
+maku-gateway:
+  gcpCredentials: {source: external, configMap: model-gateway-gcp-credentials}
+  proxy:
+    env: [{name: AWS_REGION, value: eu-west-3}]
+    sidecars: [...]   # the credential sidecar, with its own securityContext, resources and probes
+    volumes: [...]
+```
+
+cloud-native-ref's `aws-gcp-federation` design is one worked deployment: the pool trusts the
+gateway's Pod Identity role and nothing else.
+
+`max_tokens` counts thinking tokens: a small cap returns empty content, so a caller of Gemini sets
+none or a large one. The classifier refuses Gemini for the same reason.
+
+The `gemini` preset is the Gemini API's OpenAI-compatible endpoint. There the signature rides in
+`tool_calls[].extra_content.google.thought_signature`: the gateway passes it both ways, and a caller
+that drops `extra_content` gets a 400 on its second tool turn (P7).
+
+## Identity
+
+- **The token.** Each caller holds a projected ServiceAccount token per audience:
+  - a run: `<prefix>.<dataClass>.<alias>`, for its model and its judge;
+  - the broker: `<prefix>.client.planner` and `<prefix>.client.classifier`.
+- **The listener** verifies the token offline against `identity.issuer`, and requires `exp` and `sub`.
+  - `public` and `internal` require a sub matching `^system:serviceaccount:<runs namespace>:<namePrefix>[a-z2-7]{8}$`
+    and an audience starting `<prefix>.<listener>.`.
+  - `clients` requires the broker's exact sub and an audience starting `<prefix>.client.`.
+  - The audiences are checked in CEL, not in the JWT provider's audience list, which agentgateway caps.
+- **The route** for an alias requires its own audience, and the listener's subject again. A caller that
+  rewrites its path to another alias holds no token for it, and gets 403. That pins each run to its
+  claim's model and judge. Each route matches exact paths (`/m/<alias>/v1/chat/completions`, and
+  `/v1/messages` for an `anthropic` provider), so the provider key reaches no other provider endpoint.
+- **The headers.** The gateway strips any incoming `x-ar-agent`, `x-ar-human`, `x-ai-gateway-client-id`
+  and `agent-session-id`, sets `x-ar-agent` to the verified sub, and removes the token before the provider.
+  Metrics carry `ar_agent` and the access log `x_ar_agent`, both the verified sub, which is what the
+  factory's meter matches. The access log also carries `cost`, priced from `modelCatalog.prices`.
+- **No token** gets 401; a token for another audience gets 403. No path falls back to a default model.
+
+### The JWKS
+
+agentgateway's controller fetches the issuer's keys and pushes them to the proxies; the proxies never
+call the issuer. With `source: url` the controller fetches `jwks.url`. With `source: apiserver` it
+fetches `https://kubernetes.default.svc.<clusterDomain>/openid/v1/jwks`, verified with the
+`kube-root-ca.crt` ConfigMap. That fetch carries no credential, so it needs two things:
+
+- `allowAnonymousDiscovery: true`, which binds `system:service-account-issuer-discovery` to
+  `system:unauthenticated`. This is Kubernetes' documented setting for OIDC discovery, and it exposes the
+  issuer's public keys only. The chart refuses `source: apiserver` without it.
+- An apiserver that admits anonymous requests. kubeadm and kind do. k3s does not:
+  start it with `--kube-apiserver-arg=anonymous-auth=true`.
+
+Both widen the cluster ([Security]({{< relref "/docs/reference/security-controls.md#the-model-gateways-identity" >}})). `source: inline` avoids them:
+`jwks.inline` holds the keyset (`kubectl get --raw /openid/v1/jwks`), and nothing is fetched. Its cost is
+rotation: when the issuer rotates its signing keys, update the value and upgrade, or new tokens get 401.
+
+## Runs through the gateway
+
+The run controller reaches a model in one of two modes, `maku.runController.model.mode`:
+
+| Mode | What the harness holds | What it calls |
+|---|---|---|
+| `gateway` (the default) | its own projected ServiceAccount tokens, no provider key | `http://<service>.<namespace>.svc.<clusterDomain>:<port>/m/<alias>/v1` |
+| `secret` (demo-only) | the provider key from `runController.modelSecret` (`agent-model`), inside the sandbox | the Secret's `base_url`, with its `model` |
+
+`secret` is a demo's mode: the chart refuses it without `demoValues: true` (the maku chart's marker,
+which `values-quickstart.yaml` and the umbrella's `values-demo.yaml` set), and the install banner shows
+`model_key_in_sandbox` while it is on ([upgrading]({{< relref "/docs/operate/upgrading.md#the-gateway-is-the-model-path" >}})).
+
+In `gateway` mode, for each run:
+
+- **The data class picks the listener.** A `public` run calls `ports.public` (8080), an `internal` run
+  `ports.internal` (8081). The token's audience carries the same class, so neither can call the other's listener.
+- **The claim picks the alias.** `spec.model` (default `agent-default`) is the path and the audience:
+  `MODEL=<alias>`, `LLM_BASE_URL=…/m/<alias>/v1`, `LLM_API_KEY_FILE=/run/agent/model/token`.
+- **The light alias.** `model.gateway.lightAlias` (default `tier-light`) names the alias the light
+  jobs run on: the condenser's summary on an internal run, and a search implementer's child. Every
+  non-empty listener must serve it — the run-controller refuses its config at load otherwise — so a
+  run that can use the alias always holds a live `LIGHT_BASE_URL`, `LIGHT_MODEL` and
+  `LIGHT_API_KEY_FILE` (the judge's token, when the judge already runs on the light alias). A run
+  that cannot (a public run without search) gets none of it.
+- **The aliases and the alias's prices.** `MAKU_ALIASES` lists the aliases the run's listener
+  serves, which OpenCode offers as its models, so a new alias needs no image release. When
+  `model.gateway.prices` names the run's alias, `LLM_INPUT_USD_PER_MTOK` and
+  `LLM_OUTPUT_USD_PER_MTOK` carry its rates, so OpenHands' own cost counter prices that model; an
+  alias without a row keeps the harness's GLM defaults. The meter, not these, settles the run.
+- **The judge has its own token.** With `spec.loop.judgeModel`, the pod gets a second token for that
+  alias, and `JUDGE_BASE_URL`, `JUDGE_MODEL` and `JUDGE_API_KEY_FILE=/run/agent/model/judge-token`.
+- **The token lives the pod's deadline plus 10 minutes.** The harness reads it once, and gVisor raises no
+  inotify event for a rotated token, so it is never rotated. The run controller's preflight check
+  `gateway-token-ttl` requests one token for its own ServiceAccount at the longest run's lifetime
+  (`budget.maxMinutes` 480, plus 10 minutes). An apiserver whose `--service-account-max-token-expiration`
+  is shorter fails the check, and gateway runs are refused with the cap named.
+- **A run its listener does not serve is refused before its pod exists.** `model.gateway.aliases.<class>`
+  lists what each listener serves, and must equal `maku-gateway.aliases.<class>`'s keys. A run
+  whose `spec.model` or judge alias is missing is refused with `spec.model <alias> is not served on the
+  <class> listener`. An `internal` run needs `aliases.internal`. The run controller refused every internal run before this mode.
+
+The values, under `maku.runController.model`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `secret` | `secret` or `gateway` |
+| `gateway.service`, `gateway.namespace` | `""` | the gateway's Service. Empty means `model-gateway` in the release namespace, the umbrella's `maku-gateway` |
+| `gateway.ports` | `{public: 8080, internal: 8081}` | the listeners, which must equal `maku-gateway.listeners` |
+| `gateway.audiencePrefix` | `maku-gateway` | must equal `maku-gateway.audiencePrefix` |
+| `gateway.aliases` | `{public: [], internal: []}` | the aliases each listener serves. `public` is required in `gateway` mode |
+
+In `gateway` mode, the run-pod policy holds every projected token's audience to `room-broker`, `room-tools`,
+`<prefix>.public.` or `<prefix>.internal.`. It also refuses a pod that reads `modelSecret` in any way:
+a volume, a projected source, `env` or `envFrom`. The run controller's Role no longer reads that Secret.
+The preflight's token is bound to the controller's own pod. The umbrella fails the render when `model.mode: gateway` has neither `maku-gateway.enabled` nor
+`model.gateway.service` (an external gateway, as on cloud-native-ref), or when the ports, the prefix or
+the aliases disagree with `maku-gateway`'s.
+
+**The demo runs through the gateway.** Since v0.48.0, `values-demo.yaml` turns on the controller,
+`maku-gateway` (`source: apiserver`) and `model.mode: gateway`; `values-demo-gateway.yaml`, which
+layered them before, is gone. Its one `custom` provider, `demo`,
+reads its key from the Secret `demo-model`, which the umbrella renders in the release namespace
+from `demo.model.apiKey`. Set the provider's `host` and each alias's `model` in the gateway values.
+`demo.model.baseURL`, `name` and `judgeName` are refused there, since nothing would read them. No
+`agent-model` Secret exists in the runs namespace.
+
+## Metering the runs
+
+A run in `gateway` mode calls the gateway as its own ServiceAccount, named like the run, so the
+gateway's token metrics carry the run's subject in `ar_agent`: the subject the factory's meter
+matches. Set `maku-factory.config.runs.gatewayIdentity: true` to say so. The factory then:
+
+- prices the runs from `meter.query`, which reads agentgateway's own series, cache types included
+  (`input_cache_read`, `input_cache_write`), with no relabel ([the query]({{< relref "/docs/reference/budgets.md" >}}));
+- reads the gateway's 429s from `meter.throttle.promQuery`, PromQL on the same `meter.url`, or from
+  VictoriaLogs as before;
+- accepts `loops.<class>.models`, a provider alias per role and tier, which becomes the run's
+  `spec.model` and so its path and audience;
+- accepts `loops.<class>.split` with a meter, since a family's cap is in USD.
+
+The umbrella keeps the two sides together. It fails a render where `model.mode: gateway` and a
+factory lack `runs.gatewayIdentity: true`, or where `gatewayIdentity` is set without
+`model.mode: gateway`. Without the key, a configured meter starts with the warning `the meter prices no run of this runtime: its runs carry no gateway identity`.
+
+**The handshake, run by run.** The umbrella's render check does not reach an install that runs
+`maku-factory` and `maku` as separate releases, as ANR does. So the factory stamps each AgentRun it
+creates under `runs.gatewayIdentity` with `spec.meteredBy: gateway`, which the CRD keeps immutable
+from creation. A run controller in `model.mode: secret` refuses such a run before its pod exists:
+`spec.meteredBy gateway needs model.mode gateway`, as it refuses `dataClass: internal`. Without the
+stamp, a secret-mode run would make no `ar_agent` series. It would end at $0, `familyUSD` would
+never be spent, and its `loops.<class>.models` alias would be ignored.
+
+**The backstop, and what it leaves.** The handshake is the guard; the backstop only makes a miss
+visible. Under `runs.gatewayIdentity`, a run that succeeded and still has no gateway series two
+minutes after it finished (`endSettle`: a short run's last calls reach the meter a scrape interval
+plus VictoriaMetrics' offset late) gets the fallback verdict, unpriced, never $0. Then:
+
+- the meter names its model once (`maku_factory_meter_unpriced_model_runs_total`, the
+  `AgentModelUnpriced` signal);
+- the task's spend is not final, so no `spendFinal` is posted;
+- a split family's `familyUSD` and a coordination child's allocation charge the run its whole
+  reservation (its USD run cap, else its token cap at the reference rate), so those caps stay bounded.
+
+What the backstop does not cover:
+
+- **The day ledgers and the principal caps** charge such a run nothing: the meter read no tokens.
+- **The task's own cap** falls back to its token cap, as for any unpriced run, and the run counts
+  no tokens there.
+- **A run still live with no series** is not flagged: it may not have called its model yet.
+- **A run that fails or is revoked with no series** is not flagged either. It spent nothing the
+  gateway saw, or a scrape missed it.
+
+A scrape that drops the gateway (wrong `metrics.allowFrom`, a missing scrape target) therefore shows
+as unpriced succeeded runs, never as cheap ones.
+
+**The 429s.** `agentgateway_requests_total{status="429"}` counts every 429 the gateway answered,
+its own and a provider's passed through. The meter revokes a run its throttle query names, as
+`budget-fleet`, so the query keeps the gateway's own: `reason="RateLimit"`, the label agentgateway
+sets on a local rate limit (ai-native-ref's budget runbook records it). maku-gateway renders no rate
+limit of its own, so on it the query names no run: a provider's 429 reaches the harness as the
+provider's answer, and the meter never revokes the run for it.
+
+## The planner and the classifier
+
+The broker makes two kinds of model call: the planner (`handoff`, alias `tier-frontier`) and the
+Slack intent classifier (`intent_classify`, alias `tier-light`). Both go to the `clients` listener
+(8082), which admits one subject only, `system:serviceaccount:<release namespace>:room-broker`. Each
+client has its own route and its own audience:
+
+| Client | Route | Token audience | Gateway values |
+|---|---|---|---|
+| planner | `/clients/planner/v1` | `<audiencePrefix>.client.planner` | `clients.planner: {enabled, provider, model}` |
+| plannerInternal | `/clients/planner-internal/v1` | `<audiencePrefix>.client.planner-internal` | `clients.plannerInternal: {enabled, provider, model}` (`providers.<name>.dataClasses` must include `internal`) |
+| classifier | `/clients/classifier/v1` | `<audiencePrefix>.client.classifier` | `clients.classifier: {enabled, provider, model}` |
+
+A token for one client gets 403 on the other client's route. The gateway forces the model to the
+client's alias and maps it to `clients.<client>.model`, so the broker's pinned aliases stay as they are.
+
+**The broker's side** is `maku.broker.modelGateway`:
+
+```yaml
+maku:
+  broker:
+    modelGateway:
+      service: model-gateway     # the Gateway's name; empty turns it off
+      namespace: ""              # "" is the release namespace
+      port: 8082                 # the clients listener
+      audiencePrefix: maku-gateway
+```
+
+With `service` set, the broker's pod mounts one projected token per client at
+`/var/run/secrets/maku/model-gateway/{planner,classifier}`. Each token lasts 3600 s, and the broker
+reads it at each call, so the kubelet's rotation needs no restart. The broker's network policy may
+reach the gateway's pods on `port`. The chart then fills two blocks of the broker's config:
+
+- `human.intake.plan`, when it is enabled: `url` becomes `http://<service>.<namespace>.svc.<clusterDomain>:<port>/clients/planner/v1`, and `apiKeyFile` becomes the planner's token; when `human.intake.plan.internal.enabled` is true, its `url` and `apiKeyFile` likewise fill `/clients/planner-internal/v1` and `/var/run/secrets/maku/model-gateway/planner-internal` so plans touching private or internal repositories (whose `Repository` sets `spec.privateCode.acknowledged: true`) route exclusively over an `internal`-class provider and read repository paths with a short-lived `contents: read` GitHub App token;
+- `human.slackIntents`, only when the block exists: the classifier's route and token.
+
+The two keys are filled together, and only when the block sets neither. A block that sets both keeps
+them, so a broker that reaches another gateway with a static key keeps working until you remove the
+pair. A block that sets only one of them fails the render, naming both keys. Filling the other key
+would pair the gateway's token with your endpoint, or your key with the gateway.
+
+In the umbrella, the render fails when:
+- `maku-gateway` serves a client but `maku.broker.modelGateway.service` does not name its Gateway;
+- the broker's `namespace`, `port` or `audiencePrefix` disagree with the gateway's;
+- the broker derives a client's route from the gateway, but the gateway does not serve that client.
+
+Some notes on choosing the clients' models:
+
+- **The classifier never runs on a model that always reasons.** Its 64 tokens would go to reasoning,
+  and the reply would be empty, so the render fails ([Presets](#presets)).
+- **The planner may.** Set `human.intake.plan.reasoningEffort: low` beside it. cloud-native-ref runs
+  the planner on Z.ai `glm-5.3`, which always reasons:
+
+  ```yaml
+  maku-gateway:
+    clients:
+      planner: {enabled: true, provider: zai, model: glm-5.3}
+  maku:
+    broker:
+      modelGateway: {service: model-gateway}
+      human:
+        intake:
+          plan: {enabled: true, reasoningEffort: low}   # url and apiKeyFile come from modelGateway
+  ```
+- **The classifier's provider sees replies from every room it serves.** Choose one whose data terms suit
+  the workspace's data.
+
+The broker still attributes spend through its own `Usage` and daily caps. The gateway attributes the
+same calls to the broker's `jwt.sub` and the route, which is enough for dashboards.
+
+## Network
+
+`networkPolicy.mode` `kubernetes` (the default) renders a default-deny NetworkPolicy on the proxy pods:
+
+| Direction | Peer | Port |
+|---|---|---|
+| in | run pods (label `agents.ogenki.io/run-id`) in the runs namespace | `public`, `internal` |
+| in | the broker's pods | `clients` |
+| in | `metrics.allowFrom` (in `cilium` mode, label selectors only) | 15020 |
+| out | the cluster DNS | 53 |
+| out | the controller (`networkPolicy.controller`) | 9978 (xDS) |
+| out | each provider: its `egress.peers`, else its `egress.cidrs`, else any address outside `networkPolicy.exceptCIDRs` | the provider's port |
+| out | with a `vertex` provider, the GKE metadata server (`169.254.169.254/32`, `169.254.169.252/32`) | 80, 988 |
+| out | with a `vertex` provider and `gcpCredentials.source: external`, `sts.googleapis.com` instead of the metadata server | 443 |
+
+`cilium` renders the same as a CiliumNetworkPolicy, with each provider by FQDN. Use it only for
+providers outside the cluster. `none` renders no policy. The JWKS is not on the list: the controller
+fetches it, so the controller's own network policy must allow the JWKS source.
+
+## Proving it
+
+- `task chart:gateway:probe` asserts what the chart relies on, against agentgateway on a throwaway k3d:
+  - the JWKS from the apiserver, which needs the anonymous discovery binding;
+  - CEL over `jwt.aud`;
+  - a non-run ServiceAccount holding the right audience is refused;
+  - the exact paths, their rewrite and the forced model;
+  - the presets on the wire;
+  - the metrics labels;
+  - the Gateway API floor (v1.2.1, one HTTPRoute per alias);
+  - P7, the `gemini` and `vertex` presets against a fake Gemini that enforces thought signatures, with
+    a fake metadata server: the facts in [Gemini on Vertex AI](#gemini-on-vertex-ai).
+- `task chart:gateway:k3d` installs the demo, with its gateway, and the probe's echo
+  provider. It checks three calls from a run-like pod: 200 on its alias, 403 on another alias, 401 with
+  no token. Then it starts a run in `model.mode: gateway` and checks three things:
+  - the pod holds only its own token, for `maku-gateway.public.agent-default`;
+  - the runs namespace holds no provider key;
+  - the harness's model call reaches the provider with `x-ar-agent` set to the run's ServiceAccount, and
+    the gateway's access log carries the same subject in `x_ar_agent`.
+- `task chart:intake:k3d` runs the planner and the classifier through the clients listener, with the
+  e2e stub as a `custom` provider. It checks what the provider received:
+  - the mapped model, and the provider key rather than the broker's token;
+  - with the planner on a `mistral` provider, `reasoning_effort: "none"`, though the broker sent `low`;
+  - on a `moonshot` provider, `temperature: 1` and no `top_p`, though the broker sent 0.
+
+  It also checks that a planner token gets 403 on the classifier's route, and the reverse.
+- `task chart:metering:k3d` is the gateway demo with a meter (`tests/metering-values.yaml`) and a
+  test-only VictoriaMetrics (`tests/metrics-stub.yaml`) scraping the gateway. It checks three things:
+  - the factory's config loads with `runs.gatewayIdentity`, a PromQL throttle and a `split`;
+  - the run's tokens reach VictoriaMetrics under agentgateway's own names, with `ar_agent` set to the run's subject;
+  - the meter's parser prices that reply above zero, and the throttle query answers.
+
+  The demo's dummy App keeps the factory from starting, so this leg cannot show a settled run in
+  dollars. The next one does.
+- `task chart:usd:k3d` is the factory-level USD proof, and the demo-e2e workflow runs it every night
+  (job `usd`). It is the intake leg with `tests/usd-values.yaml` on top: the e2e stub stands in for
+  GitHub, the identity provider and the model provider, so the factory starts and runs a task. The
+  runs use `model.mode: gateway` with `runs.gatewayIdentity`, the gateway prices each call from its
+  catalog (`meter.prices`), and the meter reads the gateway's series from the test-only
+  VictoriaMetrics. The first scoper run of an issue must:
+  - be metered by the gateway (`spec.meteredBy: gateway`);
+  - settle in the factory's ledger (`run_settled_usd{run}`) above zero, within 1 % of the gateway's
+    own cost counter for it, read with `max_over_time`, since the run's series is born at its first
+    priced call;
+  - leave nothing unpriced: no catalog lookup other than `Exact`, and no
+    `meter_unpriced_model_runs_total` above 0.
+
+  It also checks two labels the [dashboards]({{< relref "/docs/install/observability.md#dashboards" >}}) select on: the cost counter
+  carries `gen_ai_request_model`, which they split spend by, and a failed provider call (the stub
+  answers 500 to a marker prompt) carries `error_type`, which their error ratios read. The secret-mode demo with a real model
+  is the separate nightly job.

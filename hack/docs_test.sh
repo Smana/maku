@@ -81,4 +81,8 @@ grep -q 'h.md: over ceiling: 160[0-9] words, how-to allows 1500' <<<"$out"
 grep -q 'x.md: unknown page-type: essay' <<<"$out"
 grep -q 'm-bad.md: moved stub over 40 words' <<<"$out"
 if grep -q 'r.md\|m-ok.md\|b.md' <<<"$(findings)"; then echo "unexpected match: $out"; exit 1; fi
+# YAML front-matter diataxis ceiling works the same way, excluding front matter from word count.
+awk 'BEGIN{printf "---\ntitle: \"Y\"\ndiataxis: how-to\n---\n\n"; for(i=0;i<1600;i++) printf "word "; printf "\n"}' > "$tmp/docs/y.md"
+out=$(hack/docs.sh "$tmp/docs/y.md" 2>&1 || true)
+grep -q 'y.md: over ceiling: 1600 words, how-to allows 1500' <<<"$out"
 echo ok

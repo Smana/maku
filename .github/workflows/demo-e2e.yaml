@@ -72,7 +72,7 @@ on:
       - go.mod
       - go.sum
       - cmd/**
-      - docs/database.md
+      - website/content/docs/install/database.md
       - images/**
       - hack/quickstart/versions.env
       - hack/quickstart/fetch-runsc.sh

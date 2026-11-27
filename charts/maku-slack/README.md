@@ -1,6 +1,6 @@
 # maku-slack
 
-The factory's Slack App ([docs/slack.md](../../docs/slack.md)) as a chart. Install it through the
+The factory's Slack App ([docs/slack.md](https://maku.ogenki.io/docs/use/slack/)) as a chart. Install it through the
 umbrella chart as `slack` (`slack.enabled: true`, [values-slack.example.yaml](../agent-factory/values-slack.example.yaml)),
 or alone beside a broker and a factory that name it:
 

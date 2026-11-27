@@ -8,7 +8,7 @@ PodDisruptionBudget, RBAC in two namespaces (a Role in the release namespace and
 `oci://ghcr.io/smana/charts/maku-factory`, at the version of the release tag.
 
 Install it only after the secrets below exist in the release namespace. The factory's behaviour
-is described in [docs/factory.md](../../docs/factory.md).
+is described in [docs/factory.md](https://maku.ogenki.io/docs/concepts/factory/).
 
 ## Prerequisites
 
@@ -43,14 +43,14 @@ uid and nobody else.
 | `replicas` | `2` | Controller replicas |
 | `resources` | requests 100m / 256Mi, limits 500m / 512Mi | The container's resources |
 | `brokerCASecret`, `oidcSecret`, `intakeSecret` | see the table above | Secret names |
-| `apps.factory.existingSecret`, `apps.agents.existingSecret` | `agent-factory-github`, `""` | The factory and agents Apps' Secrets. `config.github.agentsAppIDFile` beside `apps.agents` fails the render ([docs/github-apps.md](../../docs/github-apps.md)). The older `githubSecret` and `runTokens.appSecret` are removed: the render fails naming these keys |
+| `apps.factory.existingSecret`, `apps.agents.existingSecret` | `agent-factory-github`, `""` | The factory and agents Apps' Secrets. `config.github.agentsAppIDFile` beside `apps.agents` fails the render ([docs/github-apps.md](https://maku.ogenki.io/docs/install/github-apps/)). The older `githubSecret` and `runTokens.appSecret` are removed: the render fails naming these keys |
 | `apps.merger.mode` | `factory` | `factory` (the default since v0.49.0) folds the merger into the factory App: no merger volume, and the chart writes `config.github.mergerAppIDFile` and `mergerKeyFile` as the factory App's files; every repository's `merge.mergerLogin` must then be `factoryLogin`. With `apps.merger.existingSecret` or `config.github.merger*` set, the render fails |
 | `apps.merger.existingSecret` | `""` | The separate merger App's Secret; empty means `agent-factory-merger`. Replaces `mergerSecret`, removed in v0.49.0 |
 | `runTokens.enabled` | `false` | Mints each run's token from the agents App (`apps.agents.existingSecret`, required with it); needs `runTokens.perRun`, since v0.49.0 removed the shared `agent-git` writer |
-| `runTokens.perRun` | `false` | One token per run, `<run>-git`, for its repository and role. The runs-namespace Role becomes Secrets `create`, `patch`, `delete` with no `get`, always beside the admission policy `maku-<namespace>-run-token-secrets` that bounds them ([docs/security.md](../../docs/reference/security-controls.md#the-factory-writes-run-token-secrets-it-cannot-read)). Needs `runTokens.enabled` (or `demo`), and the maku chart's `runController.gitSecret` left empty |
-| `monitor.flux.enabled` | `false` | Renders the read-only ClusterRole `agent-factory-flux-reader` (`get` on gitrepositories, `list` on kustomizations and helmreleases, no watch; with `clusterRoles`, else `agent-factory-crds`') and this install's ClusterRoleBinding `agent-factory-<namespace>-flux-reader` for a class's `monitor.flux`; without it the Flux signal ends `inconclusive` ([docs/factory.md](../../docs/factory.md#the-post-merge-monitor)) |
+| `runTokens.perRun` | `false` | One token per run, `<run>-git`, for its repository and role. The runs-namespace Role becomes Secrets `create`, `patch`, `delete` with no `get`, always beside the admission policy `maku-<namespace>-run-token-secrets` that bounds them ([docs/security.md](https://maku.ogenki.io/docs/reference/security-controls/#the-factory-writes-run-token-secrets-it-cannot-read)). Needs `runTokens.enabled` (or `demo`), and the maku chart's `runController.gitSecret` left empty |
+| `monitor.flux.enabled` | `false` | Renders the read-only ClusterRole `agent-factory-flux-reader` (`get` on gitrepositories, `list` on kustomizations and helmreleases, no watch; with `clusterRoles`, else `agent-factory-crds`') and this install's ClusterRoleBinding `agent-factory-<namespace>-flux-reader` for a class's `monitor.flux`; without it the Flux signal ends `inconclusive` ([docs/factory.md](https://maku.ogenki.io/docs/concepts/factory/#the-post-merge-monitor)) |
 | `roomsAudience` | `rooms-system` | Audience of the projected token for the broker's system API |
-| `hardening.publisher.audience` | removed | Removed in v4 step 8, with octo-sts: `config.hardening.publisher.minter: true` mints the publisher's token from the agents App (`apps.agents.existingSecret`), the one source `config.hardening.enforceOutputs` needs ([upgrading](../../docs/upgrading.md#the-xr-run-kind-and-octo-sts), [docs/hardening.md](../../docs/hardening.md#hardening-non-code-outputs-enforced)) |
+| `hardening.publisher.audience` | removed | Removed in v4 step 8, with octo-sts: `config.hardening.publisher.minter: true` mints the publisher's token from the agents App (`apps.agents.existingSecret`), the one source `config.hardening.enforceOutputs` needs ([upgrading](https://maku.ogenki.io/docs/operate/upgrading/#the-xr-run-kind-and-octo-sts), [docs/hardening.md](https://maku.ogenki.io/docs/concepts/hardening/#hardening-non-code-outputs-enforced)) |
 | `hardening.gitCache.sizeLimit` | `""` | Hardening H3: set (e.g. `2Gi`), the pod mounts an `emptyDir` of that limit at `/var/cache/maku/git` and sets `MAKU_GIT_CACHE` to it, where the push applier keeps one bare, blobless mirror per repository. Empty: no cache, and a repository whose `config.hardening.enforceOutputs` names `push` refuses the factory's start |
 | `api.tls.secretName` | `""` | The run-request API's key pair (`tls.crt`, `tls.key`), mounted at `/etc/agent-factory-api-tls`; the chart writes `config.api.tls` to read it and names the Service port `https`. Empty: plaintext, and the broker needs `factoryInsecure: true` |
 | `api.tls.issuerRef` | `{kind: ClusterIssuer, name: ""}` | `name` set: a cert-manager `Certificate` `agent-factory-api-tls` for `agent-factory.<ns>.svc[.<clusterDomain>]` writes `api.tls.secretName`; empty: bring the Secret yourself |
@@ -81,7 +81,7 @@ The factory's own Role reads (`get`, `list`, `watch`) the four kinds (`Factory`,
 `repositories` or `routines` specs: every replica lists them to build its configuration. Without
 that grant the factory refuses to start, and the message names the Role. Only the leader writes the
 status (every 30 seconds and after each config sync); the other replicas read. See
-[architecture](../../docs/architecture.md#how-the-factory-reads-its-configuration).
+[architecture](https://maku.ogenki.io/docs/concepts/architecture/#how-the-factory-reads-its-configuration).
 
 Four ClusterRoles cover the `Factory`, `Repository`, `MergePolicy` and `Routine` kinds for people,
 not for the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `edit` or
@@ -104,8 +104,8 @@ failed. The startup keys (`policyManagement`, `coordination`, `hardening`, `inta
 `sandbox`, `demo`, `broker`, `github`, `meter.url`, `meter.query`, `meter.logsURL`,
 `meter.throttleQuery`, `meter.throttle`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`,
 `runlore.listen`, `triage.classifierURL`, `factory`) are read once, at the start the rollout
-gives. With no CRDs installed the factory runs from the file alone ([the full table](../../docs/architecture.md#live-fields-and-fields-that-need-a-rollout)). Its keys, defaults and validation are in
-[docs/factory.md](../../docs/reference/config.md#the-config-file). Keys added since a file was written
+gives. With no CRDs installed the factory runs from the file alone ([the full table](https://maku.ogenki.io/docs/concepts/architecture/#live-fields-and-fields-that-need-a-rollout)). Its keys, defaults and validation are in
+[docs/factory.md](https://maku.ogenki.io/docs/reference/config/#the-config-file). Keys added since a file was written
 default to the platform's values, so an older file loads unchanged: `api.groups` (`agents-admin`,
 `agents-member`) and a schedule's `probeAuthor` (`renovate[bot]`). The daily budgets are in USD:
 this release still loads the token days `budgets.factoryDaily`, `budgets.humanDaily` and
@@ -138,7 +138,7 @@ Exact-active refusal does not depend on the selector. Roll back by clearing the 
 the mode; Task history is retained and an already-pending evaluation still finishes or adopts its
 deterministic run. The ConfigMap checksum rolls the pods for this file change.
 
-See [outcome-overlap detection](../../docs/factory.md#outcome-overlap-detection) for the canonical
+See [outcome-overlap detection](https://maku.ogenki.io/docs/concepts/factory/#outcome-overlap-detection) for the canonical
 fingerprint, 20-candidate bound, classifications, pending/replay and budget semantics, and
-[Operations](../../docs/operations/factory.md#outcome-overlap-rollout-and-shadow-evidence) for the required
+[Operations](https://maku.ogenki.io/docs/operate/factory/#outcome-overlap-rollout-and-shadow-evidence) for the required
 shadow evidence and staged rollout. Fixtures alone do not establish production precision.

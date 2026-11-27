@@ -3,7 +3,7 @@
 The agent factory's model gateway, as objects for an [agentgateway](https://agentgateway.dev)
 controller (v1.6): runs, the planner and the classifier call it with their own projected
 ServiceAccount token, and only the gateway holds a provider key. The seam, the values and the
-presets are in [`docs/gateway.md`](../../docs/gateway.md).
+presets are in [`docs/gateway.md`](https://maku.ogenki.io/docs/install/gateway/).
 
 Off by default (`enabled: false`): an install that does not turn it on renders nothing. Inside the
 `agent-factory` umbrella it is the optional subchart `maku-gateway`.
@@ -16,7 +16,7 @@ Off by default (`enabled: false`): an install that does not turn it on renders n
 - One Secret per provider in the release namespace, holding its API key. The chart names it
   (`providers.<name>.existingSecret`, `key`) and never renders it. A `vertex` provider takes none:
   the proxy calls Vertex AI as its own ServiceAccount, `<name>`, which the operator binds to a Google
-  role holding `aiplatform.endpoints.predict` ([Gemini on Vertex AI](../../docs/gateway.md#gemini-on-vertex-ai)).
+  role holding `aiplatform.endpoints.predict` ([Gemini on Vertex AI](https://maku.ogenki.io/docs/install/gateway/#gemini-on-vertex-ai)).
   Outside GKE, `gcpCredentials.source: external` reads an `external_account` credential from a
   ConfigMap instead (Workload Identity Federation), and `proxy.sidecars` carries what produces its
   subject token.

@@ -14,7 +14,7 @@ import (
 	"github.com/Smana/maku/internal/factory/reasons"
 )
 
-const doc = "docs/merge-policies.md"
+const doc = "website/content/docs/use/merge-policies.md"
 
 func main() {
 	raw, err := os.ReadFile(doc)

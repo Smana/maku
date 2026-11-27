@@ -3,7 +3,7 @@
 The Go services behind SP2 collaboration rooms: `maku-broker` (the log of record, its API and
 the `Room` controller) and `maku-bridge` (the sidecar that mirrors a run's harness into its
 room); and SP3's `maku-factory` (the `Task` reconciler that turns an issue label into a
-narrated run, the issue poller and the run meter). Architecture and ports: [README](README.md) and [docs/architecture.md](docs/architecture.md). Prerequisites, commits, migrations and
+narrated run, the issue poller and the run meter). Architecture and ports: [README](README.md) and [docs/architecture.md](https://maku.ogenki.io/docs/concepts/architecture/). Prerequisites, commits, migrations and
 releases: `CONTRIBUTING.md`.
 
 ## Quality gate: run before every commit

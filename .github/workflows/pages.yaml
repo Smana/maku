@@ -1,0 +1,54 @@
+name: pages
+# Builds and deploys https://maku.ogenki.io/ (Hugo + Hextra) with the static Room Replay
+# mounted at /demo/. Never runs on pull requests so unreviewed PR code never reaches the live site.
+on:
+  push:
+    branches: [main]
+    paths:
+      - website/**
+      - web/**
+      - docs/assets/**
+      - .github/workflows/pages.yaml
+    tags: ["v*"]
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      - name: Build website and /demo/ Room Replay
+        run: |
+          bash hack/site-check.sh
+          (cd website && hugo --gc --minify --destination ../_site)
+          bash web/scripts/demo-site.sh --replay-root _site/demo
+          grep -qxF 'maku.ogenki.io' _site/CNAME
+          test -f _site/demo/index.html
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

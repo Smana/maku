@@ -325,7 +325,7 @@ spec:
   ports: [{name: postgres, port: 5432, targetPort: postgres}]
 YAML
   k -n external-db rollout status deploy/pg --timeout=180s >/dev/null
-  awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' docs/database.md >"$work/bootstrap.sql"
+  awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' website/content/docs/install/database.md >"$work/bootstrap.sql"
   [[ $(grep -c '^CREATE ROLE' "$work/bootstrap.sql") == 3 ]] || die "docs/database.md's first sql block is not the bootstrap"
   k -n external-db exec -i deploy/pg -- psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <"$work/bootstrap.sql" >/dev/null
   for r in owner broker retention; do

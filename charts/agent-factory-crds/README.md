@@ -36,7 +36,7 @@ kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'   # prints nothing
 `kubectl get repository` shows `CLASSES` and `LIVE` per Repository, and `kubectl get mergepolicy`
 shows `CONSUMERS` (the Repositories binding it), `CURRENT` (those serving its current generation),
 `LIVE` and `ACCEPTED`. The
-[upgrade](../../docs/upgrading.md#the-per-repository-merge-policy-removed-v0480) lists the
+[upgrade](https://maku.ogenki.io/docs/operate/upgrading/#the-per-repository-merge-policy-removed-v0480) lists the
 steps.
 
 Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template`
@@ -68,4 +68,4 @@ Under Flux, `meta.helm.sh/release-name` must equal the HelmRelease's computed na
 `spec.releaseName` sets it. The release namespace is `spec.targetNamespace`, else the HelmRelease's.
 
 Then install the chart. Existing Rooms and Tasks are untouched. See
-[docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds).
+[docs/upgrading.md](https://maku.ogenki.io/docs/operate/upgrading/#adopting-the-crds).

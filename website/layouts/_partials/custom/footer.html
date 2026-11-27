@@ -1,0 +1,35 @@
+{{- $page := .context -}}
+<nav class="maku-footer-nav" aria-label="Footer">
+  <div class="maku-footer-col">
+    <p class="maku-footer-head">Get started</p>
+    <ul>
+      <li><a href="{{ "docs/get-started/quickstart/" | relURL }}">Laptop quickstart (15 min)</a></li>
+      <li><a href="{{ "docs/get-started/pilot/" | relURL }}">Tier-1 Pilot</a></li>
+      <li><a href="{{ "docs/install/" | relURL }}">Install on Kubernetes</a></li>
+      <li><a href="{{ "demo/" | relURL }}">Interactive Room Replay</a></li>
+    </ul>
+  </div>
+  <div class="maku-footer-col">
+    <p class="maku-footer-head">Documentation</p>
+    <ul>
+      <li><a href="{{ "docs/concepts/architecture/" | relURL }}">Architecture &amp; trust model</a></li>
+      <li><a href="{{ "docs/use/merge-policies/" | relURL }}">Merge policies</a></li>
+      <li><a href="{{ "docs/use/upkeep-routines/" | relURL }}">Upkeep routines</a></li>
+      <li><a href="{{ "docs/reference/" | relURL }}">Reference</a></li>
+    </ul>
+  </div>
+  <div class="maku-footer-col">
+    <p class="maku-footer-head">Project &amp; ecosystem</p>
+    <ul>
+      <li><a href="https://github.com/Smana/maku" rel="noopener">GitHub repository</a></li>
+      <li><a href="https://github.com/Smana/maku/releases" rel="noopener">Releases</a></li>
+      <li><a href="https://airef.ogenki.io/" rel="noopener">AI Native Reference</a></li>
+      <li><a href="https://cnref.ogenki.io/" rel="noopener">Cloud Native Reference</a></li>
+      <li><a href="https://github.com/Smana/maku/blob/main/LICENSE" rel="noopener">Apache-2.0 licence</a></li>
+    </ul>
+  </div>
+</nav>
+{{- with site.Params.sponsor -}}
+  {{- $html := $page.RenderString (printf "%s\n\n[sponsor]: %s" .message .url) -}}
+  <p class="maku-sponsor-line">{{ $html }}</p>
+{{- end -}}

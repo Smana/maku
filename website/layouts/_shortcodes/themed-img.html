@@ -1,0 +1,15 @@
+{{- /* Renders a matched Day/Night Web UI screenshot pair, switched purely via html.dark (never a media query). */ -}}
+{{- $light := .Get "light" -}}
+{{- $dark := .Get "dark" -}}
+{{- $alt := .Get "alt" | default "" -}}
+{{- $caption := .Get "caption" | default "" -}}
+{{- $width := .Get "width" -}}
+{{- $height := .Get "height" -}}
+{{- if not (and $light $dark) -}}
+  {{- errorf "themed-img shortcode requires both light and dark attributes (%s)" .Position -}}
+{{- end -}}
+<figure class="maku-shot">
+  <img class="maku-shot-light" src="{{ strings.TrimPrefix "/" $light | relURL }}" alt="{{ $alt }}" loading="lazy"{{ with $width }} width="{{ . }}"{{ end }}{{ with $height }} height="{{ . }}"{{ end }} />
+  <img class="maku-shot-dark" src="{{ strings.TrimPrefix "/" $dark | relURL }}" alt="{{ $alt }}" loading="lazy"{{ with $width }} width="{{ . }}"{{ end }}{{ with $height }} height="{{ . }}"{{ end }} />
+  {{- with $caption }}<figcaption>{{ . | $.Page.RenderString }}</figcaption>{{ end -}}
+</figure>

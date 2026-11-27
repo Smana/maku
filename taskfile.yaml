@@ -20,6 +20,7 @@ tasks:
       - task: demo:check
       - task: migrations
       - task: docs
+      - task: site:check
       - task: names
       - task: scripts
       - task: ui:test
@@ -141,7 +142,7 @@ tasks:
       - task: chart:deps
       - task: chart:seams
       - task: install:schemas
-      - git diff --exit-code -- charts/agent-factory/templates/_seams.tpl charts/maku/templates/_seams.tpl docs/install-secrets.md internal/install/schema
+      - git diff --exit-code -- charts/agent-factory/templates/_seams.tpl charts/maku/templates/_seams.tpl website/content/docs/install/install-secrets.md internal/install/schema
       - helm lint --strict charts/agent-factory-crds
       - bash charts/agent-factory-crds/tests/render.sh
       - helm lint --strict charts/maku-gateway
@@ -340,6 +341,19 @@ tasks:
     desc: Build the static read-only Room Replay site into web/.demo-site
     cmds:
       - bash web/scripts/demo-site.sh web/.demo-site
+
+  site:build:
+    desc: Build maku.ogenki.io (Hugo + Hextra) and mount the static Room Replay at /demo/ into _site
+    cmds:
+      - cd website && hugo --gc --minify --destination ../_site
+      - bash web/scripts/demo-site.sh --replay-root _site/demo
+
+  site:check:
+    desc: Verify website CNAME, local fonts, Ogenki Day/Night token parity, WCAG AA contrast, and Hugo relrefs
+    cmds:
+      - bash hack/site-check_test.sh
+      - bash hack/site-check.sh
+      - cd website && hugo --gc --minify
 
   ui:test:
     dir: web

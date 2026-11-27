@@ -1,0 +1,11 @@
+{
+  "name": "Maku",
+  "short_name": "maku",
+  "icons": [
+    { "src": "/favicon/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/favicon/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#0d1330",
+  "background_color": "#0d1330",
+  "display": "standalone"
+}

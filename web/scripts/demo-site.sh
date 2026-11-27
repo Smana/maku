@@ -1,26 +1,38 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# demo-site.sh OUT: the live demo as a flat static site, every path relative, so it serves
-# from a domain root or from GitHub Pages' /<repo>/ prefix alike.
+# demo-site.sh [--replay-root] OUT: the live demo as a flat static site, every path relative, so
+# it serves from a domain root, under /demo/, or from GitHub Pages' /<repo>/ prefix alike.
+# With --replay-root, the interactive Room Replay (preview/demo.html) is written to OUT/index.html
+# (and OUT/replay.html), skipping preview/landing.html and preview/media/ which the main site serves.
 set -euo pipefail
-out=${1:?usage: demo-site.sh OUT}
+replay_root=0
+if [ "${1:-}" = "--replay-root" ]; then
+  replay_root=1
+  shift
+fi
+out=${1:?usage: demo-site.sh [--replay-root] OUT}
 web=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$out/fixtures"
 out=$(cd "$out" && pwd)
 cd "$web"
 [ -d node_modules ] || npm ci --no-audit --no-fund
 npx esbuild preview/demo.ts --bundle --minify --format=esm --target=es2022 --outfile="$out/demo.js"
-# The landing (the screencast of a real run) is the site's front page; the replay sits under
-# it in a frame and on its own at replay.html.
-cp preview/landing.html "$out/index.html"
-cp preview/demo.html "$out/replay.html"
+if [ "$replay_root" -eq 1 ]; then
+  cp preview/demo.html "$out/index.html"
+  cp preview/demo.html "$out/replay.html"
+else
+  # The landing (the screencast of a real run) is the site's front page; the replay sits under
+  # it in a frame and on its own at replay.html.
+  cp preview/landing.html "$out/index.html"
+  cp preview/demo.html "$out/replay.html"
+  # The landing's screencast, captions and poster: kept out of src/assets, which the broker embeds.
+  cp -R preview/media "$out/media"
+fi
 # The same source tree the broker embeds: src/assets as assets/, and app.css with its
 # root-absolute /assets/ font URLs made relative to the page.
 rm -rf "$out/assets"
 cp -R src/assets "$out/assets"
 sed 's#/assets/#assets/#g' src/app.css >"$out/app.css"
-# The landing's screencast, captions and poster: kept out of src/assets, which the broker embeds.
-cp -R preview/media "$out/media"
 cp test/fixtures/demo-session.jsonl test/fixtures/demo-snapshot.json test/fixtures/demo-summary.json \
   test/fixtures/demo-automerge-session.jsonl test/fixtures/demo-automerge-snapshot.json test/fixtures/demo-automerge-summary.json \
   test/fixtures/demo-guarded-session.jsonl test/fixtures/demo-guarded-snapshot.json test/fixtures/demo-guarded-summary.json \

@@ -8,10 +8,12 @@
 set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 
-skip='^docs/(api|upgrading|event-envelope|room-log)\.md$'
+skip='^(docs/(api|upgrading|event-envelope|room-log)\.md|website/content/docs/(reference/|contributing/|operate/upgrading\.md))'
 hits=""
 out=""
-for f in docs/*.md; do
+files=()
+while IFS= read -r f; do files+=("$f"); done < <(find docs website/content/docs -maxdepth 3 -name '*.md' -not -path 'docs/superpowers/*' -not -path 'docs/assets/*' 2>/dev/null | sort)
+for f in "${files[@]}"; do
   [[ "$f" =~ $skip ]] && continue
   out=$(awk -v f="$f" '{
     line = $0
@@ -22,7 +24,7 @@ for f in docs/*.md; do
 done
 if [ -n "$hits" ]; then
   printf '%s\n' "$hits" >&2
-  echo "FAIL: an old noun on a reader page (above): workflow (workflows, workflow:<name>), role permissions, approval mode or egress allow-list (docs/concepts.md)" >&2
+  echo "FAIL: an old noun on a reader page (above): workflow (workflows, workflow:<name>), role permissions, approval mode or egress allow-list (website/content/docs/concepts/glossary.md)" >&2
   exit 1
 fi
 echo "==> vocabulary: the reader pages say workflow"
@@ -31,7 +33,8 @@ echo "==> vocabulary: the reader pages say workflow"
 # is "agreed", a monitor window that ended with nothing is "quiet". "clean decisions" and "healthy"
 # in prose fail; the wire values (`clean`, `healthy`, the Healthy condition) stay in code spans.
 hits=""
-for f in docs/merge-policies.md docs/factory.md docs/reference/web-ui-settings.md; do
+for f in docs/merge-policies.md docs/factory.md docs/reference/web-ui-settings.md \
+         website/content/docs/use/merge-policies.md website/content/docs/concepts/factory.md website/content/docs/reference/web-ui-settings.md; do
   [ -f "$f" ] || continue
   out=$(awk -v f="$f" '
     /^ ? ? ?(```|~~~)/ { fence = !fence; next }
