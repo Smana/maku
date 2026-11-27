@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { SignInRequired } from "./api";
+import { CRON_PRESETS, presetForCron } from "./cron-preview";
 import {
   el,
   explainRoutineError,
   externalLink,
   fetchRoutineDetail,
+  formatUSD,
   link,
+  renderBreadcrumb,
+  renderFetchError,
   renderRoutineActions,
   renderRoutineBadges,
   renderRoutineMetrics,
+  renderSkeleton,
   renderSparkline,
+  renderSparklineLegend,
+  sparklineSummaryText,
   timeElement,
   type RoutineDetail,
   type RoutineTaskRun,
@@ -33,16 +40,33 @@ const skipExplanations: Record<string, string> = {
   disabled: "Routine mode is disabled.",
 };
 
+const outcomeLabels: Record<string, string> = {
+  accepted: "merged",
+  merged_human: "merged (edited)",
+  no_op: "no-op",
+  closed: "closed",
+  reverted: "reverted",
+  failed: "failed",
+  stopped: "stopped",
+  rejected: "rejected",
+};
+
 function shortSHA(sha: string): string {
   return sha.length > 12 ? sha.slice(0, 12) : sha;
+}
+
+function formatCronFact(expr: string): string {
+  const id = presetForCron(expr);
+  const preset = CRON_PRESETS.find((p) => p.id === id && p.cron !== "");
+  return preset ? `${preset.label} (${expr})` : expr;
 }
 
 function renderRunRow(run: RoutineTaskRun, prevRun: RoutineTaskRun | undefined): HTMLElement {
   const row = el("article", undefined, "routine-run-row");
   const head = el("div", undefined, "routine-run-head");
-  const outcomeText = run.outcome || run.phase;
-  const badge = el("span", outcomeText, "routine-outcome");
-  badge.dataset.outcome = outcomeText;
+  const outcomeCode = run.outcome || run.phase;
+  const badge = el("span", outcomeLabels[outcomeCode] ?? outcomeCode, "routine-outcome");
+  badge.dataset.outcome = outcomeCode;
   head.append(el("span", run.name, "routine-run-name"), badge);
   if (run.reason) {
     head.append(el("span", run.reason, "routine-run-reason"));
@@ -78,7 +102,7 @@ function renderRunRow(run: RoutineTaskRun, prevRun: RoutineTaskRun | undefined):
   addMeta("Prompt SHA", promptCell);
 
   addMeta("Requested by", run.requestedBy || "—");
-  addMeta("Cost", `$${run.costUSD.toFixed(2)}`);
+  addMeta("Cost", formatUSD(run.costUSD));
 
   row.append(meta);
   return row;
@@ -111,13 +135,19 @@ export async function mountRoutineDetail(
   const main = settingsFrame(app, `${repo} · ${routine}`, "/routines", theme);
   document.title = `Maku · ${repo} · ${routine}`;
 
-  const back = link("/routines", "← All routines", "routine-back");
+  const crumbs = renderBreadcrumb([
+    { label: "Routines", href: "/routines" },
+    { label: `${repo} · ${routine}` },
+  ]);
   const notice = el("p", "", "routine-notice");
   notice.setAttribute("role", "status");
+  notice.setAttribute("aria-live", "polite");
+  notice.tabIndex = -1;
   const body = el("div", undefined, "routine-detail-body");
-  main.append(back, notice, body);
+  main.append(crumbs, notice, body);
 
   const load = async () => {
+    body.replaceChildren(renderSkeleton(3));
     let d: RoutineDetail;
     try {
       d = await fetchRoutineDetail(owner, name, routine, get);
@@ -126,11 +156,17 @@ export async function mountRoutineDetail(
         body.replaceChildren(el("p", "signing in again…", "notice"));
         return;
       }
-      body.replaceChildren(el("p", explainRoutineError(e instanceof Error ? e.message : String(e)), "notice"));
+      body.replaceChildren(renderFetchError(explainRoutineError(e instanceof Error ? e.message : String(e)), () => void load()));
       return;
     }
 
     const summary = el("section", undefined, "routine-card routine-detail-summary");
+    if (d.breakerState === "paused" || d.breakerState === "tripped") {
+      summary.dataset.attention = "breaker";
+    } else if (d.paused || d.breakerState === "half_open") {
+      summary.dataset.attention = "paused";
+    }
+
     const head = el("div", undefined, "routine-card-head");
     const info = el("div", undefined, "routine-title-wrap");
     info.append(el("h2", d.routine, "routine-detail-title"), el("span", d.repository, "routine-repo"));
@@ -144,7 +180,16 @@ export async function mountRoutineDetail(
     const facts = el("div", undefined, "routine-detail-facts");
     if (d.workflow) facts.append(el("span", `workflow: ${d.workflow}`, "routine-fact"));
     if (d.probeKind) facts.append(el("span", `probe: ${d.probeKind}`, "routine-fact"));
-    if (d.cron) facts.append(el("span", `cron: ${d.cron}`, "routine-fact"));
+    if (d.cron) facts.append(el("span", `schedule: ${formatCronFact(d.cron)}`, "routine-fact"));
+    if (d.maxCostUSD > 0) facts.append(el("span", `max cost: ${formatUSD(d.maxCostUSD)}`, "routine-fact"));
+    if (d.cooldown) facts.append(el("span", `cooldown: ${d.cooldown}`, "routine-fact"));
+    if (d.skill) facts.append(el("span", `skill: ${d.skill}`, "routine-fact"));
+    if (d.paused && d.pausedBy) {
+      const pauseSpan = el("span", undefined, "routine-fact");
+      pauseSpan.append(`paused by ${d.pausedBy}`);
+      if (d.pausedAt) pauseSpan.append(" · ", timeElement(d.pausedAt));
+      facts.append(pauseSpan);
+    }
     if (d.promptSHA) {
       const sha = el("code", `prompt ${shortSHA(d.promptSHA)}`, "prompt-sha-badge");
       sha.title = d.promptSHA;
@@ -153,8 +198,29 @@ export async function mountRoutineDetail(
     summary.append(facts);
 
     const sparkWrap = el("div", undefined, "routine-spark-row");
-    sparkWrap.append(el("span", "14d", "routine-spark-label"), renderSparkline(d.sparkline));
-    summary.append(sparkWrap, renderRoutineMetrics(d), renderRoutineActions(d, get, notice, load));
+    sparkWrap.append(
+      el("span", "14d", "routine-spark-label"),
+      renderSparkline(d.sparkline),
+      el("span", sparklineSummaryText(d.sparkline), "routine-spark-summary"),
+    );
+    summary.append(
+      sparkWrap,
+      renderSparklineLegend(),
+      renderRoutineMetrics(d),
+      renderRoutineActions(d, get, notice, load, {
+        showGitHubLink: true,
+        onFocusRestore: () => notice.focus(),
+      }),
+    );
+
+    if (d.promptExists && d.repoPromptText) {
+      const repoPromptDet = el("details", undefined, "routine-prompt");
+      repoPromptDet.append(
+        el("summary", `Repository prompt (${d.promptPath || `.github/agent-factory/upkeep/${d.routine}.md`})`),
+        el("pre", d.repoPromptText, "routine-prompt-text"),
+      );
+      summary.append(repoPromptDet);
+    }
 
     if (d.defaultPrompt) {
       const det = el("details", undefined, "routine-prompt");

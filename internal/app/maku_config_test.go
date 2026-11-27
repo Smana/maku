@@ -10,7 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	"github.com/Smana/maku/internal/factory/resources"
+	"github.com/Smana/maku/internal/factory/upkeep"
+	"github.com/Smana/maku/internal/maku"
 )
 
 // orphanPolicy is a Repository of another factory: refused NotThisFactory.
@@ -536,4 +543,109 @@ func TestMakuConfigValidateRefusedBindings(t *testing.T) {
 	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, splitANR(t, nil)}); err != nil || strings.Contains(out.String(), "binding:") {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
+}
+
+func TestMakuConfigExportRoutines(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: upkeep.BindingsConfigMap, Namespace: "maku-ns"},
+		Data: map[string]string{
+			"acme__app.json": `{"repository":"acme/app","routines":[{"name":"doc-drift","mode":"propose","cron":"0 4 * * 1"}]}`,
+			"acme__lib.json": `{"repository":"acme/lib","routines":[{"name":"dead-code","mode":"draft","cron":"0 5 * * 1"}]}`,
+		},
+	}
+
+	t.Run("exports all repos from cluster ConfigMap via r.Kube", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
+		var out bytes.Buffer
+		m := Maku{
+			Dir: t.TempDir(),
+			Out: &out,
+			Err: &out,
+			Kube: func(_, _ string) (maku.PreflightCluster, string, error) {
+				return maku.PreflightCluster{Client: cl}, "maku-ns", nil
+			},
+		}
+		if err := m.run(t.Context(), []string{"config", "export", "--routines"}); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		objs, err := resources.Decode(out.Bytes())
+		if err != nil {
+			t.Fatalf("Decode exported YAML: %v\n%s", err, out.String())
+		}
+		if len(objs) != 2 || objs[0].Kind != resources.KindRepository || objs[0].Spec["repository"] != "acme/app" || objs[1].Spec["repository"] != "acme/lib" {
+			t.Fatalf("decoded objects = %+v", objs)
+		}
+	})
+
+	t.Run("filters by --repository and --namespace", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
+		var out bytes.Buffer
+		m := Maku{
+			Dir: t.TempDir(),
+			Out: &out,
+			Err: &out,
+			Kube: func(_, _ string) (maku.PreflightCluster, string, error) {
+				return maku.PreflightCluster{Client: cl}, "default", nil
+			},
+		}
+		if err := m.run(t.Context(), []string{"config", "export", "--routines", "--namespace", "maku-ns", "--repository", "ACME/LIB"}); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		objs, err := resources.Decode(out.Bytes())
+		if err != nil {
+			t.Fatalf("Decode filtered YAML: %v\n%s", err, out.String())
+		}
+		if len(objs) != 1 || objs[0].Spec["repository"] != "acme/lib" {
+			t.Fatalf("filtered objects = %+v", objs)
+		}
+	})
+
+	t.Run("missing ConfigMap returns empty output cleanly", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+		var out bytes.Buffer
+		m := Maku{
+			Dir: t.TempDir(),
+			Out: &out,
+			Err: &out,
+			Kube: func(_, _ string) (maku.PreflightCluster, string, error) {
+				return maku.PreflightCluster{Client: cl}, "maku-ns", nil
+			},
+		}
+		if err := m.run(t.Context(), []string{"config", "export", "--routines"}); err != nil {
+			t.Fatalf("missing cm error: %v", err)
+		}
+		if strings.TrimSpace(out.String()) != "" {
+			t.Fatalf("expected empty stdout, got %q", out.String())
+		}
+	})
+
+	t.Run("reads ConfigMap from --file seam", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "bindings-cm.yaml")
+		rawCM := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-factory-routine-bindings
+  namespace: prod-factory
+data:
+  acme__app.json: '{"repository":"acme/app","routines":[{"name":"doc-drift","mode":"propose","cron":"0 4 * * 1"}]}'
+`
+		if err := os.WriteFile(p, []byte(rawCM), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+		if err := m.run(t.Context(), []string{"config", "export", "--routines", "--file", p}); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		objs, err := resources.Decode(out.Bytes())
+		if err != nil {
+			t.Fatalf("Decode --file YAML: %v\n%s", err, out.String())
+		}
+		if len(objs) != 1 || objs[0].Namespace != "prod-factory" {
+			t.Fatalf("decoded --file objects = %+v", objs)
+		}
+	})
 }

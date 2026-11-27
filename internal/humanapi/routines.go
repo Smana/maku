@@ -24,24 +24,32 @@ import (
 // the caller's own bearer token; runrequest.Factory satisfies it.
 type RoutinesGateway interface {
 	ListRoutines(ctx context.Context, accessToken, repo string) (json.RawMessage, error)
+	CatalogRoutines(ctx context.Context, accessToken string) (json.RawMessage, error)
 	RoutineDigest(ctx context.Context, accessToken string, repos []string, window string) (json.RawMessage, error)
 	GetRoutine(ctx context.Context, accessToken, owner, name, routine string) (json.RawMessage, error)
+	PreviewRoutine(ctx context.Context, accessToken, owner, name string, body json.RawMessage) (json.RawMessage, error)
+	PutRoutine(ctx context.Context, accessToken, owner, name, routine string, body json.RawMessage) (json.RawMessage, error)
 	RunRoutine(ctx context.Context, accessToken, owner, name, routine, idempotencyKey string, body json.RawMessage) (int, json.RawMessage, error)
 	PauseRoutine(ctx context.Context, accessToken, owner, name, routine string, body json.RawMessage) (json.RawMessage, error)
 	ResumeRoutine(ctx context.Context, accessToken, owner, name, routine string, body json.RawMessage) (json.RawMessage, error)
 }
 
-const maxRoutineBody = 8 << 10
+const maxRoutineBody = 32 << 10
 
 func (s *Server) routineRoutes(mux *http.ServeMux, index http.Handler) {
 	mux.Handle("GET /routines", withCSP(index))
+	mux.Handle("GET /routines/catalog", withCSP(index))
 	mux.Handle("GET /routines/{owner}/{name}/{routine}", withCSP(index))
+	mux.Handle("GET /routines/{owner}/{name}/{routine}/edit", withCSP(index))
 	mux.HandleFunc("GET /api/routines", s.listRoutines)
+	mux.HandleFunc("GET /api/routines/catalog", s.catalogRoutines)
 	mux.HandleFunc("GET /api/routines/digest", s.routineDigest)
+	mux.HandleFunc("POST /api/routines/{owner}/{name}/preview", s.previewRoutine)
 	mux.HandleFunc("GET /api/routines/{owner}/{name}/{routine}", s.getRoutine)
 	mux.HandleFunc("POST /api/routines/{owner}/{name}/{routine}/runs", s.runRoutine)
 	mux.HandleFunc("POST /api/routines/{owner}/{name}/{routine}/pause", s.pauseRoutine)
 	mux.HandleFunc("POST /api/routines/{owner}/{name}/{routine}/resume", s.resumeRoutine)
+	mux.HandleFunc("PUT /api/routines/{owner}/{name}/{routine}", s.putRoutine)
 }
 
 func (s *Server) routineWriter(w http.ResponseWriter, r *http.Request) (authn.Principal, bool) {
@@ -156,6 +164,19 @@ func (s *Server) listRoutines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw, err := s.Routines.ListRoutines(r.Context(), p.AccessToken, repo)
+	writeRoutineAnswer(w, http.StatusOK, raw, err)
+}
+
+func (s *Server) catalogRoutines(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	if s.Routines == nil {
+		refuseJSON(w, http.StatusNotFound, "routines_unavailable")
+		return
+	}
+	raw, err := s.Routines.CatalogRoutines(r.Context(), p.AccessToken)
 	writeRoutineAnswer(w, http.StatusOK, raw, err)
 }
 
@@ -329,5 +350,48 @@ func (s *Server) resumeRoutine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw, err := s.Routines.ResumeRoutine(r.Context(), p.AccessToken, owner, name, routine, body)
+	writeRoutineAnswer(w, http.StatusOK, raw, err)
+}
+
+func (s *Server) previewRoutine(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.routineWriter(w, r)
+	if !ok {
+		return
+	}
+	if s.Routines == nil {
+		refuseJSON(w, http.StatusNotFound, "routines_unavailable")
+		return
+	}
+	owner, name := r.PathValue("owner"), r.PathValue("name")
+	if !validRoutineRepo(owner, name) {
+		refuseJSON(w, http.StatusBadRequest, "bad_repository")
+		return
+	}
+	body, ok := decodeRoutineBody(w, r)
+	if !ok {
+		return
+	}
+	raw, err := s.Routines.PreviewRoutine(r.Context(), p.AccessToken, owner, name, body)
+	writeRoutineAnswer(w, http.StatusOK, raw, err)
+}
+
+func (s *Server) putRoutine(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.routineWriter(w, r)
+	if !ok {
+		return
+	}
+	if s.Routines == nil {
+		refuseJSON(w, http.StatusNotFound, "routines_unavailable")
+		return
+	}
+	owner, name, routine, ok := routinePathParams(w, r)
+	if !ok {
+		return
+	}
+	body, ok := decodeRoutineBody(w, r)
+	if !ok {
+		return
+	}
+	raw, err := s.Routines.PutRoutine(r.Context(), p.AccessToken, owner, name, routine, body)
 	writeRoutineAnswer(w, http.StatusOK, raw, err)
 }

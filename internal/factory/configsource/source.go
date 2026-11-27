@@ -32,16 +32,19 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/resources"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // Outcome is what the factory made of one object, for the status writer.
@@ -187,11 +190,30 @@ func Kinds() []client.Object {
 }
 
 // handler kicks on an add, a delete, and an update that changed the spec: a status write leaves
-// metadata.generation alone, and must not make every replica sync again.
+// metadata.generation alone, and must not make every replica sync again. ConfigMaps never bump
+// metadata.generation on Data updates, so ConfigMap updates compare metadata.resourceVersion and
+// filter strictly to BindingsConfigMap in s.Namespace.
 func (s *Source) handler() toolscache.ResourceEventHandlerFuncs {
 	return toolscache.ResourceEventHandlerFuncs{
-		AddFunc: func(any) { s.Kick() },
+		AddFunc: func(obj any) {
+			if !s.shouldWatchEvent(obj) {
+				return
+			}
+			s.Kick()
+		},
 		UpdateFunc: func(prev, next any) {
+			if !s.shouldWatchEvent(next) {
+				return
+			}
+			if _, isCM := unwrapObject(next).(*corev1.ConfigMap); isCM {
+				p, ok1 := prev.(metav1.Object)
+				n, ok2 := next.(metav1.Object)
+				if ok1 && ok2 && p.GetResourceVersion() == n.GetResourceVersion() {
+					return
+				}
+				s.Kick()
+				return
+			}
 			p, ok1 := prev.(metav1.Object)
 			n, ok2 := next.(metav1.Object)
 			if ok1 && ok2 && p.GetGeneration() == n.GetGeneration() {
@@ -199,8 +221,37 @@ func (s *Source) handler() toolscache.ResourceEventHandlerFuncs {
 			}
 			s.Kick()
 		},
-		DeleteFunc: func(any) { s.Kick() },
+		DeleteFunc: func(obj any) {
+			if !s.shouldWatchEvent(obj) {
+				return
+			}
+			s.Kick()
+		},
 	}
+}
+
+func unwrapObject(obj any) any {
+	if d, ok := obj.(toolscache.DeletedFinalStateUnknown); ok {
+		return d.Obj
+	}
+	return obj
+}
+
+func (s *Source) shouldWatchEvent(obj any) bool {
+	if cm, ok := unwrapObject(obj).(*corev1.ConfigMap); ok {
+		return cm.Name == upkeep.BindingsConfigMap && (s.Namespace == "" || cm.Namespace == s.Namespace)
+	}
+	return true
+}
+
+func baseUIWrite(file []byte) bool {
+	var doc struct {
+		Routines config.RoutinesConfig `json:"routines"`
+	}
+	if err := yaml.Unmarshal(file, &doc); err != nil {
+		return false
+	}
+	return doc.Routines.UIWrite
 }
 
 // Watch registers handlers that Kick on kinds, a subset of Kinds: the ones the cache was told
@@ -245,10 +296,23 @@ func (s *Source) sync(ctx context.Context) error {
 	}
 	listed := slices.Clone(objs)
 
+	uiWrite := baseUIWrite(s.File)
+	var uiBindings map[string][]config.RoutineBinding
+	if uiWrite {
+		store := upkeep.BindingsStore{Reader: s.Reader, Namespace: s.Namespace, Log: s.log()}
+		uiBindings, err = store.List(ctx)
+		if err != nil {
+			s.synced = Synced{At: s.now(), Err: err}
+			return err
+		}
+	}
+
 	opts := resources.Options{
 		LastResolved:         s.lastResolved,
 		LastResolvedRoutines: s.lastResolvedRoutines,
 		ConfigDir:            s.ConfigDir,
+		UIWrite:              uiWrite,
+		UIBindings:           uiBindings,
 	}
 	r, aerr := resources.Assemble(s.File, objs, opts)
 

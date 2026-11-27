@@ -199,3 +199,69 @@ func TestRoutineDigestClient(t *testing.T) {
 		t.Fatalf("ErrRefused = %v", err)
 	}
 }
+
+func TestRoutineCatalogPreviewPutClient(t *testing.T) {
+	type recordedReq struct {
+		method string
+		path   string
+		auth   string
+		ct     string
+		body   string
+	}
+	var seen []recordedReq
+	nextStatus := http.StatusOK
+	nextBody := `{"ok":true}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		seen = append(seen, recordedReq{
+			method: r.Method,
+			path:   r.URL.Path,
+			auth:   r.Header.Get("Authorization"),
+			ct:     r.Header.Get("Content-Type"),
+			body:   string(raw),
+		})
+		w.WriteHeader(nextStatus)
+		_, _ = w.Write([]byte(nextBody))
+	}))
+	defer srv.Close()
+
+	f := Factory{URL: srv.URL, HC: srv.Client()}
+
+	if _, err := f.CatalogRoutines(t.Context(), ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("CatalogRoutines empty token = %v", err)
+	}
+	if _, err := f.PreviewRoutine(t.Context(), "tok", "..", "maku", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("PreviewRoutine bad owner must fail")
+	}
+	if _, err := f.PutRoutine(t.Context(), "tok", "Smana", "maku", "BAD_NAME", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("PutRoutine bad routine must fail")
+	}
+	if len(seen) != 0 {
+		t.Fatalf("invalid inputs hit HTTP: %+v", seen)
+	}
+
+	got, err := f.CatalogRoutines(t.Context(), "tok-1")
+	if err != nil || string(got) != nextBody {
+		t.Fatalf("CatalogRoutines = %s err=%v", got, err)
+	}
+	if seen[0].method != http.MethodGet || seen[0].path != "/v1/routines/catalog" || seen[0].auth != "Bearer tok-1" {
+		t.Fatalf("CatalogRoutines req = %+v", seen[0])
+	}
+
+	got, err = f.PreviewRoutine(t.Context(), "tok-2", "Smana", "maku", json.RawMessage(`{"binding":{"name":"doc-drift"}}`))
+	if err != nil || string(got) != nextBody {
+		t.Fatalf("PreviewRoutine = %s err=%v", got, err)
+	}
+	if seen[1].method != http.MethodPost || seen[1].path != "/v1/routines/Smana/maku/preview" || seen[1].ct != "application/json" {
+		t.Fatalf("PreviewRoutine req = %+v", seen[1])
+	}
+
+	got, err = f.PutRoutine(t.Context(), "tok-3", "Smana", "maku", "doc-drift", json.RawMessage(`{"mode":"propose"}`))
+	if err != nil || string(got) != nextBody {
+		t.Fatalf("PutRoutine = %s err=%v", got, err)
+	}
+	if seen[2].method != http.MethodPut || seen[2].path != "/v1/routines/Smana/maku/doc-drift" || seen[2].ct != "application/json" {
+		t.Fatalf("PutRoutine req = %+v", seen[2])
+	}
+}

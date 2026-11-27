@@ -2,49 +2,45 @@
 
 # Web UI
 
-The web UI is the one place to watch a room, steer a run, decide an approval and fork. It is embedded in the broker behind oauth2-proxy; [maku](cli.md) reads and posts from a terminal, while steering and approvals stay here. See [Concepts](concepts.md) for the room vocabulary and [Web UI reference and settings](reference/web-ui-settings.md) for standing matrices, `/settings` pages, forks, themes and error codes.
+The web UI is the place to watch rooms, steer runs, decide approvals, fork, and manage upkeep routines. It is embedded in the broker behind oauth2-proxy; [maku](cli.md) handles terminal reads, while steering and approvals stay here. See [Concepts](concepts.md) for room vocabulary and [Web UI reference and settings](reference/web-ui-settings.md) for standing matrices, `/settings`, `/routines`, forks, themes and refusal codes.
 
 ## Signing in
 
 | Step | What happens |
 |---|---|
-| Open `https://rooms.<domain>` | Your browser must reach the broker's address (see [Exposure](exposure.md)) |
-| oauth2-proxy | Sends you to your identity provider and keeps your session in a `SameSite=Strict` cookie |
-| The broker checks your groups | `agents-member` reads the rooms you are let into and acts where a room grants it; `agents-admin` is owner and approver in every room |
-| An expired session | A `401` from the API sends the page back through `/oauth2/start` |
+| Open `https://rooms.<domain>` | Browser reaches the broker ([Exposure](exposure.md)) |
+| oauth2-proxy | Signs you in via your identity provider (`SameSite=Strict` cookie) |
+| Broker group check | `agents-member` reads permitted rooms; `agents-admin` owns and approves every room |
+| Expired session | A `401` redirects back through `/oauth2/start` |
 
-- **Neither group: `403`.** Ask an operator to add you to `agents-member`; the group names are the broker's config ([Integration](integration.md)).
-- **Room visibility follows GitHub.** A member sees a room only if GitHub lets the account they linked ([GitHub account link](github-link.md)) read the room's repository. No link, no rooms: the list is empty rather than an error. An admin sees every room. A room you may not read answers exactly like one that does not exist. The fix for an empty list is the one in [maku's troubleshooting](cli.md#troubleshooting).
+- **Neither group (`403`):** ask an operator to add you to `agents-member` ([Integration](integration.md)).
+- **Visibility follows GitHub:** members see rooms whose repositories their [linked GitHub account](github-link.md) can read (unlinked accounts see an empty list; unreadable rooms answer `404`). See [maku troubleshooting](cli.md#troubleshooting).
 
-Sources: `docs/api.md` (the `:8080` checks), `internal/policy/policy.go` (`Groups`, `Resolve`).
+Sources: `docs/api.md`, `internal/policy/policy.go`.
 
 ## The room list
 
-Rooms you can read appear in one table, by default rooms that need you first, then the most recently active. If an install uses demo-only or unsafe settings, an alert banner above the list names each code ([install banner unsafe codes](reference/web-ui-settings.md#install-banner-unsafe-codes)).
+Readable rooms appear in one table, `Needs you` first, then newest activity. Unsafe install settings show an alert banner above the list ([unsafe codes](reference/web-ui-settings.md#install-banner-unsafe-codes)).
 
 <img alt="The room list: factory rooms from two repositories, the ones that need you first, each with its repository, status line, PR, last activity and room id" src="assets/web-ui/rooms-light.png" width="800">
 
-Each row shows `Needs you`, `Task`, `Repository`, `Status` (computed with the same broker function as the room page), `PR`, `Last activity` and `Room` ([room list columns](reference/web-ui-settings.md#room-list-columns)). Click a row to open it, a header to sort; **Search** filters the rows ([sorting and search](reference/web-ui-settings.md#sorting-and-searching-the-room-list)).
+Columns show `Needs you`, `Task`, `Repository`, `Status`, `PR`, `Last activity` and `Room` ([room list columns](reference/web-ui-settings.md#room-list-columns)). Click a row to open it, a header to sort, or **Search** to filter ([sorting and search](reference/web-ui-settings.md#sorting-and-searching-the-room-list)). Auto-refresh defaults to 10 s (`Off`–`1 min`, slowing to 1 min in background tabs).
 
-The list refreshes every 10 s by default (`Off` to `1 min`, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
-
-Above the table, filters refetch the list from the API: **mine** (issues you filed or labelled, or PRs you authored or review), **needs me** (waiting on you, sorted and filterable by `question`, `plan`, `review`, `blocked`, `failed`), and a repository picker ([API](reference/api.md#8080--human-api)). An ended task's room leaves the default list for **closed** (`closed=1`, the last 30 days, disabling **mine** and **needs me**), which the `N rooms ended … — show closed` line opens; `/r/<id>` works until retention purges the log. An empty table says why.
+Filter buttons refetch from the API ([API](reference/api.md#8080--human-api)): **mine**, **needs me** (`question`, `plan`, `review`, `blocked`, `failed`), a repository picker, and **closed** (`closed=1`, last 30 days).
 
 ### New task and Investigate with an agent
 
-**New task** (primary) and **⋯ More** › **Investigate with an agent**, at the right end of the filters row, open forms above the list.
+**New task** and **⋯ More** › **Investigate with an agent** open forms above the list:
 
-- **New task** plans through `/api/handoffs`: enter what should change, pick any served repository (or leave it on Auto), and click **Plan**. It shows the workflow card (`Outcome`, `Workflow`, `Will run`, `Cost`), the planner's question if any, and the drafted issue. Maintainers can pick a described workflow, and any member can toggle **Plan first**. Only maintainers get **Start**; unlinked viewers get a `/link/github` link.
-
-  The factory App files and labels the issue; the factory starts it, as your task, only from the broker's record of your start ([broker-confirmed handoffs](security.md#authorization)).
-- **Investigate with an agent** creates a room you drive live, tied to no issue: explore with cluster tools before filing a task.
+- **New task** plans through `/api/handoffs` (prompt, any served repository or Auto, optional **Plan first**, maintainer workflow pin) and shows `Outcome`, `Workflow`, `Will run`, `Cost`, any planner question, and the drafted issue. Maintainers with write access get **Start**; the factory runs only from the broker's start record ([broker-confirmed handoffs](security.md#authorization)).
+- **Investigate with an agent** opens an interactive room tied to no issue.
 
 | Field | Rule |
 |---|---|
-| Data class | `internal` or `public`, no default; fixed once created. Sets model route, tools and egress, not read access |
-| Repository | `owner/name`, required. Readable by anyone who can read the repository on GitHub |
+| Data class | `internal` or `public`, no default; fixed once created |
+| Repository | `owner/name`, required; readable by GitHub collaborators |
 
-The `Use maku from your terminal` fold under the list gives copyable setup steps for [maku](cli.md) (install, configure, sign in; or URL + `maku run` on a local broker).
+The `Use maku from your terminal` fold gives copyable [maku](cli.md) setup commands.
 
 <img alt="The Use maku from your terminal fold: three numbered steps, install, point it at this broker and sign in, each in a code block with a Copy button" src="assets/web-ui/cli-setup-light.png" width="800">
 
@@ -52,13 +48,13 @@ The `Use maku from your terminal` fold under the list gives copyable setup steps
 
 <img alt="A room page during a live review: the run chip reads reviewer, its id, the model agent-default, the effort high and its age, then the budget, PR, issue, Dashboards and the Now line; the factory brief folded under Show more; the dock" src="assets/room-light.png" width="800">
 
-Work a room from top to bottom ([component reference](reference/web-ui-settings.md#room-page-components)):
+Work a room top to bottom ([component reference](reference/web-ui-settings.md#room-page-components)):
 
-- **Read the title strip and workflow card**: Tier 1 shows the workflow chip, status line, active run's persona and age, and `Needs you · N`; Tier 2 shows spend, PR/issue links, last verdict, data class, driver and `Dashboards`, followed by `Next` and `Now`. The header has one **Stop** button (behind two-press confirm with a **Discard PR, branch and issue** checkbox) for whoever may stop a live task. Below the strip, **Workflow** shows `Workflow`, `Will run`, `Cost` and any refused pin (`How it was chosen` holds raw details).
-- **Clear `Needs you`**: decide approvals in place, and act on `question` (**Answer**), `plan_confirmation` (**Accept the split** / **Run it whole**), `plan_review` (**Approve** / **Revise** / **Split**) and `recovery` (**Retry** / **Run again deeper**) cards when enabled in `human.roomActs`; disabled acts, merges and reviews link to GitHub. An accepted act replaces the buttons with a status (`✓ Approved by you — the implementer starts next.`); a refusal shows its reason; a card unchanged 30 s later warns `Sent, but the task has not moved yet — see the room log.` **Stop** reports the same way.
-- **Inspect runs and context**: expand `Notes`, `How it was chosen`, `Merge policy` and `Raw events` folds as needed, or click any run node on the right-hand **Rail** (`#run=<id>`) to filter events to that run.
-- **Steer, queue or run**: use **Controls** (`Run`, `Driver`, `Queued for the next run`, `Room`) according to [what each standing may do](reference/web-ui-settings.md#what-each-standing-may-do), or pick **fork here** on any message or handoff ([forks](reference/web-ui-settings.md#forks)).
-- **Send from the dock**: choose `Deliver to` (post to the room, queue for the next run's brief, or steer the running agent — driver only), toggle the [theme](reference/web-ui-settings.md#theme), and watch connection notices. Destructive acts (**Stop**, **interrupt**, **take**, **steer now**, **close room**) require a second `confirm: …` click within 10 s.
+- **Title strip and workflow card:** Tier 1 shows the workflow chip, status, active run, and `Needs you · N`; Tier 2 shows spend, PR/issue links, verdict, data class, driver, `Dashboards`, `Next`, and `Now`. Two-press **Stop** optionally discards the PR, branch, and issue. **Workflow** shows `Workflow`, `Will run`, `Cost`, and refused pins.
+- **Clear `Needs you`:** decide approvals inline, and act on `question` (**Answer**), `plan_confirmation` (**Accept the split** / **Run it whole**), `plan_review` (**Approve** / **Revise** / **Split**), and `recovery` (**Retry** / **Run again deeper**) cards when `human.roomActs` enables them. Cards unchanged after 30 s warn to check the room log.
+- **Inspect context:** expand `Notes`, `How it was chosen`, `Merge policy`, and `Raw events`, or click any **Rail** node (`#run=<id>`) to filter events to that run.
+- **Steer or fork:** use **Controls** (`Run`, `Driver`, `Queued for the next run`, `Room`) per [standing permissions](reference/web-ui-settings.md#what-each-standing-may-do), or **fork here** on any message ([forks](reference/web-ui-settings.md#forks)).
+- **Dock:** choose `Deliver to` (room chat, queue for next run, or steer — driver only), toggle [theme](reference/web-ui-settings.md#theme), and confirm destructive acts (**Stop**, **interrupt**, **take**, **steer now**, **close room**) within 10 s.
 
 Scrolling a finished factory room, from the strip down through its turns and tool calls:
 
@@ -77,18 +73,25 @@ On a phone the strip stays compact above the conversation:
 
 ## Approvals
 
-When a run stops on a gated action (`forge.push`, `forge.pr`, `forge.other`, `mcp.write`, `shell.high`, `egress.new`), a card opens in `Needs you` showing fixed prose for what the agent wants, the rule that stopped it, the deadline, and—under `details`—the redacted raw command and action ([approval card and rule classes](reference/web-ui-settings.md#approval-card-and-rule-classes)).
+Gated actions (`forge.push`, `forge.pr`, `forge.other`, `mcp.write`, `shell.high`, `egress.new`) open a `Needs you` card with fixed rule prose, deadline, and redacted `details` ([approval card and rule classes](reference/web-ui-settings.md#approval-card-and-rule-classes)).
 
-1. Check your standing on the card (`You can decide`, `only approvers decide`, or `Waiting for another approver: you prompted this turn` when four-eyes is on).
-2. Inspect `details` to verify the raw redacted action rather than the agent's chat prose.
-3. Click **approve** or **deny** with an optional reason (up to 1 KiB, redacted and shown to the agent). First valid decision wins; unapproved requests deny automatically at the deadline (`30 min` in attended rooms, `4 h` default in unattended rooms).
+1. Check your standing (`You can decide`, `only approvers decide`, or `Waiting for another approver` under four-eyes).
+2. Inspect `details` rather than agent chat prose.
+3. Click **approve** or **deny** (optional reason ≤ 1 KiB). First valid decision wins; expired requests deny automatically (`30 min` attended, `4 h` unattended).
+
+## Routines
+
+Open **Routines** (`/routines`) to monitor and configure upkeep routines ([Routines reference](reference/web-ui-settings.md#routines)):
+
+1. **Overview (`/routines`):** filter by repository, inspect 14-day sparklines, merge rate, `$/merged`, next run, and breaker state (`ok`, `half_open`, `paused`), and click **Run now**, **Pause**, or **Resume**.
+2. **Routine Gallery (`/routines/catalog`):** browse shipped and custom `Routine` definitions, pick a target repository, and click **Enable** or **Configure**.
+3. **Guided Configurator (`/routines/<owner>/<repo>/<name>/edit`):** pick a delivery mode (`propose`, `draft`, `pr`, `disabled`), choose a UTC cron preset with live local/UTC next-3-runs preview, tighten bounds inside `Routine` ceilings, validate a repo prompt (`.github/agent-factory/upkeep/<name>.md`) or open its GitHub edit link, run **Check & Generate YAML**, and copy/download `repository-<name>.yaml` — or click **Save to cluster** when `routines.uiWrite: true`.
+4. **Detail & Run History (`/routines/<owner>/<repo>/<name>`):** inspect recent tasks, prompt SHA changes, and skip diagnostics.
 
 ## When something fails
 
-A refused action shows its reason code in the dock:
+Refused actions show a reason code in the dock ([all refusal reasons](reference/web-ui-settings.md#action-refusal-reasons)):
 
-- **`not_permitted` / `four_eyes` / `access_unverified`**: check [what each standing may do](reference/web-ui-settings.md#what-each-standing-may-do), ask another approver when you prompted the turn, or ask a repository maintainer for protected-path pushes.
-- **`stale_epoch` / `no_running_run` / `room_busy`**: refresh who holds the driver token, queue your message for the next run if the agent already finished, or wait for a requested run to join.
-- **Page and room-creation errors**: `404` means no such room or no read access on GitHub; creating a room returns `400` for an invalid data class or repository, `404` when you cannot read the repository, and `503` when GitHub access cannot be verified.
-
-Every dock refusal code and recovery action (including **Retry** and **Run again deeper** on escalated cards) is listed in [Action refusal reasons](reference/web-ui-settings.md#action-refusal-reasons).
+- **`not_permitted` / `four_eyes` / `access_unverified`:** check [standings](reference/web-ui-settings.md#what-each-standing-may-do), ask another approver, or ask a maintainer for protected-path pushes.
+- **`stale_epoch` / `no_running_run` / `room_busy`:** refresh the driver holder, queue for the next run, or wait for a starting run.
+- **Page and room errors:** `404` means missing or unreadable on GitHub; room creation returns `400` (bad class/repo), `404` (unreadable repo), or `503` (GitHub check failed).

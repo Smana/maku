@@ -44,6 +44,18 @@ func TestLivePublishSkipsAnUnchangedConfig(t *testing.T) {
 	if calls != 2 {
 		t.Fatal("a new Routine generation with the same content must still publish")
 	}
+	l.Publish(&Config{
+		Hash: "a",
+		Generations: Generations{Factory: 2, Repos: map[string]RepoGenerations{
+			"smana/maku": {Repository: 1, Routines: map[string]RoutineGeneration{"dead-links": {Routine: 2, RoutineName: "dead-links"}}},
+		}},
+		ServedRoutines: map[string]ServedRoutine{
+			"doc-drift": {Spec: RoutineSpec{DefaultPrompt: "Check docs."}, Generation: 1, Catalog: true},
+		},
+	})
+	if calls != 3 {
+		t.Fatal("a new ServedRoutines catalog entry with the same Hash must still publish")
+	}
 }
 
 func TestLiveIsRaceFree(_ *testing.T) {

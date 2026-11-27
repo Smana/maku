@@ -168,6 +168,8 @@ type Config struct {
 	Outcomes         []string         `json:"outcomes,omitempty"`
 	MergeGuardrails  MergeGuardrails  `json:"mergeGuardrails,omitzero"`
 	PolicyManagement PolicyManagement `json:"policyManagement,omitzero"`
+	// Routines controls opt-in routine UI writes into ConfigMap agent-factory-routine-bindings.
+	Routines RoutinesConfig `json:"routines,omitzero"`
 	// Evaluation is the team evaluation's cohort and mode: observe unless set.
 	Evaluation Evaluation `json:"evaluation,omitzero"`
 	// MergeDefaults are the merge settings a repository omits, key by key (Q8): each top-level key
@@ -178,6 +180,8 @@ type Config struct {
 	// Policies are the accepted class-shape MergePolicies, by name, set by resources.Assemble: the
 	// stage-4 file and the settings pages resolve against the definitions the factory serves (PR17).
 	Policies map[string]ServedPolicy `json:"-"`
+	// ServedRoutines are the accepted Routine definitions, by name, set by resources.Assemble.
+	ServedRoutines map[string]ServedRoutine `json:"-"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`
 	// Generations are the object generations this config was served under (Live.Publish); Parse
@@ -433,6 +437,8 @@ type Repository struct {
 	Bindings []Binding `json:"bindings,omitempty"`
 	// ResolvedRoutines holds the repository's resolved Routine bindings, populated by resources.Assemble.
 	ResolvedRoutines map[string]ResolvedRoutine `json:"-"`
+	// UIRoutines records which routine names came from the UI ConfigMap rather than GitOps.
+	UIRoutines map[string]bool `json:"-"`
 	// MergeDefaulted are the merge keys taken from mergeDefaults (Q8), sorted.
 	MergeDefaulted []string `json:"-"`
 }
@@ -1774,7 +1780,7 @@ func Load(path string) (*Config, error) {
 // it, written twice in raw. A caller that decodes raw into a map before Parse runs it first: the
 // map has kept the last block silently by then (factory resources: Assemble).
 func CheckBlocks(raw []byte) error {
-	for _, block := range []string{"coordination", "hardening"} {
+	for _, block := range []string{"coordination", "hardening", "routines"} {
 		if err := blockOnce(raw, block); err != nil {
 			return fmt.Errorf("config: %w", err)
 		}

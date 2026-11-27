@@ -95,6 +95,10 @@ func routinePromptReadOutcomes() []string {
 	return []string{"repo", "default", "invalid", "skill_missing", "skill_invalid", "error"}
 }
 
+func routineConfigWriteOutcomes() []string {
+	return []string{"ok", "defined_twice", "over_routine", "missing_ref", "invalid", "forbidden", "error"}
+}
+
 // runRE bounds the run label to a C2 run id: the gauge holds only the runs the meter has not
 // reported yet, so its cardinality is the live runs' times the models that served them.
 var runRE = regexp.MustCompile(`^[a-z2-7]{8}$`)
@@ -297,6 +301,7 @@ type Set struct {
 	routineRuns        metric.Int64Counter
 	routineSkips       metric.Int64Counter
 	routinePromptReads metric.Int64Counter
+	routineConfigWrite metric.Int64Counter
 	routineUSD         metric.Float64Counter
 	coord              coordination
 
@@ -723,6 +728,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.routinePromptReads, err = meter.Int64Counter("agent_factory_routine_prompt_reads_total",
 		metric.WithDescription("Repo-owned routine prompt and Agent Skill reads, by repository, routine and outcome."))
+	check(err)
+	s.routineConfigWrite, err = meter.Int64Counter("agent_factory_routine_config_writes_total",
+		metric.WithDescription("UI routine configuration writes, by repository and outcome."))
 	check(err)
 	s.routineUSD, err = meter.Float64Counter("agent_factory_routine_usd_total",
 		metric.WithDescription("USD spent by ended upkeep routine tasks, by repository, routine and outcome."))
@@ -1895,6 +1903,18 @@ func (s *Set) RoutinePromptRead(ctx context.Context, repository, routine, outcom
 		attribute.String("repository", s.repository(repository)),
 		attribute.String("routine", s.routine(repository, routine)),
 		attribute.String("outcome", oneOf(outcome, routinePromptReadOutcomes())),
+	))
+}
+
+// RoutineConfigWrite records a UI routine configuration write attempt, bounded by repository and
+// closed outcome. Nil-safe.
+func (s *Set) RoutineConfigWrite(ctx context.Context, repository, outcome string) {
+	if s == nil {
+		return
+	}
+	s.routineConfigWrite.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("outcome", oneOf(outcome, routineConfigWriteOutcomes())),
 	))
 }
 

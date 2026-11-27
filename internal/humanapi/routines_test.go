@@ -23,14 +23,17 @@ type fakeRoutinesGateway struct {
 	idem    []string
 	bodies  []string
 
-	listRaw   json.RawMessage
-	getRaw    json.RawMessage
-	digestRaw json.RawMessage
-	runStatus int
-	runRaw    json.RawMessage
-	pauseRaw  json.RawMessage
-	resumeRaw json.RawMessage
-	err       error
+	listRaw    json.RawMessage
+	catalogRaw json.RawMessage
+	getRaw     json.RawMessage
+	digestRaw  json.RawMessage
+	previewRaw json.RawMessage
+	putRaw     json.RawMessage
+	runStatus  int
+	runRaw     json.RawMessage
+	pauseRaw   json.RawMessage
+	resumeRaw  json.RawMessage
+	err        error
 }
 
 func (f *fakeRoutinesGateway) ListRoutines(_ context.Context, token, repo string) (json.RawMessage, error) {
@@ -39,10 +42,29 @@ func (f *fakeRoutinesGateway) ListRoutines(_ context.Context, token, repo string
 	return f.listRaw, f.err
 }
 
+func (f *fakeRoutinesGateway) CatalogRoutines(_ context.Context, token string) (json.RawMessage, error) {
+	f.tokens = append(f.tokens, token)
+	return f.catalogRaw, f.err
+}
+
 func (f *fakeRoutinesGateway) GetRoutine(_ context.Context, token, owner, name, routine string) (json.RawMessage, error) {
 	f.tokens = append(f.tokens, token)
 	f.targets = append(f.targets, owner+"/"+name+"/"+routine)
 	return f.getRaw, f.err
+}
+
+func (f *fakeRoutinesGateway) PreviewRoutine(_ context.Context, token, owner, name string, body json.RawMessage) (json.RawMessage, error) {
+	f.tokens = append(f.tokens, token)
+	f.targets = append(f.targets, owner+"/"+name)
+	f.bodies = append(f.bodies, string(body))
+	return f.previewRaw, f.err
+}
+
+func (f *fakeRoutinesGateway) PutRoutine(_ context.Context, token, owner, name, routine string, body json.RawMessage) (json.RawMessage, error) {
+	f.tokens = append(f.tokens, token)
+	f.targets = append(f.targets, owner+"/"+name+"/"+routine)
+	f.bodies = append(f.bodies, string(body))
+	return f.putRaw, f.err
 }
 
 func (f *fakeRoutinesGateway) RoutineDigest(_ context.Context, token string, repos []string, window string) (json.RawMessage, error) {
@@ -85,13 +107,18 @@ func routinesOn(gw *fakeRoutinesGateway) option {
 
 var routineRoutesList = []struct{ method, path string }{
 	{http.MethodGet, "/routines"},
+	{http.MethodGet, "/routines/catalog"},
 	{http.MethodGet, "/routines/Smana/maku/dead-links"},
+	{http.MethodGet, "/routines/Smana/maku/dead-links/edit"},
 	{http.MethodGet, "/api/routines"},
+	{http.MethodGet, "/api/routines/catalog"},
 	{http.MethodGet, "/api/routines/digest"},
 	{http.MethodGet, "/api/routines/Smana/maku/dead-links"},
+	{http.MethodPost, "/api/routines/Smana/maku/preview"},
 	{http.MethodPost, "/api/routines/Smana/maku/dead-links/runs"},
 	{http.MethodPost, "/api/routines/Smana/maku/dead-links/pause"},
 	{http.MethodPost, "/api/routines/Smana/maku/dead-links/resume"},
+	{http.MethodPut, "/api/routines/Smana/maku/dead-links"},
 }
 
 func TestRoutinesOffIsByteIdentical(t *testing.T) {
@@ -107,7 +134,7 @@ func TestRoutinesOffIsByteIdentical(t *testing.T) {
 func TestRoutinePagesServeTheApp(t *testing.T) {
 	gw := &fakeRoutinesGateway{}
 	e := setup(t, routinesOn(gw))
-	for _, p := range []string{"/routines", "/routines/Smana/maku/dead-links"} {
+	for _, p := range []string{"/routines", "/routines/catalog", "/routines/Smana/maku/dead-links", "/routines/Smana/maku/dead-links/edit"} {
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.ts.URL+p, nil)
 		req.Header = header("anyone")
 		resp, err := e.ts.Client().Do(req)
@@ -180,7 +207,7 @@ func TestRoutinesAuthOriginValidationAndForwarding(t *testing.T) {
 	if code, body := sendJSON(t, e, http.MethodPost, "/api/routines/Smana/maku/dead-links/runs", cliHdr, `{}{}`); code != http.StatusBadRequest || !strings.Contains(body, `"bad_json"`) {
 		t.Fatalf("trailing json body = %d %s", code, body)
 	}
-	if code, body := sendJSON(t, e, http.MethodPost, "/api/routines/Smana/maku/dead-links/runs", cliHdr, `{"p":"`+strings.Repeat("x", 9<<10)+`"}`); code != http.StatusBadRequest || !strings.Contains(body, `"bad_json"`) {
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/routines/Smana/maku/dead-links/runs", cliHdr, `{"p":"`+strings.Repeat("x", 33<<10)+`"}`); code != http.StatusBadRequest || !strings.Contains(body, `"bad_json"`) {
 		t.Fatalf("oversized body = %d %s", code, body)
 	}
 	if len(gw.tokens) != 0 {
@@ -280,5 +307,39 @@ func TestRoutineDigestRoute(t *testing.T) {
 	code, _ = sendJSON(t, e, http.MethodGet, "/api/routines/digest?window=7d", header("maint"), "")
 	if code != http.StatusOK || gw.tokens[2] != "tok-maint" {
 		t.Fatalf("human = %d tokens=%v", code, gw.tokens)
+	}
+}
+
+func TestRoutineCatalogPreviewPutProxy(t *testing.T) {
+	gw := &fakeRoutinesGateway{
+		catalogRaw: json.RawMessage(`{"routines":[],"repositories":["Smana/maku"],"uiWrite":true}`),
+		previewRaw: json.RawMessage(`{"valid":true}`),
+		putRaw:     json.RawMessage(`{"routine":"doc-drift"}`),
+	}
+	e := setup(t, routinesOn(gw))
+
+	if code, _ := sendJSON(t, e, http.MethodGet, "/api/routines/catalog", nil, ""); code != http.StatusUnauthorized {
+		t.Fatalf("unauth catalog = %d", code)
+	}
+	if code, body := sendJSON(t, e, http.MethodGet, "/api/routines/catalog", header("maint"), ""); code != http.StatusOK || !strings.Contains(body, `"uiWrite":true`) {
+		t.Fatalf("catalog = %d %s", code, body)
+	}
+
+	// CSRF / Origin check applies to preview and PUT.
+	noOrigin := header("maint", "X-Test-Client", "web", "Content-Type", "application/json")
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/routines/Smana/maku/preview", noOrigin, `{}`); code != http.StatusForbidden || !strings.Contains(body, `"cross_origin"`) {
+		t.Fatalf("preview without Origin = %d %s", code, body)
+	}
+	if code, body := sendJSON(t, e, http.MethodPut, "/api/routines/Smana/maku/doc-drift", noOrigin, `{}`); code != http.StatusForbidden || !strings.Contains(body, `"cross_origin"`) {
+		t.Fatalf("put without Origin = %d %s", code, body)
+	}
+
+	// 16 KiB preview payload succeeds (under 32 KiB limit).
+	largePrompt := `{"binding":{"name":"doc-drift","mode":"propose"},"promptText":"` + strings.Repeat("a", 12<<10) + `"}`
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/routines/Smana/maku/preview", web("maint"), largePrompt); code != http.StatusOK || !strings.Contains(body, `"valid":true`) {
+		t.Fatalf("preview = %d %s", code, body)
+	}
+	if code, body := sendJSON(t, e, http.MethodPut, "/api/routines/Smana/maku/doc-drift", web("maint"), `{"mode":"propose"}`); code != http.StatusOK || !strings.Contains(body, `"doc-drift"`) {
+		t.Fatalf("put = %d %s", code, body)
 	}
 }

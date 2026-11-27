@@ -18,6 +18,21 @@ import (
 // PrincipalUpkeep is the ledger key for cron upkeep routine runs (Q15).
 const PrincipalUpkeep = "system:upkeep"
 
+// RoutinesConfig controls routine management behavior in the factory config file.
+type RoutinesConfig struct {
+	// UIWrite allows maintainers to write routine bindings from the Web UI into ConfigMap
+	// agent-factory-routine-bindings (default false).
+	UIWrite bool `json:"uiWrite,omitempty"`
+}
+
+// ServedRoutine is an accepted Routine definition, its object generation, and whether it carries
+// the catalog label.
+type ServedRoutine struct {
+	Spec       RoutineSpec
+	Generation int64
+	Catalog    bool
+}
+
 // Routine delivery modes.
 const (
 	RoutineModePropose  = "propose"
@@ -692,4 +707,26 @@ func resolveRoutine(name string, rt RoutineSpec, b RoutineBinding, rc *Repositor
 		RepoPrompt:     b.RepoPrompt == nil || *b.RepoPrompt,
 		Skill:          b.Skill,
 	}, "", nil
+}
+
+// ValidateDisabledRoutineBinding validates a mode: disabled routine binding's workflow and egress
+// against repository checks.egress and the factory's configured workflows.
+func ValidateDisabledRoutineBinding(b RoutineBinding, checks Checks, cfgCtx *Config) string {
+	if b.Workflow != "" {
+		if b.Workflow == TemplateNone {
+			return fmt.Sprintf("routine %s: workflow cannot be %q", b.Name, TemplateNone)
+		}
+		if cfgCtx != nil && len(cfgCtx.HarnessProfiles) > 0 && !cfgCtx.IsWorkflow(b.Workflow) {
+			return fmt.Sprintf("routine %s: workflow %q is not a configured workflow", b.Name, b.Workflow)
+		}
+	}
+	for i, p := range b.Egress {
+		if !slices.Contains(EgressProfiles, p) || slices.Index(b.Egress, p) != i {
+			return fmt.Sprintf("routine %s: egress %q is not one of %v, or is listed twice", b.Name, p, EgressProfiles)
+		}
+		if !slices.Contains(checks.Egress, p) {
+			return fmt.Sprintf("routine %s: egress %q is not in repository checks.egress", b.Name, p)
+		}
+	}
+	return ""
 }

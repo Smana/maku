@@ -38,7 +38,8 @@ Every label below is read once a minute (`poll.issues`). Labels applied by non-m
 | **Request changes** review on the task's PR | Queues a revision run on the same branch with the review in its brief, then hands back to the maintainer | Maintainer |
 | **Comment** review or inline thread on the task's PR | Starts nothing. The factory answers once per task that **Request changes** starts a revision and **Approve** merges (`comment-review`) | Maintainer |
 | `factory/stop` on `control.issue`, or `agent-factory-stop` ConfigMap | Stops every task and pauses intake ([The kill switch](#the-kill-switch)) | Maintainer or operator |
-| Schedule (`schedules[]`, 5-field UTC cron) | Starts one task per slot under an hour old (`probe: renovate-red` batches up to five red `renovate[bot]` PRs older than 24 h; `probe: dead-links` files confirmed Wayback-backed findings reported as 404/410/unresolved by the newest two `oracle.workflow` runs on `main`, up to `oracle.maxFindings`) | The factory |
+| Routine (`Repository.spec.routines[]`, 5-field UTC cron) | Starts one task per slot under an hour old according to the bound `Routine`'s probe (`none`, `actions-findings`, `dead-links`, `renovate-red`), repo prompt, optional Agent Skill, delivery mode (`propose`, `draft`, `pr`), cooldown, `maxOpenPRs`, and rolling yield breaker ([Upkeep routines](#upkeep-routines)) | The factory |
+| Manual routine run (`maku routine run`, `/routines` UI, or `POST /v1/routines/{owner}/{name}/{routine}/runs`) | Starts one routine task immediately (`mode` may tighten `pr` → `draft` → `propose`, never widen); executes a single trial run even while the yield breaker is `paused` | Maintainer with `write` |
 | `POST /intake/runlore` or `POST /v1/tasks` | Opens an `investigate` task (`factory/proposed` issue) from RunLore or a sponsored/internal task ([API](reference/api.md#the-factorys-api)) | RunLore or sponsored caller |
 
 A `factory/ready` applied by the factory App counts only on an issue the broker filed from a web **New task** start and recorded: the task is then the recorded maintainer's ([broker-confirmed handoff](security.md#authorization)). The label waits up to two minutes for the broker's record.
@@ -206,9 +207,9 @@ workflows:
 
 Reviewers run on the opposite tier (`standard` after `frontier`, `frontier` otherwise, unless `reviewerModel` overrides it) and receive fenced acceptance checks plus the PR URL without the implementer's handoff. The reviewer brief asks for correctness defects against the diff and acceptance checks only (style, naming, and unasked scope are not findings), and an `approve` verdict with no comment is a complete answer. The brief still asks for one to three lines on approve, naming the acceptance checks the reviewer verified and the tests it ran or read: they cost no extra run, and the verdict comment quotes them as an inert code block. When an approve carries no text, the comment says so and quotes the acceptance the reviewer was asked to check instead (the scope's checks, else the issue's acceptance, at most 2 KiB, carried on the claim as `agents.ogenki.io/review-checks`), so a developer sees what the approval covers. A private room's comment quotes neither. The brief names the pull request head in full, and `room_verdict` records that head itself (the claim's `agents.ogenki.io/head`): the reviewer leaves `commit` out. A commit it does pass counts as the head when it is a prefix of at least 7 digits or shares the head's first 12, so a reviewer that extends a 12-digit short sha by guessing costs no second review run. On a foreign pull request (`outcome: review`, template `review`), the reviewer runs alone with a read-only token, starts from the pull request's head branch (`baseRef`) on its own `agent/<task>` branch (a person's branch is no agent branch, and it pushes to neither), posts one verdict comment (`Done` `review_posted`), and never pushes or merges; the merge gate ignores verdicts on pull requests not authored by the agents App. `investigate` runs a read-only `triager`: RunLore and internal API sources force `internal` data class, whereas a public `report` task keeps its `public` data class, posts its findings on the issue (`Done` `findings_posted`), and offers `/factory fix` to file a `change` task with those findings.
 
-When a workflow enables `ask` (on by default in `quick`, `standard`, and `careful`), triage checks deterministically before starting any run that an issue states an acceptance check (`## Acceptance`, or an `Acceptance:` label, plain or bold, with text on its line or a list or paragraph on the lines after it). Issues without one bounce immediately to `Escalated` (`needs_author`) with `factory/needs-author` and zero runs started. The task's room is made at that bounce, so the question is listed by `maku needs` and the web inbox, and `maku answer` and `maku cancel` reach it as well as the issue; schedules and confirmed intake plans that already settled acceptance proceed unasked, and `/factory retry` proceeds as assumed without re-asking.
+When a workflow enables `ask` (on by default in `quick`, `standard`, and `careful`), triage checks deterministically before starting any run that an issue states an acceptance check (`## Acceptance`, or an `Acceptance:` label, plain or bold, with text on its line or a list or paragraph on the lines after it). Issues without one bounce immediately to `Escalated` (`needs_author`) with `factory/needs-author` and zero runs started. The task's room is made at that bounce, so the question is listed by `maku needs` and the web inbox, and `maku answer` and `maku cancel` reach it as well as the issue; upkeep routines, legacy schedules, and confirmed intake plans that already settled acceptance proceed unasked, and `/factory retry` proceeds as assumed without re-asking.
 
-Triage selects the workflow by first match: (1) a maintainer's pin, (2) task source (`quick` for reverts, oracle findings and unpinned schedules; `none` for adopted PRs), or (3) `Repository.spec.workflow.default` (`standard` if unset), recording `status.profile.source` and hashing unpinned default-path tasks into `control` (`evaluation.controlPercent`) or `treatment` cohorts for live cost/merge-rate evaluation. Triage also sets the predicted merge class (`schedule.class`, maintainer-sponsored `spec.intake.class`, origin class, or `review`; `class:<name>` issue labels are ignored with a one-time notice).
+Triage selects the workflow by first match: (1) a maintainer's pin, (2) task source (`quick` for reverts, oracle findings and unpinned legacy schedules; a bound `Routine`'s `workflow` for routines; `none` for adopted PRs), or (3) `Repository.spec.workflow.default` (`standard` if unset), recording `status.profile.source` and hashing unpinned default-path tasks into `control` (`evaluation.controlPercent`) or `treatment` cohorts for live cost/merge-rate evaluation. Triage also sets the predicted merge class (`routine.oracleClass`, legacy `schedule.class`, maintainer-sponsored `spec.intake.class`, origin class, or `review`; `class:<name>` issue labels are ignored with a one-time notice).
 
 ### Pinning a workflow
 
@@ -221,7 +222,7 @@ A maintainer can also pin the model with a `model:<alias>` label: the implemente
 Budgets bound token and dollar spend from outside the sandbox:
 - **Per-run cap (`runTokens`, `runUSD`):** the meter revokes a run as `budget-run` as soon as it reaches either its token limit or its priced USD limit. Unpriced models never cost $0; they bind on token caps (or $1.70 / 1M tokens for daily reservations).
 - **Per-task cap (`taskTokens`, `taskUSD`):** before starting a run, the task must have at least one full run left (one quarter for a reviewer, capped at the remainder; the overlap evaluation scoper is recorded without counting against task caps). When insufficient and `budgets.enforceTask` is `true` (default), the task escalates as `budget-task` and `/factory retry` cannot bypass it: the retries route answers a plain retry `task_cap_holds`, and the room offers none (its facts carry `retryHeld`), only an offered `Run again deeper`; lost sandboxes also resume only within the remaining cap.
-- **Fleet and human daily caps (`factoryDailyUSD`, `humanDailyUSD`):** reservations and settled spend are tracked per UTC day in `agent-factory-ledger-usd-<YYYYMMDD>` ConfigMaps. Exhausting the fleet day holds queued tasks in `waiting_daily_budget` until `00:00 UTC`; gateway fleet 429s revoke runs as `budget-fleet`.
+- **Fleet, upkeep, and human daily caps (`factoryDailyUSD`, `upkeepDailyUSD`, `humanDailyUSD`):** reservations and settled spend are tracked per UTC day in `agent-factory-ledger-usd-<YYYYMMDD>` ConfigMaps. Exhausting the fleet day holds queued tasks in `waiting_daily_budget` until `00:00 UTC`; gateway fleet 429s revoke runs as `budget-fleet`. Scheduled cron routines reserve against `system:upkeep` bounded by `budgets.upkeepDailyUSD` (defaults to `min(10.00, 0.25 * factoryDailyUSD)`, `0` disables cron routine spend), while manual routine runs charge `github:<login>` when `budgets.perPerson.enabled` is on (else `system:upkeep`). `caps.upkeepAwaitingHumanWIP` (defaults to `max(1, awaitingHumanWIP / 2)`) isolates routine PRs from starving non-routine queued tasks.
 
 ### Per-person caps
 
@@ -243,7 +244,7 @@ shadow decision. With no class `live` or `shadow` it reads nothing and hands off
 | 2b | A task with a contract: `merge.contractCheck` is green too, as a required check. On a task without one the job only reports | As row 2: red is a fix run, pending waits |
 | 2c | A task with a contract: no contract file changed since the tester's commit (GitHub's compare of that commit and the head; a head that is not its descendant, such as after a rebase, or more than 100 commits from it, counts every contract file as changed). Read once CI is green | Unread: wait, `contract_unread`. Changed: `contract_modified`, never a fix run |
 | 3 | `policy-bot: main` is green, posted by `merge.policyBotLogin` | `policy_absent`, `policy_pending`, `gate_path` |
-| 3a | The pull request does not carry `factory/hold` | `held` |
+| 3a | The pull request does not carry `factory/hold`, and (for `draft` routines) is marked ready for review | `held`, `draft_pr` (or `draft_mode_mismatch` if opened non-draft) |
 | 4 | The author is `agentsLogin`, and no maintainer approved it | `not_agent_authored`, `maintainer_approved` |
 | 5 | A policy holds on the diff: rows 6 to 11 run for every candidate policy and the strictest `live` one that holds decides ([selection](merge-policies.md#selection-from-the-diff)); a task with findings or an adopted pull request has its one class | `no_policy_matched`, each policy's refusal in `considered=` |
 | 6 | The template's reviewer approved, the room reported the head, and every approval is of that head (a policy with no `diffShape` and no `oracle` also requires a reviewer's approve, refusing `reviewer_verdict_missing` otherwise) | `no_approving_verdict`, `head_unreported`, `verdict_stale`, `reviewer_verdict_missing` |
@@ -699,7 +700,7 @@ applied it, and relies on RunLore's removal on push.
 `push_unrecorded` is GitHub not having recorded the push of the head yet (its events lag a push):
 the Task waits for it at most 10 minutes, then hands off. A push made during a long CI wait gets no
 such grace. `ci_red` hands off instead of starting a fix run: a red Renovate branch is the
-`renovate-red` schedule's job, not an agent's here. An adopted Task in `AwaitingHuman` never reminds
+`renovate-red` routine's job, not an agent's here. An adopted Task in `AwaitingHuman` never reminds
 a maintainer and never stale-closes Renovate's pull request, which would fight Renovate. A shadow decision is narrated `would auto-merge:
 `<class>`` with `head=<sha> paused=<bool> capped=<bool>` and no claim of a verdict: no agent reviewed the change.
 
@@ -974,7 +975,7 @@ retries every tick and starts nothing), not a clean run. Each entry is `{file, l
 with an optional `archive`, a `web.archive.org` snapshot of that same URL. `status` is `404`,
 `410` or `nxdomain` for a finding; anything else (403, 429, 5xx, a timeout) is never one.
 
-**The probe.** It reads the newest two completed runs of the workflow on `main` that a schedule or
+**The probe.** It reads the newest two completed runs of the workflow on `main` that a routine, schedule, or
 a maintainer's `workflow_dispatch` started (a pull request's run, or another actor's dispatch, is
 skipped); both must have succeeded. A finding needs two consecutive runs: it is kept only when both
 report the same file and URL with a gone status. It must also be allowed (`allowedFiles`, not
@@ -1000,6 +1001,40 @@ snapshot, is `oracle_unrequested`; the probe has already dropped findings with n
 The merger App's token must read `actions` (runs and artifacts). Artifact downloads redirect to
 `productionresultssa*.blob.core.windows.net`, which the factory's egress must allow.
 
+## Upkeep routines
+
+Recurring maintenance tasks are split between reusable `Routine` definitions (`maku.ogenki.io/v1alpha1`, namespaced) and per-repository bindings under `Repository.spec.routines[]` ([config reference](reference/config.md#the-routine-crd); legacy `schedules[]` is deprecated). The chart ships six inert catalog routines (`dead-links`, `renovate-red`, `doc-drift`, `dead-code`, `flaky-tests`, `dup-unifier`, labelled `maku.ogenki.io/catalog: "true"`): none runs on a repository until explicitly bound. A binding may fill unset parameters and tighten ceilings (`maxOpenPRs`, `maxCostUSD`, `dataClass: internal`, stricter `breaker` bounds, or narrower `egress` allow-lists), never widen them.
+
+### Prompts, Agent Skills, and the `upkeep_path` guard
+
+By default (`repoPrompt: true`), the scheduler reads `.github/agent-factory/upkeep/<name>.md` on the repository's default branch before creating a task:
+- **Strict validation:** valid UTF-8, at most `4096` bytes, no C0/C1/DEL control or Unicode invisible (`Cf`) characters, an optional `# ` title on line 1, at most `5` `## ` sections, and a mandatory `## Verify` section containing at least one `- ` or `* ` check item.
+- **Fail-closed fallback:** the factory falls back to `Routine.spec.defaultPrompt` **only** when `.github/agent-factory/upkeep/<name>.md` does not exist. A file present on the default branch that fails validation refuses the tick (`ErrPromptInvalid`, recorded under `maku_factory_routine_prompt_reads_total{outcome="invalid"}`) rather than silently falling back.
+- **Optional Agent Skill:** setting `skill: <name>` attaches `.agents/skills/<skill>/SKILL.md` from the default branch (non-empty UTF-8, at most `8192` bytes, no control or `Cf` characters; missing or invalid skills fail closed). The combined fingerprint `EffectiveSHA = sha256(promptSHA + ":" + skillSHA)` is stamped onto `Task.spec.routine.promptSHA`.
+- **Brief fences & `upkeep_path` guard:** agent briefs carry the prompt, skill, history, and findings inside distinct nonce fences (`ROUTINE-PROMPT-<nonce>`, `ROUTINE-SKILL-<nonce>`, `UPKEEP-HISTORY-<nonce>`, `FINDINGS-DATA-<nonce>`). Even when `merge.approveToMerge` is enabled, the merge gate inspects the pull request diff and hands off any pull request adding, modifying, or renaming a path under `.github/agent-factory/upkeep/` or a bound `.agents/skills/<skill>/` as `upkeep_path` (`AwaitingHuman`).
+
+### Delivery modes
+
+| Mode | Behaviour |
+|---|---|
+| `propose` | Runs a read-only `triager` (`investigate` template) preserving `dataClass: public` when configured. Ending `NoOp` creates zero GitHub issues and stays silent on Slack; a non-empty handoff files one idempotent `factory/proposed` + `factory/routine:<name>` issue (full sanitised proposal for `public` promotable via `factory/ready`, or a stub + room link for `internal` promotable via `factory/publish`). Open `factory/proposed` issues count toward `maxOpenPRs`. |
+| `draft` | Sets `AgentRun.spec.prDraft: true` (`AGENT_PR_DRAFT=1`, `AGENT_ROUTINE`, `AGENT_ROUTINE_PROMPT_SHA`), runs `pr_footer.py --draft`, and enforces `draft: true` in the safe-outputs applier. Reviewer and required checks run while the PR is a draft; the merge gate holds it in `AwaitingHuman` (`draft_pr`, or `draft_mode_mismatch` if opened non-draft) without consuming `maxGateReentries` and re-enters `AwaitingCI` once marked ready. Quiet 48 h `@maintainer` reminders are suppressed while draft, whereas 14-day `factory/stale` closure remains active. |
+| `pr` | Opens a ready pull request. Auto-merges only when a matching `MergePolicy` is `live`. |
+| `disabled` | Keeps the binding in config without scheduling runs. |
+
+### Rejection memory and the yield breaker
+
+- **Cross-run rejection memory (`UPKEEP-HISTORY-<nonce>`):** before the first run, the reconciler collects up to `10` terminal `(repository, routine)` outcomes within the last `30` days (ranked `closed_unmerged`/`reverted`, then `stale`, then `merged`, falling back on cold start to up to `20` GitHub PRs carrying `factory/routine:<name>`), defanged against prompt injection and capped at `3 KiB` with the newest maintainer close or review comment clipped to `240` bytes.
+- **Rolling yield circuit breaker:** persisted per `(repository, routine)` in ConfigMap `agent-factory-routine-state` (defaults: `window: 10`, `minSamples: 5`, `minMergeRate: 0.25`, `maxConsecutiveClosed: 3`, `maxConsecutiveFailures: 3`). Unmerged PRs, reverted PRs, and `14`-day `factory/stale` closures count as rejections; `NoOp` runs are strictly neutral. Tripping transitions the breaker to `paused` and emits a `routine.paused` webhook event.
+- **Recovery and manual trials:** a `paused` breaker resets to `half_open` **only** when `EffectiveSHA` changes (updating the repo prompt or bound Agent Skill; unrelated repository commits keep it paused). Maintainers may still invoke a single trial via `maku routine run` (or the `/routines` UI) while `paused` without unpausing cron unless the trial merges.
+
+### `actions-findings` probe
+
+Routines with `probe.kind: actions-findings` (such as `dead-code` and `flaky-tests`) read the newest `requireConsecutive` qualifying runs of `probeWorkflow` on `main` (`schedule` or maintainer `workflow_dispatch`), download `probeArtifact` (default `findings`) and `probeFile` (default `findings.json`), and strictly validate a `v: 1` JSON document (`{v: 1, items: [{id, file, line?, symbol?, summary, evidence?, fixHint?}]}`). Findings must appear in every consecutive run, pass `protectedPaths` and 30-day rejection filtering, and batch up to `maxFindings` (`1..16`) into `FINDINGS-DATA-<nonce>`.
+
+### Budgets, caps, and metrics
+
+Cron runs reserve from `budgets.upkeepDailyUSD` (`system:upkeep`, defaulting to `min(10.00, 0.25 * factoryDailyUSD)`, `0` disables cron routine spend), while manual runs charge `github:<login>` when `budgets.perPerson.enabled` is on. `caps.upkeepAwaitingHumanWIP` (defaults to `max(1, awaitingHumanWIP / 2)`) caps routine PRs in `AwaitingHuman` without starving non-routine queued tasks. Observability exposes `maku_factory_routine_runs_total`, `maku_factory_routine_skips_total`, `maku_factory_routine_prompt_reads_total`, `maku_factory_routine_config_writes_total`, `maku_factory_routine_usd_total`, `maku_factory_routine_paused`, and `maku_factory_routine_merge_rate`.
 
 ## Escalation, reminders and stale tasks
 
@@ -1031,7 +1066,7 @@ The notes are quoted after the brief, in the untrusted `QUEUED-DATA` fence, olde
 Creating ConfigMap `agent-factory-stop` in the factory's namespace (kept out of Git so GitOps never reverts it) immediately:
 - ends every open task `Stopped` (`kill_switch`) and revokes/deletes its runs;
 - revokes and deletes every live `AgentRun` in `agents` every 15 s, including human-started runs;
-- pauses label, schedule and RunLore intake (`503 factory_stopped`) and `POST /v1/runs` (`503 kill_switch`), while still honouring `factory/stop` and `factory/revert`.
+- pauses label, routine, schedule and RunLore intake (`503 factory_stopped`) and `POST /v1/runs` (`503 kill_switch`), while still honouring `factory/stop` and `factory/revert`.
 
 Labelling `control.issue` with `factory/stop` creates the ConfigMap annotated `agents.ogenki.io/stop-source: control-issue`, and removing the label deletes only that annotated object. An operator stop created directly stays engaged until deleted in cluster:
 

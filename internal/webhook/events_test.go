@@ -436,6 +436,9 @@ func TestSourceRoutineAndNoOpAndRoutinePaused(t *testing.T) {
 		if e.Source != "routine" || e.Routine != "dead-code" {
 			t.Fatalf("%s missing source/routine: %+v", e.Type, e)
 		}
+		if e.Repo != "Smana/ai-native-ref" {
+			t.Fatalf("%s missing repo for routine event: %+v", e.Type, e)
+		}
 		if e.Type == "room.ended" && e.Reason != "" {
 			t.Fatalf("Done room.ended must have empty reason, got %q", e.Reason)
 		}

@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/minter"
@@ -96,7 +97,7 @@ func (f factoryChecks) source() preflight.Source {
 			id  string
 			run func(context.Context) preflight.Result
 		}{
-			{"apps", f.apps}, {"merge-gate", f.mergeGate}, {"private-code", f.privateCode}, {"exposure", f.exposure}, {"oidc", f.oidc},
+			{"apps", f.apps}, {"merge-gate", f.mergeGate}, {"private-code", f.privateCode}, {"exposure", f.exposure}, {"oidc", f.oidc}, {"routines-ui-write", f.routinesUIWrite},
 		}
 		out := make([]preflight.Result, len(checks))
 		var wg sync.WaitGroup
@@ -358,6 +359,40 @@ func (f factoryChecks) oidc(ctx context.Context) preflight.Result {
 		return skip("the factory takes no human token (demo)")
 	}
 	return oidcCheck(ctx, f.HC, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+}
+
+func (f factoryChecks) routinesUIWrite(ctx context.Context) preflight.Result {
+	if f.Live == nil || f.Live() == nil {
+		return skip("no config")
+	}
+	if !f.Live().Routines.UIWrite {
+		return pass("routines.uiWrite is off")
+	}
+	if f.Kube == nil {
+		return skip("no cluster client")
+	}
+	var repos factoryv1.RepositoryList
+	if err := f.Kube.List(ctx, &repos, client.InNamespace(f.Namespace)); err != nil {
+		if meta.IsNoMatchError(err) {
+			return skip("Repository CRD not installed")
+		}
+		return failed("ui_write_check_failed", fmt.Sprintf("the namespace's Repositories are unreadable: %v", err))
+	}
+	var gitops []string
+	for _, repo := range repos.Items {
+		if repo.Labels["kustomize.toolkit.fluxcd.io/name"] != "" || repo.Labels["argocd.argoproj.io/instance"] != "" {
+			gitops = append(gitops, repo.Name)
+		}
+	}
+	if len(gitops) > 0 {
+		slices.Sort(gitops)
+		return preflight.Result{
+			Outcome: preflight.Warn,
+			Code:    "ui_write_gitops_managed",
+			Message: fmt.Sprintf("routines.uiWrite is true while GitOps manages %s: export UI bindings with maku config export --routines or turn routines.uiWrite off", strings.Join(gitops, ", ")),
+		}
+	}
+	return pass("routines.uiWrite is on and no Repository carries Flux or Argo labels")
 }
 
 // forRepository is maku repo check's source (workflows review WF11): apps, merge-gate and

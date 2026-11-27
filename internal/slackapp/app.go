@@ -124,6 +124,7 @@ type App struct {
 	Channels       map[string]Channel
 	EscalatedHours *int          // the factory's caps.escalatedHours; nil is its default, 0 no limit
 	PlanningAfter  time.Duration // how long a plan runs before the thread shows a "planning…" status; zero means 4s
+	DigestEvery    time.Duration // optional override for StartDigest ticker interval; zero means 30s
 	Async          func(func())  // runs an event's handling after the 200 (tests); nil means the App's workers
 	Now            func() time.Time
 	Metrics        Recorder

@@ -125,12 +125,29 @@ function fakeFetch(routes: Record<string, Response | unknown>, calls: RecordedCa
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe("routine routes", () => {
-  it("matches /routines and /routines/<owner>/<name>/<routine> only", () => {
+  it("matches /routines, /routines/catalog, /routines/<owner>/<name>/<routine>, and /edit", () => {
     expect(isRoutines("/routines")).toBe(true);
     expect(isRoutines("/routines/Smana/cloud-native-ref/dead-links")).toBe(true);
-    expect(isRoutines("/routines/catalog")).toBe(false);
-    expect(isRoutines("/routines/Smana/cloud-native-ref/dead-links/edit")).toBe(false);
+    expect(isRoutines("/routines/catalog")).toBe(true);
+    expect(isRoutines("/routines/Smana/cloud-native-ref/dead-links/edit")).toBe(true);
     expect(isRoutines("/settings")).toBe(false);
+  });
+
+  it("renders Browse catalog CTA both when 0 routines are configured and when populated", async () => {
+    const emptyApp = document.createElement("div");
+    await mountRoutines(emptyApp, "/routines", fakeFetch({ "/api/routines": { routines: [] } }));
+    const emptyCTA = emptyApp.querySelector<HTMLAnchorElement>('a.routine-catalog-cta[href="/routines/catalog"]');
+    expect(emptyCTA).not.toBeNull();
+    expect(emptyCTA?.textContent).toContain("Browse catalog");
+
+    const popApp = document.createElement("div");
+    await mountRoutines(popApp, "/routines", fakeFetch({ "/api/routines": { routines: [overview()] } }));
+    const popCTA = popApp.querySelector<HTMLAnchorElement>('a.routine-catalog-cta[href="/routines/catalog"]');
+    expect(popCTA).not.toBeNull();
+    expect(popCTA?.textContent).toContain("Browse catalog");
+    const cfgLink = popApp.querySelector<HTMLAnchorElement>('a.routine-configure-link[href="/routines/Smana/cloud-native-ref/dead-links/edit"]');
+    expect(cfgLink).not.toBeNull();
+    expect(cfgLink?.textContent).toContain("Configure");
   });
 
   it("renders a safe error message on malformed percent-encoded detail URLs", async () => {
@@ -177,24 +194,34 @@ describe("routines overview", () => {
 
     const cards = [...app.querySelectorAll<HTMLElement>(".routine-card")];
     expect(cards).toHaveLength(2);
-    expect(cards[0].querySelectorAll(".spark-day")).toHaveLength(14);
-    expect(cards[0].querySelectorAll('.spark-day[data-outcome="escalated"]')).toHaveLength(1);
-    expect(cards[0].querySelectorAll('.spark-day[data-outcome="closed"]')).toHaveLength(1);
-    expect(cards[0].querySelectorAll('.spark-day[data-outcome="merged"]')).toHaveLength(1);
-    expect(cards[0].querySelectorAll('.spark-day[data-outcome="no-op"]')).toHaveLength(1);
+    // Attention-first sorting places paused/breaker-attention cards before active cards.
+    const docCard = cards[0];
+    const deadCard = cards[1];
+    expect(docCard.dataset.routine).toBe("doc-drift");
+    expect(deadCard.dataset.routine).toBe("dead-links");
+    expect(deadCard.querySelector("h2 a.routine-title")?.textContent).toBe("dead-links");
+    expect(app.querySelector(".routine-spark-legend")).not.toBeNull();
 
-    expect(cards[0].textContent).toContain("60% · 6/10");
-    expect(cards[0].textContent).toContain("$1.50");
-    expect(cards[0].textContent).toContain("0/1");
-    expect(cards[0].querySelector("time")?.getAttribute("datetime")).toBe("2026-11-27T07:00:00Z");
-    expect(cards[0].querySelector(".routine-breaker")?.textContent).toContain("ok");
+    expect(deadCard.querySelectorAll(".spark-day")).toHaveLength(14);
+    expect(deadCard.querySelectorAll('.spark-day[data-outcome="escalated"]')).toHaveLength(1);
+    expect(deadCard.querySelectorAll('.spark-day[data-outcome="closed"]')).toHaveLength(1);
+    expect(deadCard.querySelectorAll('.spark-day[data-outcome="merged"]')).toHaveLength(1);
+    expect(deadCard.querySelectorAll('.spark-day[data-outcome="no-op"]')).toHaveLength(1);
+    expect(deadCard.querySelector(".spark-day")?.getAttribute("aria-label")).toContain("2026-11-");
+    expect(deadCard.querySelector(".routine-spark-summary")?.textContent).toContain("merged");
+
+    expect(deadCard.textContent).toContain("60% · 6/10");
+    expect(deadCard.textContent).toContain("$1.50");
+    expect(deadCard.textContent).toContain("0/1");
+    expect(deadCard.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-27T07:00:00Z");
+    expect(deadCard.querySelector(".routine-breaker")?.textContent).toContain("ok");
 
     // Non-maintainer / disabled controls.
-    expect(cards[1].querySelector<HTMLButtonElement>('button[data-act="run-now"]')?.disabled).toBe(true);
-    expect(cards[1].querySelector<HTMLButtonElement>('button[data-act="resume"]')?.disabled).toBe(true);
-    expect(cards[1].textContent).toContain("—");
+    expect(docCard.querySelector<HTMLButtonElement>('button[data-act="run-now"]')?.disabled).toBe(true);
+    expect(docCard.querySelector<HTMLButtonElement>('button[data-act="resume"]')?.disabled).toBe(true);
+    expect(docCard.textContent).toContain("—");
 
-    // Filters by repository, state, mode.
+    // Filters by repository, state, mode, and search + Clear filters.
     const repoSelect = app.querySelector<HTMLSelectElement>('select[name="repository"]')!;
     repoSelect.value = "Smana/ai-native-ref";
     repoSelect.dispatchEvent(new Event("change"));
@@ -216,9 +243,16 @@ describe("routines overview", () => {
     modeSelect.dispatchEvent(new Event("change"));
     expect(cards.filter((c) => !c.hidden)).toHaveLength(1);
     expect(cards.find((c) => !c.hidden)?.textContent).toContain("doc-drift");
+
+    const searchInput = app.querySelector<HTMLInputElement>('input[name="search"]')!;
+    searchInput.value = "no-such-routine";
+    searchInput.dispatchEvent(new Event("input"));
+    expect(cards.filter((c) => !c.hidden)).toHaveLength(0);
+    app.querySelector<HTMLButtonElement>('button[data-act="clear-filters"]')!.click();
+    expect(cards.filter((c) => !c.hidden)).toHaveLength(2);
   });
 
-  it("gates Run now and Pause/Resume on canWrite and sends valid JSON POSTs", async () => {
+  it("gates Run now and Pause/Resume with inline confirmation, pause reason, declarative pause guard, and non-widening modes", async () => {
     const calls: RecordedCall[] = [];
     const routes: Record<string, Response | unknown> = {
       "/api/routines": { routines: [overview({ canWrite: true, paused: false })] },
@@ -231,7 +265,7 @@ describe("routines overview", () => {
         routine: "dead-links",
         paused: true,
         declarativePaused: false,
-        pausedReason: "manual",
+        pausedReason: "release freeze",
         pausedBy: "github:smana",
       },
       "/api/routines/Smana/cloud-native-ref/dead-links/resume": {
@@ -245,8 +279,10 @@ describe("routines overview", () => {
     const app = document.createElement("div");
     await mountRoutines(app, "/routines", fakeFetch(routes, calls));
 
-    // Trigger Run now.
+    // Trigger Run now -> inline confirm -> POST /runs.
     app.querySelector<HTMLButtonElement>('button[data-act="run-now"]')!.click();
+    expect(calls.some((c) => c.path.endsWith("/runs"))).toBe(false);
+    app.querySelector<HTMLButtonElement>('button[data-act="confirm-run"]')!.click();
     await settle();
     const runCall = calls.find((c) => c.path.endsWith("/runs"));
     expect(runCall?.method).toBe("POST");
@@ -261,18 +297,22 @@ describe("routines overview", () => {
       JSON.stringify({ error: "mode_requires_phase2" }),
       { status: 400 },
     );
-    const modeSel = app.querySelector<HTMLSelectElement>('.routine-actions select[aria-label="Run mode"]')!;
+    const modeSel = app.querySelector<HTMLSelectElement>(".routine-actions select.routine-mode-select")!;
     modeSel.value = "propose";
     app.querySelector<HTMLButtonElement>('button[data-act="run-now"]')!.click();
+    app.querySelector<HTMLButtonElement>('button[data-act="confirm-run"]')!.click();
     await settle();
-    expect(app.querySelector(".routine-notice")?.textContent).toMatch(/Phase 2|mode_requires_phase2/i);
+    expect(app.querySelector(".routine-notice")?.textContent).toMatch(/mode_requires_phase2/i);
 
-    // Pause sends {} JSON object.
-    routes["/api/routines"] = { routines: [overview({ canWrite: true, paused: true, pausedReason: "manual" })] };
+    // Pause -> inline reason input -> sends reason JSON.
+    routes["/api/routines"] = { routines: [overview({ canWrite: true, paused: true, pausedReason: "release freeze" })] };
     app.querySelector<HTMLButtonElement>('button[data-act="pause"]')!.click();
+    const reasonInput = app.querySelector<HTMLInputElement>('input[name="pauseReason"]')!;
+    reasonInput.value = "release freeze";
+    app.querySelector<HTMLButtonElement>('button[data-act="confirm-pause"]')!.click();
     await settle();
     const pauseCall = calls.find((c) => c.path.endsWith("/pause"));
-    expect(pauseCall?.body).toBe("{}");
+    expect(pauseCall?.body).toBe(JSON.stringify({ reason: "release freeze" }));
     expect(pauseCall?.headers?.["Content-Type"]).toBe("application/json");
 
     // Resume sends {} JSON object.
@@ -282,6 +322,41 @@ describe("routines overview", () => {
     const resumeCall = calls.find((c) => c.path.endsWith("/resume"));
     expect(resumeCall?.body).toBe("{}");
     expect(resumeCall?.headers?.["Content-Type"]).toBe("application/json");
+
+    // Declaratively paused routine disables Resume and prevents widening mode selection on propose.
+    const declApp = document.createElement("div");
+    await mountRoutines(
+      declApp,
+      "/routines",
+      fakeFetch({
+        "/api/routines": {
+          routines: [overview({ canWrite: true, mode: "propose", paused: true, declarativePaused: true, pausedReason: "declarative" })],
+        },
+      }),
+    );
+    expect(declApp.querySelector<HTMLButtonElement>('button[data-act="resume"]')?.disabled).toBe(true);
+    expect(declApp.textContent).toContain("Paused in config");
+    const propSel = declApp.querySelector<HTMLSelectElement>("select.routine-mode-select")!;
+    expect([...propSel.options].find((o) => o.value === "pr")?.disabled).toBe(true);
+    expect([...propSel.options].find((o) => o.value === "draft")?.disabled).toBe(true);
+  });
+
+  it("renders Retry button on overview fetch error and reloads cleanly", async () => {
+    let failedOnce = false;
+    const get = (async (input: RequestInfo | URL) => {
+      if (!failedOnce && String(input) === "/api/routines") {
+        failedOnce = true;
+        return new Response(JSON.stringify({ error: "routines_unavailable" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ routines: [overview()] }), { status: 200 });
+    }) as typeof fetch;
+    const app = document.createElement("div");
+    await mountRoutines(app, "/routines", get);
+    const retry = app.querySelector<HTMLButtonElement>('button[data-act="retry"]')!;
+    expect(retry).not.toBeNull();
+    retry.click();
+    await settle();
+    expect(app.querySelectorAll(".routine-card")).toHaveLength(1);
   });
 });
 
@@ -338,6 +413,7 @@ describe("routine detail and security", () => {
     const hrefs = [...app.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");
     expect(hrefs.some((h) => h.startsWith("javascript:"))).toBe(false);
     expect(hrefs).toContain("/routines");
+    expect(hrefs).toContain("/routines/Smana/cloud-native-ref/dead-links/edit");
     expect(hrefs).toContain("/r/3kq7x2ma");
     expect(hrefs).toContain("https://github.com/Smana/cloud-native-ref/pull/42");
 

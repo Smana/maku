@@ -4,6 +4,7 @@
 // settings pages are found without knowing their URL.
 
 import { api } from "./api";
+import { icon } from "./icons";
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -51,5 +52,19 @@ export function mountSettingsLink(host: HTMLElement, href = "/settings", get: ty
       a.hidden = Array.isArray(body.maintains) && body.maintains.length === 0;
     })
     .catch(() => { a.hidden = true; });
+  return a;
+}
+
+// mountRoutinesLink appends a top-level Routines link beside Settings, hidden until /api/routines answers ok.
+export function mountRoutinesLink(host: HTMLElement, href = "/routines", get: typeof fetch = fetch): HTMLAnchorElement {
+  const a = document.createElement("a");
+  a.className = "routines-link";
+  a.href = href;
+  a.hidden = true;
+  const label = document.createElement("span");
+  label.textContent = "Routines";
+  a.append(icon("clock"), label);
+  host.append(a);
+  void api("/api/routines", {}, get).then((r) => { a.hidden = !r.ok; }).catch(() => { a.hidden = true; });
   return a;
 }

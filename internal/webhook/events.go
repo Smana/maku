@@ -153,6 +153,9 @@ func (t *Tracker) Events(room, repo string, ev envelope.Event) []Event {
 		out[i].Origin = t.origin
 		out[i].Source = t.source
 		out[i].Routine = t.routine
+		if t.source == "routine" && out[i].Repo == "" {
+			out[i].Repo = repo
+		}
 	}
 	return out
 }

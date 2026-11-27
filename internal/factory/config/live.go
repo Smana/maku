@@ -120,7 +120,8 @@ func (l *Live) Publish(next *Config) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	prev := l.p.Load()
-	if prev.Hash == next.Hash && reflect.DeepEqual(prev.Generations, next.Generations) {
+	if prev.Hash == next.Hash && reflect.DeepEqual(prev.Generations, next.Generations) &&
+		reflect.DeepEqual(prev.ServedRoutines, next.ServedRoutines) {
 		return
 	}
 	for _, f := range l.prepare {
