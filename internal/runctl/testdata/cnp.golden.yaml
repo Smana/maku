@@ -26,6 +26,8 @@ spec:
         - matchName: proxy.golang.org
         - matchName: sum.golang.org
         - matchName: dl.google.com
+        - matchName: vuln.go.dev
+        - matchName: storage.googleapis.com
         - matchName: api.anthropic.com
         - matchName: room-broker.agent-platform.svc.cluster.local
   - toFQDNs:
@@ -34,6 +36,8 @@ spec:
     - matchName: proxy.golang.org
     - matchName: sum.golang.org
     - matchName: dl.google.com
+    - matchName: vuln.go.dev
+    - matchName: storage.googleapis.com
     - matchName: api.anthropic.com
     toPorts:
     - ports:

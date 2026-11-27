@@ -103,3 +103,28 @@ class ForgeReadGhTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActionsLogsGhTest(unittest.TestCase):
+    """Actions job logs live on GitHub's log storage, which no run reaches (maku#804): the wrapper says
+    so at once instead of letting the run wait on a refused redirect."""
+
+    run_gh = SafeOutputsGhTest.run_gh
+
+    def test_log_reads_are_refused_with_the_gap(self):
+        for argv in (["run", "view", "123", "--log-failed"], ["run", "view", "--log", "123"],
+                     ["run", "view", "--job", "9", "--log"],
+                     ["api", "repos/o/r/actions/jobs/139920820878/logs"],
+                     ["api", "/repos/o/r/actions/runs/45823288356/logs"]):
+            with self.subTest(argv=argv):
+                p = self.run_gh(argv)
+                self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+                self.assertIn("maku#804", p.stderr)
+                self.assertNotIn("real", p.stdout)
+
+    def test_other_run_and_api_reads_pass(self):
+        for argv in (["run", "view", "123"], ["run", "list"], ["api", "repos/o/r/actions/runs/1/jobs"]):
+            with self.subTest(argv=argv):
+                p = self.run_gh(argv)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn("real", p.stdout)

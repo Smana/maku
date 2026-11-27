@@ -21,7 +21,7 @@ declare -A HOSTS=(
   [install]="release-assets.githubusercontent.com objects.githubusercontent.com"
   [pypi]="pypi.org files.pythonhosted.org"
   [npm]="registry.npmjs.org"
-  [golang]="proxy.golang.org sum.golang.org dl.google.com"
+  [golang]="proxy.golang.org sum.golang.org dl.google.com vuln.go.dev storage.googleapis.com"
   [crates]="index.crates.io static.crates.io"
 )
 

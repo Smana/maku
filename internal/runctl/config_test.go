@@ -267,3 +267,14 @@ func TestLoadConfigDefaultsTheLightAlias(t *testing.T) {
 		t.Fatalf("lightAlias %q, want the tier-light default", c.Model.Gateway.LightAlias)
 	}
 }
+
+// The golang profile reaches govulncheck's database and the storage proxy.golang.org redirects large
+// module zips and toolchain modules to (gcp-0, 2026-11-27: govulncheck and a toolchain switch refused).
+func TestGolangProfileReachesTheVulnDBAndTheModuleStorage(t *testing.T) {
+	got := testConfig(t).EgressProfiles["golang"]
+	for _, h := range []string{"proxy.golang.org", "sum.golang.org", "dl.google.com", "vuln.go.dev", "storage.googleapis.com"} {
+		if !slices.Contains(got, h) {
+			t.Errorf("golang profile lacks %s: %v", h, got)
+		}
+	}
+}

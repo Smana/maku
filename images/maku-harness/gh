@@ -34,6 +34,19 @@ if [ "$FORGE_READ" = 1 ]; then
     exit 3
   fi
 fi
+# Actions job logs: api.github.com answers a log read with a redirect to GitHub's log storage
+# (productionresultssa*.blob.core.windows.net, results-receiver.actions.githubusercontent.com), which
+# no run's egress reaches: Azure blob storage would need a wildcard over every tenant. Say so at once,
+# instead of a refused redirect the run cannot explain. Server-side reads are tracked in maku#804.
+logs=
+case "$1" in
+  run) for a in "$@"; do case "$a" in --log | --log-failed) logs=1 ;; esac; done ;;
+  api) for a in "$@"; do case "$a" in */actions/jobs/*/logs | */actions/runs/*/logs | */actions/runs/*/attempts/*/logs) logs=1 ;; esac; done ;;
+esac
+if [ -n "$logs" ]; then
+  echo "gh: Actions job logs are stored on hosts this run cannot reach (maku#804). Read the failed check from 'gh pr checks' or 'gh run view <id>' without --log, and reproduce it with agent-checks or the repository's own commands" >&2
+  exit 3
+fi
 if [ -n "$SAFE_OUTPUTS" ]; then
   refuse() {
     case ",$SAFE_OUTPUTS," in
