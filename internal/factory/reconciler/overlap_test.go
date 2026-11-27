@@ -47,8 +47,7 @@ func TestOverlapExactActiveRefusal(t *testing.T) {
 		name, current, existing string
 	}{
 		{"issue finds API", "issue", "api"},
-		{"API finds schedule", "api", "schedule"},
-		{"schedule finds issue", "schedule", "issue"},
+		{"API finds issue", "api", "issue"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			goal := "FIX the dead-link.\nThe link resolves"
@@ -106,7 +105,7 @@ func TestOverlapOffDoesNoRetrieval(t *testing.T) {
 func TestOverlapShadowRecordsButDoesNotRefuse(t *testing.T) {
 	existing := overlapTask("aaaaaaa2", "issue", "Smana/cloud-native-ref", "Fix the link.")
 	existing.Status.Phase = v1alpha1.PhaseImplementing
-	current := overlapTask("bbbbbbb3", "schedule", "Smana/cloud-native-ref", "fix   THE link")
+	current := overlapTask("bbbbbbb3", "issue", "Smana/cloud-native-ref", "fix   THE link")
 	g := newRig(t, current, existing)
 	g.f.SetIssue(forge.Issue{Number: existing.Spec.Issue, State: "OPEN"})
 	g.r.Cfg.Current().Intake.Overlap.Mode = config.OverlapShadow
@@ -136,7 +135,7 @@ func TestOverlapPersistedFinalResultsAreNonblockingAndImmutable(t *testing.T) {
 		v1alpha1.OverlapNoMatch,
 	} {
 		t.Run(classification, func(t *testing.T) {
-			current := overlapTask("bbbbbbb3", "schedule", "Smana/cloud-native-ref", "fix the link")
+			current := overlapTask("bbbbbbb3", "issue", "Smana/cloud-native-ref", "fix the link")
 			checked := metav1.NewTime(now.Add(-time.Hour))
 			current.Status.Overlap = &v1alpha1.OverlapStatus{Fingerprint: strings.Repeat("a", 64), Classification: classification,
 				CheckedAt: &checked, Sources: []string{"tasks"}, Note: "persisted evaluation"}
@@ -226,7 +225,7 @@ func TestOverlapMergedIsActiveUntilDone(t *testing.T) {
 func TestOverlapRunAndRoomEvidence(t *testing.T) {
 	existing := overlapTask("aaaaaaa2", "issue", "Smana/cloud-native-ref", "Fix the link.")
 	existing.Status.Phase = v1alpha1.PhaseDone // the Task is complete, but its active run is independent evidence
-	current := overlapTask("bbbbbbb3", "schedule", "Smana/cloud-native-ref", "fix THE link")
+	current := overlapTask("bbbbbbb3", "issue", "Smana/cloud-native-ref", "fix THE link")
 	g := newRig(t, current, existing)
 	g.r.Cfg.Current().Intake.Overlap.Mode = config.OverlapEnforce
 	g.runs.runs["ccccccc4"] = runs.Run{ID: "ccccccc4", TaskID: existing.Name, Phase: "Running", RoomRef: existing.Name,
@@ -366,8 +365,8 @@ func TestOverlapStatusWriteFailureRetriesWithoutProceeding(t *testing.T) {
 func TestOverlapRetrievalExcludesSpecialTasksAndCurrentRuns(t *testing.T) {
 	current := overlapTask("bbbbbbb3", "issue", "Smana/cloud-native-ref", "fix the link")
 	objects := []client.Object{current}
-	for i, source := range []string{"adopt", "runlore"} {
-		tk := overlapTask([]string{"aaaaaaa2", "ccccccc4"}[i], source, "Smana/cloud-native-ref", "Fix THE link.")
+	for i, source := range []string{"adopt", "runlore", "schedule", v1alpha1.SourceKindRoutine} {
+		tk := overlapTask([]string{"aaaaaaa2", "ccccccc4", "fffffff7", "ggggggg8"}[i], source, "Smana/cloud-native-ref", "Fix THE link.")
 		tk.Status.Phase = v1alpha1.PhaseImplementing
 		objects = append(objects, tk)
 	}
@@ -461,4 +460,38 @@ func (m *fakeMetrics) OverlapEvaluationDuration(_ context.Context, _ time.Durati
 
 func (m *fakeMetrics) OverlapScoperRun(_ context.Context, outcome string) {
 	m.add("overlap_scoper " + outcome)
+}
+
+func TestOverlapExcludesRoutineAndScheduleTasks(t *testing.T) {
+	for _, kind := range []string{v1alpha1.SourceKindRoutine, "schedule"} {
+		t.Run(kind, func(t *testing.T) {
+			existing := overlapTask("aaaaaaa2", "issue", "Smana/cloud-native-ref", "Fix the link.")
+			existing.Status.Phase = v1alpha1.PhaseImplementing
+			current := overlapTask("bbbbbbb3", kind, "Smana/cloud-native-ref", "Fix the link.")
+			current.Spec.Issue = 0
+			if kind == v1alpha1.SourceKindRoutine {
+				current.Spec.Source.Ref = "doc-drift"
+				current.Spec.Source.RequestedBy = "system:scheduler"
+				current.Spec.Source.Trust = "trusted"
+				current.Spec.MaxMicroUSD = 2_000_000
+				current.Spec.Routine = &v1alpha1.TaskRoutine{
+					Name: "doc-drift", Mode: config.RoutineModePR, PromptSource: "routine", PromptSHA: strings.Repeat("c", 64),
+				}
+			}
+			g := newRig(t, current, existing)
+			g.r.Cfg.Current().Intake.Overlap.Mode = config.OverlapEnforce
+			e := &countingOverlapEvaluator{result: intake.OverlapResult{Classification: v1alpha1.OverlapActiveDuplicate}}
+			g.r.Overlap = e
+			got := g.reconcile(t, current.Name, 3)
+			if e.calls != 0 || got.Status.Overlap != nil || got.Status.Phase != v1alpha1.PhaseImplementing {
+				t.Fatalf("kind %s ran overlap or failed to implement: calls=%d overlap=%+v phase=%s reason=%s",
+					kind, e.calls, got.Status.Overlap, got.Status.Phase, got.Status.Reason)
+			}
+			for _, rec := range g.runs.specs {
+				if rec.Persona == "scoper" {
+					t.Fatalf("unexpected scoper run for %s: %+v", kind, rec)
+				}
+			}
+		})
+	}
 }

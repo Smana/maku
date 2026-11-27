@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -53,19 +54,21 @@ func interventions() []string {
 }
 func revocations() []string {
 	return []string{"budget-run", "budget-task", "budget-principal", "budget-fleet", "manual",
-		"budget-task-shadow", "budget-principal-shadow", "budget-person"}
+		"budget-task-shadow", "budget-principal-shadow", "budget-person", "budget-upkeep"}
 }
 func revocationLimits() []string {
-	return []string{"run-usd", "run-tokens", "task-usd", "task-tokens", "gateway-ceiling", "fleet", "principal-day"}
+	return []string{"run-usd", "run-tokens", "task-usd", "task-tokens", "gateway-ceiling", "fleet", "principal-day", "upkeep-day"}
 }
 func budgetFallbacks() []string { return []string{"unpriced", "untyped"} }
 func budgetScopes() []string    { return []string{"run", "task"} }
 func tiers() []string           { return []string{"light", "standard", "frontier"} }
 func cohorts() []string         { return []string{"labeled", "control", "treatment", "rescue", "none"} }
 func harnesses() []string       { return []string{"openhands", "opencode"} }
-func intakeSources() []string   { return []string{"issue", "runlore", "schedule", "api", "adopt"} }
-func resumeReasons() []string   { return []string{"Disrupted", "PodLost", "SandboxUnavailable"} }
-func overlapSources() []string  { return []string{"tasks", "runs", "rooms", "github"} }
+func intakeSources() []string {
+	return []string{"issue", "runlore", "schedule", "routine", "api", "adopt"}
+}
+func resumeReasons() []string  { return []string{"Disrupted", "PodLost", "SandboxUnavailable"} }
+func overlapSources() []string { return []string{"tasks", "runs", "rooms", "github"} }
 func overlapClassifications() []string {
 	return []string{v1alpha1.OverlapActiveDuplicate, v1alpha1.OverlapCompletedDuplicate, v1alpha1.OverlapPriorAttempt,
 		v1alpha1.OverlapPartialOverlap, v1alpha1.OverlapUnverifiedOverlap, v1alpha1.OverlapNoMatch}
@@ -74,6 +77,17 @@ func roomCapReasons() []string { return []string{"human_driver", "facts_due", "d
 func admissionReasons() []string {
 	return []string{"repository_differs_from_the_room", "repository_differs_from_the_branch", "repository_permission", "repository_not_owned",
 		"private_code_unacknowledged", "person_budget_exhausted"}
+}
+
+const maxRoutinesPerRepo = 16
+
+var routineRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
+
+func routineSkipReasons() []string {
+	return []string{
+		"kill_switch", "not_owned", "disabled", "paused_manual",
+		"open_cap", "cooldown", "upkeep_budget", "probe_empty", "probe_refused",
+	}
 }
 
 // runRE bounds the run label to a C2 run id: the gauge holds only the runs the meter has not
@@ -275,6 +289,9 @@ type Set struct {
 	apiIntake            metric.Int64Counter
 	// agent_factory_human_roles_claim_refused_total{reason}: the broker's twin (v4 D8).
 	rolesClaimRefused metric.Int64Counter
+	routineRuns       metric.Int64Counter
+	routineSkips      metric.Int64Counter
+	routineUSD        metric.Float64Counter
 	coord             coordination
 
 	spendMu sync.Mutex
@@ -283,12 +300,17 @@ type Set struct {
 	live    []runs.Run                    // the meter's last charge info: the runs live or ended within endSettle
 
 	// repos is the config's repository list, the repository label's only values (v2 D10).
-	mu    sync.RWMutex
-	repos []string
+	mu       sync.RWMutex
+	repos    []string
+	routines map[string][]string // lowercased repository -> bounded routine names (<= maxRoutinesPerRepo)
 	// sponsors maps each sponsored principal to its sponsor (SI9), set from the config at start.
 	sponsors map[string]string
 	// perPerson: a task's payer is its person (budgets.perPerson.enabled), else the fleet.
 	perPerson bool
+
+	routineMu        sync.Mutex
+	routinePaused    map[[2]string]int64
+	routineMergeRate map[[2]string]float64
 
 	// missing are the readiness facts at 1, by repository (HardeningReady).
 	missingMu sync.Mutex
@@ -687,6 +709,16 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.rolesClaimRefused, err = meter.Int64Counter("agent_factory_human_roles_claim_refused_total",
 		metric.WithDescription("Human tokens whose roles claim gave no group, by the closed reason: missing, type or bounds."))
 	check(err)
+	s.routineRuns, err = meter.Int64Counter("agent_factory_routine_runs_total",
+		metric.WithDescription("Ended upkeep routine tasks, by repository, routine and outcome."))
+	check(err)
+	s.routineSkips, err = meter.Int64Counter("agent_factory_routine_skips_total",
+		metric.WithDescription("Skipped upkeep routine ticks, by repository, routine and reason."))
+	check(err)
+	s.routineUSD, err = meter.Float64Counter("agent_factory_routine_usd_total",
+		metric.WithDescription("USD spent by ended upkeep routine tasks, by repository, routine and outcome."))
+	check(err)
+	check(s.registerRoutines(meter))
 	sponsorInfo, err := meter.Int64ObservableGauge("agent_factory_principal_sponsor_info",
 		metric.WithDescription("1 for each sponsored principal, labelled with the maintainer accountable for it (SI9)."))
 	check(err)
@@ -1717,4 +1749,163 @@ func (s *Set) registerRepoGauge(meter metric.Meter, g *repoGauge, name string, o
 func (s *Set) ForgetRepository(repository string) {
 	s.owned.forget(repository)
 	s.privateCode.forget(repository)
+}
+
+func (s *Set) registerRoutines(meter metric.Meter) error {
+	paused, err := meter.Int64ObservableGauge("agent_factory_routine_paused",
+		metric.WithDescription("1 while the upkeep routine is paused, else 0, by repository and routine."))
+	if err != nil {
+		return err
+	}
+	mergeRate, err := meter.Float64ObservableGauge("agent_factory_routine_merge_rate",
+		metric.WithDescription("Rolling merge rate (0..1) of the upkeep routine, by repository and routine."))
+	if err != nil {
+		return err
+	}
+	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		s.routineMu.Lock()
+		defer s.routineMu.Unlock()
+		for k, v := range s.routinePaused {
+			o.ObserveInt64(paused, v, metric.WithAttributes(attribute.String("repository", k[0]), attribute.String("routine", k[1])))
+		}
+		for k, v := range s.routineMergeRate {
+			o.ObserveFloat64(mergeRate, v, metric.WithAttributes(attribute.String("repository", k[0]), attribute.String("routine", k[1])))
+		}
+		return nil
+	}, paused, mergeRate)
+	return err
+}
+
+// SetRoutines sets the allowed routine names per repository (lowercased keys, regex-validated,
+// capped at 16 per repository) and prunes removed entries from the routine observable gauges.
+func (s *Set) SetRoutines(byRepo map[string][]string) {
+	if s == nil {
+		return
+	}
+	next := make(map[string][]string, len(byRepo))
+	for repo, names := range byRepo {
+		key := strings.ToLower(repo)
+		seen := make(map[string]bool, len(names))
+		var clean []string
+		for _, n := range names {
+			if !routineRE.MatchString(n) || seen[n] {
+				continue
+			}
+			seen[n] = true
+			clean = append(clean, n)
+			if len(clean) >= maxRoutinesPerRepo {
+				break
+			}
+		}
+		if len(clean) > 0 {
+			next[key] = clean
+		}
+	}
+	s.mu.Lock()
+	s.routines = next
+	s.mu.Unlock()
+
+	allowed := func(repoLabel, routineLabel string) bool {
+		if routineLabel == other {
+			return true
+		}
+		if repoLabel == other {
+			for _, list := range next {
+				if slices.Contains(list, routineLabel) {
+					return true
+				}
+			}
+			return false
+		}
+		return slices.Contains(next[strings.ToLower(repoLabel)], routineLabel)
+	}
+	s.routineMu.Lock()
+	defer s.routineMu.Unlock()
+	for k := range s.routinePaused {
+		if !allowed(k[0], k[1]) {
+			delete(s.routinePaused, k)
+		}
+	}
+	for k := range s.routineMergeRate {
+		if !allowed(k[0], k[1]) {
+			delete(s.routineMergeRate, k)
+		}
+	}
+}
+
+func (s *Set) routine(repo, name string) string {
+	if s.repository(repo) == other {
+		return other
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if slices.Contains(s.routines[strings.ToLower(repo)], name) {
+		return name
+	}
+	return other
+}
+
+// RoutineRun records an ended upkeep routine task and its USD spend, bounded by repository,
+// configured routine name and closed task outcome. Nil-safe.
+func (s *Set) RoutineRun(ctx context.Context, repository, routine, outcome string, usd float64) {
+	if s == nil {
+		return
+	}
+	if math.IsNaN(usd) || math.IsInf(usd, 0) || usd < 0 {
+		usd = 0
+	}
+	attrs := metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("routine", s.routine(repository, routine)),
+		attribute.String("outcome", oneOf(outcome, taskOutcomes())),
+	)
+	s.routineRuns.Add(ctx, 1, attrs)
+	s.routineUSD.Add(ctx, usd, attrs)
+}
+
+// RoutineSkip records a skipped upkeep routine tick, bounded by repository, configured routine
+// name and closed skip reason. Nil-safe.
+func (s *Set) RoutineSkip(ctx context.Context, repository, routine, reason string) {
+	if s == nil {
+		return
+	}
+	s.routineSkips.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("routine", s.routine(repository, routine)),
+		attribute.String("reason", oneOf(reason, routineSkipReasons())),
+	))
+}
+
+// RoutinePaused records whether an upkeep routine is currently paused (1 or 0). Nil-safe.
+func (s *Set) RoutinePaused(_ context.Context, repository, routine string, paused bool) {
+	if s == nil {
+		return
+	}
+	r, rt := s.repository(repository), s.routine(repository, routine)
+	v := int64(0)
+	if paused {
+		v = 1
+	}
+	s.routineMu.Lock()
+	defer s.routineMu.Unlock()
+	if s.routinePaused == nil {
+		s.routinePaused = map[[2]string]int64{}
+	}
+	s.routinePaused[[2]string{r, rt}] = v
+}
+
+// RoutineMergeRate records an upkeep routine's rolling merge rate clamped to [0, 1]. NaN and
+// infinite values are ignored. Nil-safe.
+func (s *Set) RoutineMergeRate(_ context.Context, repository, routine string, rate float64) {
+	if s == nil || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return
+	}
+	rate = min(max(rate, 0), 1)
+	r, rt := s.repository(repository), s.routine(repository, routine)
+	s.routineMu.Lock()
+	defer s.routineMu.Unlock()
+	if s.routineMergeRate == nil {
+		s.routineMergeRate = map[[2]string]float64{}
+	}
+	s.routineMergeRate[[2]string{r, rt}] = rate
 }

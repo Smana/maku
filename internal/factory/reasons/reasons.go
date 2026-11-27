@@ -38,6 +38,7 @@ var table = map[string]Words{
 	"budget-principal":              {Short: "the factory's daily budget in dollars i…", Long: "the factory's daily budget in dollars is spent", Next: ""},
 	"budget-run":                    {Short: "the run spent its token budget", Long: "the run spent its token budget", Next: ""},
 	"budget-task":                   {Short: "too little task budget left for a run", Long: "what is left of the task's budget, in tokens or dollars, is less than a whole run needs", Next: ""},
+	"budget-upkeep":                 {Short: "the upkeep daily budget is spent", Long: "the upkeep routines' daily budget in dollars is spent", Next: "nothing to do: it resumes after 00:00 UTC"},
 	"budget_calls":                  {Short: "the scoper hit its tool-call limit", Long: "the scoper reached its tool-call limit before handing off", Next: ""},
 	"cancelled":                     {Short: "its owner or a maintainer cancelled it …", Long: "its owner or a maintainer cancelled it from its room", Next: ""},
 	"changes_requested":             {Short: "changes were requested", Long: "a reviewer requested changes, and the factory does not merge over them", Next: ""},
@@ -200,11 +201,13 @@ var table = map[string]Words{
 	"waiting_daily_budget":          {Short: "waiting for tomorrow's budget", Long: "the factory's daily budget in dollars is spent", Next: "nothing to do: it resumes after 00:00 UTC"},
 	"waiting_dependency":            {Short: "waiting for a dependency to merge", Long: "an issue this task depends on has no merged pull request yet", Next: "nothing to do: it starts once its dependencies merge"},
 	"waiting_human_driver":          {Short: "a person drives its room; the hold ends…", Long: "a person drives its room; the hold ends when they hand the driver back or their lease lapses", Next: ""},
+	"waiting_human_priority":        {Short: "waiting behind a human task", Long: "a human task is waiting for the run slot ahead of this upkeep task", Next: "nothing to do: it starts once the queued human tasks clear"},
 	"waiting_review_wip":            {Short: "waiting for a review slot", Long: "the reviewers are at their limit of pull requests in review", Next: ""},
 	"waiting_revision_first":        {Short: "letting a revision run first", Long: "a revision of another task runs before new intake", Next: "nothing to do: it starts once no revision waits for the slot"},
 	"waiting_room_busy":             {Short: "another run in its room is still going;…", Long: "another run in its room is still going; the hold ends when that run ends", Next: ""},
 	"waiting_room_log":              {Short: "waiting for the room's log", Long: "the room's log is not open on the broker yet", Next: ""},
 	"waiting_run_slot":              {Short: "waiting for a run slot", Long: "the factory runs its tasks one at a time and another one has the slot", Next: ""},
+	"waiting_upkeep_review_wip":     {Short: "waiting for an upkeep review slot", Long: "upkeep pull requests are at their limit in review", Next: "nothing to do: it starts once an open upkeep pull request closes"},
 }
 
 var policyBotWords = map[string]string{

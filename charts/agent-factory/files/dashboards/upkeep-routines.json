@@ -1,0 +1,333 @@
+{
+  "title": "Upkeep routines",
+  "uid": "upkeep-routines",
+  "tags": [
+    "agents"
+  ],
+  "schemaVersion": 39,
+  "timezone": "utc",
+  "time": {
+    "from": "now-14d",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Agents",
+      "type": "dashboards",
+      "tags": [
+        "agents"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "dashboard",
+      "tooltip": "Every dashboard of the Agents folder: overview, fleet, factory, gateway, identity, room, run, upkeep routines"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Merge rate by routine",
+      "description": "Share of decided upkeep routine runs (excluding no_op) that merged, by repository and routine over the selected range.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "no decided PRs yet",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.25
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (repository, routine) (increase(maku_factory_routine_runs_total{outcome=~\"accepted|merged_human\"}[$__range])) or 0 * sum by (repository, routine) (increase(maku_factory_routine_runs_total{outcome!=\"no_op\"}[$__range]))) / (sum by (repository, routine) (increase(maku_factory_routine_runs_total{outcome!=\"no_op\"}[$__range])) > 0)",
+          "legendFormat": "{{repository}} / {{routine}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "$/merged PR by routine",
+      "description": "Total USD spent across all outcomes divided by merged PRs (accepted or merged_human), by repository and routine over the selected range.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "noValue": "no merged PR yet"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (repository, routine) (increase(maku_factory_routine_usd_total[$__range])) / (sum by (repository, routine) (increase(maku_factory_routine_runs_total{outcome=~\"accepted|merged_human\"}[$__range])) > 0)",
+          "legendFormat": "{{repository}} / {{routine}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Outcomes & NoOp share",
+      "description": "Daily upkeep routine outcomes (stacked bars) and the no_op share of total routine runs (right axis).",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "1d",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none",
+                  "group": "B"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (increase(maku_factory_routine_runs_total[1d]))",
+          "legendFormat": "{{outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "(sum(increase(maku_factory_routine_runs_total{outcome=\"no_op\"}[1d])) or 0 * sum(increase(maku_factory_routine_runs_total[1d]))) / (sum(increase(maku_factory_routine_runs_total[1d])) > 0)",
+          "legendFormat": "no_op share"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Skips by reason",
+      "description": "Hourly skipped upkeep routine ticks by closed reason.",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (increase(maku_factory_routine_skips_total[1h]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Upkeep daily USD vs cap",
+      "description": "Autonomous upkeep (system:upkeep) USD spent today against budgets.upkeepDailyUSD.",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 16,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "noValue": "0"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(maku_factory_budget_spent_usd{principal=\"system:upkeep\"})",
+          "legendFormat": "spent today"
+        },
+        {
+          "refId": "B",
+          "expr": "max(maku_factory_budget_cap_usd{principal=\"system:upkeep\"})",
+          "legendFormat": "upkeepDailyUSD cap"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Paused routines",
+      "description": "Upkeep routines currently paused.",
+      "gridPos": {
+        "x": 16,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "none",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "paused"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (repository, routine) (maku_factory_routine_paused) == 1",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}

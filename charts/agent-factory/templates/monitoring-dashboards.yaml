@@ -16,7 +16,7 @@ Kubernetes names carry no regex metacharacter, so it reads the same under = and 
 {{- /* labels replace the sidecar's label rather than merge with it: empty, grafana_dashboard: "1". */ -}}
 {{- $labels := $d.labels | default (dict "grafana_dashboard" "1") -}}
 {{- $rooms := dig "broker" "publicURL" "" $maku | default "http://localhost:8080" | trimSuffix "/" -}}
-{{- $uids := list "agents-overview" "agent-factory" "agent-room" "agent-run" "agent-identity" "agent-fleet" -}}
+{{- $uids := list "agents-overview" "agent-factory" "agent-room" "agent-run" "agent-identity" "agent-fleet" "upkeep-routines" -}}
 {{- if $gw.enabled }}{{ $uids = append $uids "agent-gateway" }}{{ end -}}
 {{- range $uid := $uids }}
 {{- $text := $.Files.Get (printf "files/dashboards/%s.json" $uid)

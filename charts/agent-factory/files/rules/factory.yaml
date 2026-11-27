@@ -261,3 +261,32 @@ rules:
       description: "maku_factory_merge_gate_required is stale meanwhile. The factory's log names the failed read: the merger App id file, the repository, or the branch rules."
       runbook_url: "__DOCS__/operations/failures.md#factory-alerts"
       dashboard: "/d/agent-factory"
+  - alert: FactoryRoutinePaused
+    expr: max by (repository, routine) (maku_factory_routine_paused) == 1
+    for: 5m
+    labels:
+      severity: info
+    annotations:
+      summary: "Routine {{ $labels.routine }} on {{ $labels.repository }} is paused"
+      description: "Cron ticks for {{ $labels.routine }} on {{ $labels.repository }} are paused. Inspect state with `maku routine status {{ $labels.repository }} {{ $labels.routine }}` and resume with `maku routine resume {{ $labels.repository }} {{ $labels.routine }}` when ready."
+      runbook_url: "__DOCS__/operations/failures.md#factory-alerts"
+      dashboard: "/d/upkeep-routines"
+  - alert: FactoryUpkeepBudgetExhausted
+    expr: |
+      (
+        max(maku_factory_budget_spent_usd{principal="system:upkeep"})
+          >= max(maku_factory_budget_cap_usd{principal="system:upkeep"})
+        and max(maku_factory_budget_cap_usd{principal="system:upkeep"}) > 0
+      )
+      or (
+        sum(increase(maku_factory_routine_skips_total{reason="upkeep_budget"}[15m])) > 0
+        and on() (max(maku_factory_budget_cap_usd{principal="system:upkeep"}) > 0)
+      )
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Autonomous upkeep budget (system:upkeep) is exhausted for today"
+      description: "Cron upkeep routines have reached budgets.upkeepDailyUSD and are skipped until 00:00 UTC; human-triggered issues and manual `maku routine run` (when per-person budgets are enabled) continue unaffected. Inspect today's ledger: kubectl get cm -n __NAMESPACE__ agent-factory-ledger-usd-<YYYYMMDD> -o yaml"
+      runbook_url: "__DOCS__/operations/failures.md#budget-signals"
+      dashboard: "/d/upkeep-routines"

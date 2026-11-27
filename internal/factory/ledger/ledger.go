@@ -206,39 +206,57 @@ func Reserve(ctx context.Context, c client.Client, ns string, now time.Time, id 
 // the factory's Queued (N2) both decide on it.
 func OverDaily(usedMicroUSD, maxMicroUSD, limit int64) bool { return usedMicroUSD+maxMicroUSD > limit }
 
+// dayUsage returns principal's settled spend and live reservations for the day, in micro-USD.
+func dayUsage(spent map[string]int64, reserved map[string]Reservation, principal string) (spentMicro, reservedMicro int64) {
+	spentMicro = spent[principal]
+	for _, v := range reserved {
+		if v.Principal == principal || v.Person == principal {
+			reservedMicro += v.MaxMicroUSD
+		}
+	}
+	return spentMicro, reservedMicro
+}
+
 // dayUsed is what principal holds of its day, in micro-USD: the meter's settled spend plus its
 // admitted runs' reservations, as their principal or their person.
 func dayUsed(spent map[string]int64, reserved map[string]Reservation, principal string) int64 {
-	used := spent[principal]
-	for _, v := range reserved {
-		if v.Principal == principal || v.Person == principal {
-			used += v.MaxMicroUSD
-		}
+	s, r := dayUsage(spent, reserved, principal)
+	return s + r
+}
+
+// DayUsage reads key's UTC-day spend and live reservations from that day's ledger, in micro-USD:
+// a missing ledger returns 0, 0, nil. c must read ConfigMaps live: the factory's cached watch sees
+// the stop object only.
+func DayUsage(ctx context.Context, c client.Reader, ns string, now time.Time, key string) (spent, reserved int64, err error) {
+	cm := &corev1.ConfigMap{}
+	err = c.Get(ctx, types.NamespacedName{Namespace: ns, Name: Prefix + now.UTC().Format(DayLayout)}, cm)
+	switch {
+	case apierrors.IsNotFound(err):
+		return 0, 0, nil
+	case err != nil:
+		return 0, 0, fmt.Errorf("ledger: %w", err)
 	}
-	return used
+	spentCol, err := SpentColumn(cm)
+	if err != nil {
+		return 0, 0, err
+	}
+	resMap, err := ledgerReservations(cm)
+	if err != nil {
+		return 0, 0, err
+	}
+	s, r := dayUsage(spentCol, resMap, key)
+	return s, r, nil
 }
 
 // DayUsed reads principal's use of the UTC day of now from that day's ledger, in micro-USD, as
 // admission does: a missing ledger is a day with nothing used. c must read ConfigMaps live: the
 // factory's cached watch sees the stop object only.
 func DayUsed(ctx context.Context, c client.Reader, ns, principal string, now time.Time) (int64, error) {
-	cm := &corev1.ConfigMap{}
-	err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: Prefix + now.UTC().Format(DayLayout)}, cm)
-	switch {
-	case apierrors.IsNotFound(err):
-		return 0, nil
-	case err != nil:
-		return 0, fmt.Errorf("ledger: %w", err)
-	}
-	spent, err := SpentColumn(cm)
+	s, r, err := DayUsage(ctx, c, ns, now, principal)
 	if err != nil {
 		return 0, err
 	}
-	reserved, err := ledgerReservations(cm)
-	if err != nil {
-		return 0, err
-	}
-	return dayUsed(spent, reserved, principal), nil
+	return s + r, nil
 }
 
 // SpentColumn reads a ledger's spent map, nil when the column is empty. Exported with

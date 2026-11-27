@@ -24,7 +24,7 @@ func Types() []string { return slices.Clone(types) }
 
 // limits are the budget limits a run or a task can reach: the meter's, the person's and the
 // family's. A revoked run's reason is annotation text, so a "budget-" prefix alone proves nothing.
-var limits = []string{"budget-run", "budget-task", "budget-principal", "budget-fleet", "budget-person", "budget-family"}
+var limits = []string{"budget-run", "budget-task", "budget-principal", "budget-fleet", "budget-person", "budget-family", "budget-upkeep"}
 
 // Limits lists the values an event's limit may hold.
 func Limits() []string { return slices.Clone(limits) }
@@ -55,7 +55,7 @@ func Decisions() []string { return slices.Clone(decisions) }
 func Reasons() []string {
 	out := summary.Reasons()
 	out = append(out, "approval", "manual", "revoked", "deleted", "principal_unknown",
-		"budget-run", "budget-principal", "budget-fleet", "budget-person",
+		"budget-run", "budget-principal", "budget-fleet", "budget-person", "budget-upkeep",
 		"foreign_room", "room_log_unreadable", "rooms_crd_outdated",
 		"cancelled", "discarded", "issue_deleted") // #644: a stop's end line says which
 	slices.Sort(out)

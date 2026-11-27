@@ -239,7 +239,12 @@ type Reconciler struct {
 	Rooms   RoomLog
 	Triage  triage.Triager
 	Metrics metrics
-	Now     func() time.Time
+	// RoutineMetrics records per-routine outcomes and spend at task end (optional until
+	// fmetrics.Set implements it in Task 9; falls back to type-asserting Metrics).
+	RoutineMetrics interface {
+		RoutineRun(ctx context.Context, repository, routine, outcome string, usd float64)
+	}
+	Now func() time.Time
 	// Decisions remembers each class's latest merge decision for the resources' status; nil: off.
 	Decisions *decision.Recorder
 	// CleanDecisions reads cached promotion evidence for a shadow comment; nil: progress is omitted.
@@ -1701,18 +1706,23 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 	}
 	limit, sponsored := cfg.Budgets.DailyMicroUSD(runs.PrincipalFactory), r.sponsored(cfg, t)
 	if limit > 0 {
+		person := r.person(cfg, t)
 		over, err := r.reserveFactoryDay(ctx, cfg, t, limit)
 		switch {
 		case errors.Is(err, ledger.ErrPersonOverBudget): // D4/D5: the person's day, not the fleet's: refused, not queued
-			record(ctx, func(ctx context.Context) { r.Metrics.Revoked(ctx, "budget-person") })
-			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "budget-person")
+			reason := "budget-person"
+			if person == config.PrincipalUpkeep {
+				reason = "budget-upkeep"
+			}
+			record(ctx, func(ctx context.Context) { r.Metrics.Revoked(ctx, reason) })
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 		case errors.Is(err, ledger.ErrOverBudget):
 			t.Status.Reason = "waiting_daily_budget" // no new factory run until 00:00 UTC
 			return nil
 		case errors.Is(err, ledger.ErrMeterBlind): // an enforced cap the meter cannot feed holds (#54)
 			t.Status.Reason = "waiting_meter_blind"
 			return nil
-		case err != nil && (cfg.Budgets.EnforcePrincipal || sponsored):
+		case err != nil && (cfg.Budgets.EnforcePrincipal || sponsored || person == config.PrincipalUpkeep):
 			return err
 		case err != nil: // a shadow cap counts; it never holds a run
 			r.log().Warn("daily cap unreserved (shadow)", "task.id", t.Name, "err", err)

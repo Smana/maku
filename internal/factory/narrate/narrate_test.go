@@ -551,7 +551,7 @@ func TestEndedNamesASponsoredPayerAsAPrincipal(t *testing.T) {
 	if b := Ended(person, v1alpha1.PhaseEscalated, "budget-person").Body; !strings.Contains(b, "the person its next run") {
 		t.Fatal(b)
 	}
-	for _, r := range []string{"principal_unknown", "rooms_crd_outdated"} {
+	for _, r := range []string{"principal_unknown", "rooms_crd_outdated", "budget-upkeep", "waiting_human_priority", "waiting_upkeep_review_wip"} {
 		if got := Reason(r); got == r || got == "" {
 			t.Errorf("%s has no narration", r)
 		}

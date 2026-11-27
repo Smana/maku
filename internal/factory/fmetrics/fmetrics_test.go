@@ -708,3 +708,19 @@ func TestWorkflowHealthMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestUpkeepRevocationLabelsStayBounded(t *testing.T) {
+	s, scrape := rig(t, nil, func() bool { return true })
+	upkeepCtx := WithPrincipal(t.Context(), "system:upkeep")
+	s.RunRevoked(upkeepCtx, "budget-upkeep", "upkeep-day")
+	s.Revoked(upkeepCtx, "budget-upkeep")
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_run_revocations_total{limit="upkeep-day",principal="system:upkeep",reason="budget-upkeep"} 1`,
+		`maku_factory_run_revocations_total{principal="system:upkeep",reason="budget-upkeep"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Fatalf("missing %s\n%s", want, body)
+		}
+	}
+}

@@ -257,8 +257,30 @@ func (r *Reconciler) count(ctx context.Context, cfg *config.Config, t *v1alpha1.
 	record(ctx, func(ctx context.Context) {
 		r.Metrics.TaskOutcome(ctx, class, cohort, profile, source, rec, harness, outcome, usd)
 	})
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		if rm := r.routineMetrics(); rm != nil {
+			name, repo := routineName(t), t.Spec.Repository
+			record(ctx, func(ctx context.Context) {
+				rm.RoutineRun(ctx, repo, name, outcome, usd)
+			})
+		}
+	}
 	r.countStages(ctx, cfg, t, outcome)
 	r.countCardHealth(ctx, t, outcome, micro)
+}
+
+func (r *Reconciler) routineMetrics() interface {
+	RoutineRun(ctx context.Context, repository, routine, outcome string, usd float64)
+} {
+	if r.RoutineMetrics != nil {
+		return r.RoutineMetrics
+	}
+	if rm, ok := r.Metrics.(interface {
+		RoutineRun(ctx context.Context, repository, routine, outcome string, usd float64)
+	}); ok {
+		return rm
+	}
+	return nil
 }
 
 // countCardHealth records the workflow card's health metrics once at task end (WR5): whether the

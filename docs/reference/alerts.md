@@ -54,6 +54,8 @@ ai-native-ref's `vmrule-agent-factory.yaml`, which comes with ai-native-ref's PR
 | `FactoryMergeGateNotRequired` | `min by (repository) (maku_factory_merge_gate_required) == 0` | 30 min | The repository's ruleset no longer requires `maku/merge-gate` from the App that posts it: [branch protection for the merge gate](../factory.md#branch-protection-for-the-merge-gate) |
 | `FactoryMergeGateRulesUnread` | `increase(maku_factory_merge_gate_rules_unread_total[30m]) > 0` | 30 min | The gauge is stale: the factory's log names the failed read (the merger App id file, the repository, or the branch rules) |
 | `AgentFactoryPrivateCodeUnacknowledged` | `max by (repository) (maku_factory_private_code_unacknowledged) == 1` | 15 min | A served repository is private code without `spec.privateCode.acknowledged`: set it on the `Repository`, or stop serving it ([private code](../install.md#private-code)). The next release refuses it |
+| `FactoryRoutinePaused` | `max by (repository, routine) (maku_factory_routine_paused) == 1` (info) | 5 min | Inspect state with `maku routine status <repo> <routine>` and resume with `maku routine resume <repo> <routine>` when ready |
+| `FactoryUpkeepBudgetExhausted` | `system:upkeep` spent reached `budgets.upkeepDailyUSD` (> 0) or cron upkeep skipped with `reason="upkeep_budget"` | 5 min | Human-triggered tasks and manual runs continue unaffected; inspects today's ledger or wait for 00:00 UTC reset ([Budget signals](../operations/failures.md#budget-signals)) |
 
 No series, no alert: on a release without a gauge the expression is empty, so a rule is safe to ship ahead of it.
 

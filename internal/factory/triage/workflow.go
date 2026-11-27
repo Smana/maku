@@ -3,6 +3,7 @@
 package triage
 
 import (
+	"cmp"
 	"slices"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
@@ -40,6 +41,17 @@ func WorkflowFor(cfg *config.Config, t *v1alpha1.Task, pin Pin) (name, source st
 		if rc != nil {
 			if i := slices.IndexFunc(rc.Schedules, func(s config.Schedule) bool { return s.Name == t.Spec.Source.Ref }); i >= 0 {
 				return rc.Schedules[i].WorkflowOr(), SourceSchedule
+			}
+		}
+		return config.WorkflowQuick, SourceSchedule
+	case t.Spec.Source.Kind == v1alpha1.SourceKindRoutine:
+		name := t.Spec.Source.Ref
+		if t.Spec.Routine != nil && t.Spec.Routine.Name != "" {
+			name = t.Spec.Routine.Name
+		}
+		if rc != nil {
+			if rr, ok := rc.ResolvedRoutines[name]; ok {
+				return cmp.Or(rr.Workflow, rc.DefaultWorkflow()), SourceSchedule
 			}
 		}
 		return config.WorkflowQuick, SourceSchedule

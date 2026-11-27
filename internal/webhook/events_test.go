@@ -264,6 +264,8 @@ func TestEventsEndings(t *testing.T) {
 		"run failed": {nil, runPhase(1, "cf4ato2x", "Failed", ""), []string{`{"type":"room.run_ended","room":"aaaaaaaa","run":"cf4ato2x"}`}},
 		"run revoked": {nil, runPhase(1, "cf4ato2x", "Revoked", "budget-person"),
 			[]string{`{"type":"room.run_ended","room":"aaaaaaaa","run":"cf4ato2x"}`, `{"type":"room.budget_reached","room":"aaaaaaaa","limit":"budget-person"}`}},
+		"run revoked upkeep": {nil, runPhase(1, "cf4ato2x", "Revoked", "budget-upkeep"),
+			[]string{`{"type":"room.run_ended","room":"aaaaaaaa","run":"cf4ato2x"}`, `{"type":"room.budget_reached","room":"aaaaaaaa","limit":"budget-upkeep"}`}},
 		"run revoked by hand": {nil, runPhase(1, "cf4ato2x", "Revoked", "manual"), []string{`{"type":"room.run_ended","room":"aaaaaaaa","run":"cf4ato2x"}`}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -388,5 +390,8 @@ func TestMonitorVerdictIsSentOncePerRoom(t *testing.T) {
 	}
 	if got := run("", done, reg); len(got) != 0 || !slices.Contains(Types(), "room.monitor_verdict") || Clip("verdict", "fixed") != "other" {
 		t.Fatalf("no origin, no event; subscribable; clipped: %+v", got)
+	}
+	if !slices.Contains(Limits(), "budget-upkeep") || !slices.Contains(Reasons(), "budget-upkeep") || Clip("limit", "budget-upkeep") != "budget-upkeep" {
+		t.Fatalf("budget-upkeep missing from webhook Limits/Reasons: limits=%v reasons=%v", Limits(), Reasons())
 	}
 }

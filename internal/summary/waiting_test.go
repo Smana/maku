@@ -48,14 +48,21 @@ func TestEveryGeneratedGhCommandNamesItsRepository(t *testing.T) {
 func TestEveryWaitingPhaseHasAReasonAndANextStep(t *testing.T) {
 	waits := []envelope.TaskFacts{
 		{Phase: "Queued"}, {Phase: "Queued", Reason: "waiting_run_slot"}, {Phase: "Queued", Reason: "waiting_daily_budget"},
+		{Phase: "Queued", Reason: "waiting_human_priority"}, {Phase: "Queued", Reason: "waiting_upkeep_review_wip"},
 		{Phase: "Queued", Reason: "waiting_human_driver"}, {Phase: "AwaitingCI"}, {Phase: "AwaitingCI", Reason: "ci_pending"}, {Phase: "AwaitingCI", Reason: "holdout_pending"},
 		{Phase: "AwaitingHuman"}, {Phase: "AwaitingHuman", Reason: "policy_pending"}, {Phase: "AwaitingHuman", Reason: "not_mergeable"},
-		{Phase: "Escalated", Reason: "stuck"}, {Phase: "Escalated", Reason: "ci_red"}, {Phase: "Escalated", Reason: "never_heard_of_it"},
+		{Phase: "Escalated", Reason: "stuck"}, {Phase: "Escalated", Reason: "ci_red"}, {Phase: "Escalated", Reason: "budget-upkeep"}, {Phase: "Escalated", Reason: "never_heard_of_it"},
 	}
 	for _, f := range waits {
 		s := taskView(f, watcher())
 		if s.Status.Reason == "" || s.Status.Next == "" {
 			t.Errorf("%s/%s: reason %q, next %q", f.Phase, f.Reason, s.Status.Reason, s.Status.Next)
+		}
+	}
+	for _, reason := range []string{"waiting_human_priority", "waiting_upkeep_review_wip", "budget-upkeep"} {
+		why, next := summary.Waiting(&envelope.TaskFacts{Phase: "Queued", Reason: reason})
+		if why == "" || why == reason || next == "" {
+			t.Errorf("summary.Waiting(%q) = (%q, %q), want non-raw prose and next step", reason, why, next)
 		}
 	}
 	if s := taskView(envelope.TaskFacts{Phase: "AwaitingCI", Reason: "holdout_pending"}, watcher()); !strings.Contains(s.Status.Next, "holdout checks report") {

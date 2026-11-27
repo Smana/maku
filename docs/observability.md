@@ -142,6 +142,7 @@ monitoring:
 | `agent-run` | One run (`var-run`): phase, duration, models, tokens and cost, the ledger against the gateway | always |
 | `agent-identity` | Spend per identity (`var-principal`): one principal at a time, never ranked | always |
 | `agent-fleet` | Every run: phases, tokens, spend by model and principal | always |
+| `upkeep-routines` | Autonomous upkeep routines: merge rate, $/merged PR, outcomes, skips, `system:upkeep` budget, paused routines | always |
 | `agent-gateway` | The model gateway: requests, errors, latency, tokens, MCP calls | `maku-gateway.enabled` |
 
 **grafana-operator.** Point a `GrafanaDashboard` at each ConfigMap:

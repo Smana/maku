@@ -713,6 +713,20 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: maku-dashboard-upkeep-routines
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  upkeep-routines.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: maku-dashboard-agent-gateway
   namespace: agent-system
   labels:
@@ -4619,6 +4633,35 @@ spec:
             summary: The factory cannot read whether {{ $labels.repository }} requires maku/merge-gate
           expr: sum by (repository) (increase(maku_factory_merge_gate_rules_unread_total[30m])) > 0
           for: 30m
+          labels:
+            severity: warning
+        - alert: FactoryRoutinePaused
+          annotations:
+            dashboard: /d/upkeep-routines
+            description: Cron ticks for {{ $labels.routine }} on {{ $labels.repository }} are paused. Inspect state with `maku routine status {{ $labels.repository }} {{ $labels.routine }}` and resume with `maku routine resume {{ $labels.repository }} {{ $labels.routine }}` when ready.
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations/failures.md#factory-alerts
+            summary: Routine {{ $labels.routine }} on {{ $labels.repository }} is paused
+          expr: max by (repository, routine) (maku_factory_routine_paused) == 1
+          for: 5m
+          labels:
+            severity: info
+        - alert: FactoryUpkeepBudgetExhausted
+          annotations:
+            dashboard: /d/upkeep-routines
+            description: 'Cron upkeep routines have reached budgets.upkeepDailyUSD and are skipped until 00:00 UTC; human-triggered issues and manual `maku routine run` (when per-person budgets are enabled) continue unaffected. Inspect today''s ledger: kubectl get cm -n agent-system agent-factory-ledger-usd-<YYYYMMDD> -o yaml'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations/failures.md#budget-signals
+            summary: Autonomous upkeep budget (system:upkeep) is exhausted for today
+          expr: |
+            (
+              max(maku_factory_budget_spent_usd{principal="system:upkeep"})
+                >= max(maku_factory_budget_cap_usd{principal="system:upkeep"})
+              and max(maku_factory_budget_cap_usd{principal="system:upkeep"}) > 0
+            )
+            or (
+              sum(increase(maku_factory_routine_skips_total{reason="upkeep_budget"}[15m])) > 0
+              and on() (max(maku_factory_budget_cap_usd{principal="system:upkeep"}) > 0)
+            )
+          for: 5m
           labels:
             severity: warning
     - name: maku-run-path
