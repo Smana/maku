@@ -65,10 +65,20 @@ if grep -q 'j.md:4' <<<"$(findings)"; then echo "unexpected match: $out"; exit 1
 rc=0; hack/docs.sh "$tmp/docs/h.md" >/dev/null 2>&1 || rc=$?; [ "$rc" = 1 ]
 rc=0; hack/docs.sh "$tmp/docs/g.md" >/dev/null 2>&1 || rc=$?; [ "$rc" = 0 ]
 
-# Unicode anchors.
-printf '# U\n\n## 🚀 Démarrage rapide\n\n## Écrire\n\n## Ça va ?\n' > "$tmp/docs/u.md"
-printf '# V\n\n[a](u.md#-démarrage-rapide) [b](u.md#écrire) [c](u.md#ça-va-)\n' > "$tmp/docs/v.md"
+# Unicode anchors and Goldmark explicit heading/span ids.
+printf '# U\n\n## 🚀 Démarrage rapide\n\n## Écrire\n\n## Ça va ?\n\n## Pick your path {#paths}\n\n<span id="review"></span>\n' > "$tmp/docs/u.md"
+printf '# V\n\n[a](u.md#-démarrage-rapide) [b](u.md#écrire) [c](u.md#ça-va-) [d](u.md#paths) [e](u.md#review)\n' > "$tmp/docs/v.md"
 hack/docs.sh "$tmp/docs/v.md"
+
+# Historical ADRs under website/content/docs/decisions/ are exempt from status, design-id, and cluster-name scans.
+mkdir -p "$tmp/website/content/docs/decisions" "$tmp/website/content/docs/concepts"
+printf '# 0041\n\nPlanned on aws-0 (D11, R3).\n' > "$tmp/website/content/docs/decisions/0041-test.md"
+printf '# Bad\n\nPlanned on aws-0 (D11, R3).\n' > "$tmp/website/content/docs/concepts/bad.md"
+out=$(hack/docs.sh "$tmp/website/content/docs/decisions/0041-test.md" "$tmp/website/content/docs/concepts/bad.md" 2>&1 || true)
+grep -q 'concepts/bad.md:3: status vocabulary: Planned' <<<"$out"
+grep -q 'concepts/bad.md:3: design id: D11' <<<"$out"
+grep -q 'concepts/bad.md:3: cluster name: aws-0' <<<"$out"
+if grep -q 'decisions/0041-test.md' <<<"$(findings)"; then echo "unexpected match in decisions/: $out"; exit 1; fi
 
 # Page-type ceilings: marker within first 5 lines; unknown type; moved stub <= 40 words; untyped ignored.
 awk 'BEGIN{printf "<!-- page-type: how-to -->\n# H\n\n"; for(i=0;i<1600;i++) printf "word "; printf "\n"}' > "$tmp/docs/h.md"

@@ -7,7 +7,8 @@ aliases:
   - /docs/gateway/
 ---
 
-Agent Factory reaches every model through one gateway: [agentgateway](https://agentgateway.dev) v1.6,
+Agent Factory reaches every model through one gateway: [agentgateway](https://agentgateway.dev) v1.6
+([ADR-0053]({{< relref "/docs/decisions/0053-agent-router-on-agentgateway.md" >}})),
 configured by the `maku-gateway` chart. Runs, the planner and the Slack intent classifier each call it
 with their own projected ServiceAccount token. The gateway checks the token, then calls the provider
 with a key that only the gateway holds. This page covers the seam, the values, the provider presets and

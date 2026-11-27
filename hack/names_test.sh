@@ -10,8 +10,9 @@ out=$(bash "$here/names.sh" "$tmp" 2>&1 || true)
 grep -q 'FAIL: no instrument name found' <<<"$out" || { echo "names.sh ran with no metric list: $out"; exit 1; }
 # The fixture gives names.sh its metric list in the temporary tree.
 mkdir -p "$tmp/internal/metrics" && printf 'const x = "rooms_events_appended_total"\nconst y = "rooms_fanout_seconds"\n' > "$tmp/internal/metrics/m.go"
-mkdir -p "$tmp/docs/superpowers/plans" "$tmp/internal/humanapi"
+mkdir -p "$tmp/docs/superpowers/plans" "$tmp/website/content/docs/decisions" "$tmp/internal/humanapi"
 printf 'old plan: ghcr.io/smana/room-broker and roomctl\n' > "$tmp/docs/superpowers/plans/p.md"
+printf 'historical ADR: ghcr.io/smana/room-broker, roomctl and agents.ogenki.io/v1alpha1\n' > "$tmp/website/content/docs/decisions/0041-history.md"
 printf 'mux.HandleFunc("GET /api/roomctl", s.setup)\nViaRoomctl = "roomctl"\n' > "$tmp/internal/humanapi/server.go"
 printf 'The audience room-broker and the Service room-broker.agent-system keep their names.\n' > "$tmp/docs/ok.md"
 printf 'The pre-rebrand OIDC client id and audiences keep roomctl: {"client_id":"roomctl","aud":["project","roomctl"]}.\n' > "$tmp/docs/ok-oidc.md"

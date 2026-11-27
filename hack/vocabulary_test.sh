@@ -4,11 +4,12 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/docs"
+mkdir -p "$tmp/docs" "$tmp/website/content/docs/decisions"
 printf 'A **workflow** names the roles; `templates.trio` and `workflows` are keys; a `profile:<name>` label pins nothing.\n' > "$tmp/docs/ok.md"
 printf 'harness profile and trio and egress profile and capability profile and harnessProfiles, all kept\n' > "$tmp/docs/api.md"
 cp "$tmp/docs/api.md" "$tmp/docs/upgrading.md"; cp "$tmp/docs/api.md" "$tmp/docs/event-envelope.md"
 cp "$tmp/docs/api.md" "$tmp/docs/room-log.md"
+cp "$tmp/docs/api.md" "$tmp/website/content/docs/decisions/0041-history.md"
 bash "$here/vocabulary.sh" "$tmp"
 n=0
 for phrase in 'harness profile' 'Capability profiles' 'egress profile' 'the trio template' '`harnessProfiles`' 'a profile:<name> label'; do

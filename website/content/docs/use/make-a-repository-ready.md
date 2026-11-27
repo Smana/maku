@@ -17,13 +17,22 @@ possible. Without them, a run still opens a pull request, but nothing in the san
 
 | It has | It does not have |
 |---|---|
-| One platform image with `git`, `bash`, `mise` and Python | Your own image (planned: a per-repository runtime) |
+| One platform image with `git`, `bash`, `mise` and Python (or a per-repository runtime image when configured) | Docker, or a service your platform team has not added ([below](#services)) |
 | GitHub, and the package registries the platform grants the repository: PyPI, npm, the Go proxy, crates.io, Maven Central and Gradle (`maven`), Node's downloads (`node`) | A private feed, or any other host |
-| 2 CPU and 4 GiB by default, 10 GiB of scratch | Docker, Testcontainers, a database or any other service |
+| 2 CPU and 4 GiB by default (4 or 8 CPU and 8 or 16 GiB when configured), 10 GiB of scratch | More than 15 minutes for checks |
 | 8 minutes of checks by default, 15 at most | Your CI's secrets |
 
 The platform team grants the registries on the repository's `Repository` object
-([`checks`]({{< relref "/docs/reference/config.md" >}})); your files never name a host.
+([`checks`]({{< relref "/docs/reference/config.md" >}})); your files never name a host. GitHub's
+release downloads are open only while the sandbox installs your pinned tools, before the agent
+starts: a tool the agent tries to download later is refused, so pin it in `mise.toml`.
+
+### Services your tests need {#services}
+
+The platform team can add a loopback Postgres or Redis service (`runtime.services`) to a
+repository's runs. It listens on `127.0.0.1` only, starts empty for each run, and your checks reach
+it through `DATABASE_URL` (`postgres://maku@127.0.0.1:5432/maku`) or `REDIS_URL`. Create your
+schema in the test setup.
 
 ## The three files
 
@@ -52,7 +61,7 @@ steps:
   - {name: unit, run: go test -short ./..., ci: test}
   - {name: lint, run: golangci-lint run, ci: lint}
 ciOnly:
-  - {check: test, part: "integration tests", why: "they need Postgres; the sandbox has no Docker"}
+  - {check: test, part: "container image build", why: "it needs Docker"}
 ```
 
 | Key | Means |
@@ -63,7 +72,7 @@ ciOnly:
 | `ciOnly` | What the sandbox cannot run, and why. Each entry has exactly `check`, `part` and `why` |
 | `tests` | Where a tester may write tests first (`paths`, `runner`); optional |
 
-**What belongs in `ciOnly`:** anything that needs Docker, a service (a database, a queue), a secret, a host
+**What belongs in `ciOnly`:** anything that needs Docker, a service your runs do not get, a secret, a host
 outside the registries above, or a long time. List it rather than leave it out: the first comment of every
 task names these steps, and says that CI is the judge of a merge.
 

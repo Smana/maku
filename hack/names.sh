@@ -9,7 +9,7 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 
 # History and recorded data keep the old names.
-allow=(':!docs/superpowers' ':!web/test/fixtures' ':!hack/names.sh' ':!hack/names_test.sh'
+allow=(':!docs/superpowers' ':!website/content/docs/decisions' ':!web/test/fixtures' ':!hack/names.sh' ':!hack/names_test.sh'
   ':!internal/maku/legacy.go' ':!internal/maku/legacy_test.go' ':!internal/maku/legacymcp_test.go'
   ':!internal/app/maku_import_test.go' ':!internal/humanapi/ui/dist'
   # web/src/strip.ts:38's comment names roomctl's tokens(); the file is frozen by another branch,
