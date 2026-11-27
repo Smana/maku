@@ -29,7 +29,8 @@ func (r Run) Kind() string {
 }
 
 // TaskPayer is the key the task's next run is charged to beside the fleet: an api task's principal
-// always (F4, R7), the person while per-person caps are on, else the fleet's own (SI1).
+// always (F4, R7), the person while per-person caps are on, system:upkeep for routine tasks without
+// a person payer (Q15), else the fleet's own (SI1).
 func TaskPayer(t *v1alpha1.Task, perPerson bool) string {
 	if p := t.Sponsored(); p != "" && t.Status.RetriedBy == "" {
 		return p
@@ -38,6 +39,9 @@ func TaskPayer(t *v1alpha1.Task, perPerson bool) string {
 		if p := t.Payer(); p != "" {
 			return p
 		}
+	}
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		return PrincipalUpkeep
 	}
 	return PrincipalFactory
 }

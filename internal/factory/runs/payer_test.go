@@ -39,15 +39,25 @@ func TestATaskPaysAsItsNextRunWouldBeCharged(t *testing.T) {
 	retried := labelled.DeepCopy()
 	retried.Status.RetriedBy = "github:bob"
 	scheduled := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{RequestedBy: "system:scheduler"}}}
+	cronRoutine := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, RequestedBy: "system:scheduler"}}}
+	manualRoutine := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, RequestedBy: "github:Alice"}}}
+	retriedRoutine := cronRoutine.DeepCopy()
+	retriedRoutine.Status.RetriedBy = "github:bob"
 	for name, c := range map[string]struct {
 		task *v1alpha1.Task
 		on   bool
 		want string
 	}{
-		"labelled":           {labelled, true, "github:alice"},
-		"retried":            {retried, true, "github:bob"},
-		"scheduled":          {scheduled, true, PrincipalFactory},
-		"labelled, caps off": {labelled, false, PrincipalFactory},
+		"labelled":                  {labelled, true, "github:alice"},
+		"retried":                   {retried, true, "github:bob"},
+		"scheduled":                 {scheduled, true, PrincipalFactory},
+		"labelled, caps off":        {labelled, false, PrincipalFactory},
+		"cron routine, caps off":    {cronRoutine, false, "system:upkeep"},
+		"cron routine, caps on":     {cronRoutine, true, "system:upkeep"},
+		"manual routine, caps on":   {manualRoutine, true, "github:alice"},
+		"manual routine, caps off":  {manualRoutine, false, "system:upkeep"},
+		"retried routine, caps on":  {retriedRoutine, true, "github:bob"},
+		"retried routine, caps off": {retriedRoutine, false, "system:upkeep"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := TaskPayer(c.task, c.on); got != c.want {

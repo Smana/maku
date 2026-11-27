@@ -18,7 +18,7 @@ import yaml
 src, out = sys.argv[1], sys.argv[2]
 errors = []
 boards = {f[:-5]: json.load(open(os.path.join(src, f))) for f in sorted(os.listdir(src)) if f.endswith(".json")}
-WANT = {"agents-overview", "agent-factory", "agent-room", "agent-run", "agent-identity", "agent-fleet", "agent-gateway"}
+WANT = {"agents-overview", "agent-factory", "agent-room", "agent-run", "agent-identity", "agent-fleet", "agent-gateway", "upkeep-routines"}
 if set(boards) != WANT:
     sys.exit(f"FAIL: rendered dashboards {sorted(boards)}, want {sorted(WANT)}")
 
@@ -305,6 +305,57 @@ tests += [
         rows(q("Cost per accepted PR", "B", A), [{"value": 3}], "50m"),
     ]},
 ]
+
+# Upkeep routines dashboard (upkeep-routines.json): all 6 panels.
+UPKEEP_SERIES = [
+    # dead-code: 1 accepted, 1 closed, 1 no_op; total USD = 2.0 + 1.0 + 0.5 = 3.5 -> merge rate 0.5, $/merged 3.5
+    {"series": 'maku_factory_routine_runs_total{repository="o/a", routine="dead-code", outcome="accepted"}', "values": "0 1x30"},
+    {"series": 'maku_factory_routine_runs_total{repository="o/a", routine="dead-code", outcome="closed"}', "values": "0 1x30"},
+    {"series": 'maku_factory_routine_runs_total{repository="o/a", routine="dead-code", outcome="no_op"}', "values": "0 1x30"},
+    {"series": 'maku_factory_routine_usd_total{repository="o/a", routine="dead-code", outcome="accepted"}', "values": "0 2x30"},
+    {"series": 'maku_factory_routine_usd_total{repository="o/a", routine="dead-code", outcome="closed"}', "values": "0 1x30"},
+    {"series": 'maku_factory_routine_usd_total{repository="o/a", routine="dead-code", outcome="no_op"}', "values": "0 0.5x30"},
+    # doc-drift: 2 closed, 0 accepted -> merge rate 0 (not dropped!), no $/merged PR
+    {"series": 'maku_factory_routine_runs_total{repository="o/a", routine="doc-drift", outcome="closed"}', "values": "0 2x30"},
+    {"series": 'maku_factory_routine_usd_total{repository="o/a", routine="doc-drift", outcome="closed"}', "values": "0 1.2x30"},
+    # skips, daily upkeep budget, paused
+    {"series": 'maku_factory_routine_skips_total{repository="o/a", routine="dead-code", reason="upkeep_budget"}', "values": "0 3x30"},
+    {"series": 'maku_factory_routine_skips_total{repository="o/a", routine="doc-drift", reason="cooldown"}', "values": "0 1x30"},
+    {"series": 'maku_factory_budget_spent_usd{principal="system:upkeep", pod="agent-factory-0"}', "values": "4.7x30"},
+    {"series": 'maku_factory_budget_cap_usd{principal="system:upkeep", pod="agent-factory-0"}', "values": "10x30"},
+    {"series": 'maku_factory_routine_paused{repository="o/a", routine="doc-drift", pod="agent-factory-0"}', "values": "1x30"},
+    {"series": 'maku_factory_routine_paused{repository="o/a", routine="dead-code", pod="agent-factory-0"}', "values": "0x30"},
+]
+tests.append({
+    "interval": "1m",
+    "input_series": UPKEEP_SERIES,
+    "promql_expr_test": [
+        rows(prep(expr("upkeep-routines", "Merge rate by routine"), rng="30m"), [
+            {"labels": '{repository="o/a", routine="dead-code"}', "value": 0.5},
+            {"labels": '{repository="o/a", routine="doc-drift"}', "value": 0},
+        ], "29m"),
+        rows(prep(expr("upkeep-routines", "$/merged PR by routine"), rng="30m"), [
+            {"labels": '{repository="o/a", routine="dead-code"}', "value": 3.5},
+        ], "29m"),
+        rows(prep(expr("upkeep-routines", "Outcomes & NoOp share", "A")), [
+            {"labels": '{outcome="accepted"}', "value": 1},
+            {"labels": '{outcome="closed"}', "value": 3},
+            {"labels": '{outcome="no_op"}', "value": 1},
+        ], "29m"),
+        rows(prep(expr("upkeep-routines", "Outcomes & NoOp share", "B")), [
+            {"value": 0.2},
+        ], "29m"),
+        rows(prep(expr("upkeep-routines", "Skips by reason")), [
+            {"labels": '{reason="upkeep_budget"}', "value": 3},
+            {"labels": '{reason="cooldown"}', "value": 1},
+        ], "29m"),
+        rows(prep(expr("upkeep-routines", "Upkeep daily USD vs cap", "A")), [{"value": 4.7}], "29m"),
+        rows(prep(expr("upkeep-routines", "Upkeep daily USD vs cap", "B")), [{"value": 10}], "29m"),
+        rows(prep(expr("upkeep-routines", "Paused routines")), [
+            {"labels": '{repository="o/a", routine="doc-drift"}', "value": 1},
+        ], "29m"),
+    ],
+})
 open(os.path.join(out, "rules.yaml"), "w").write("groups: []\n")
 yaml.safe_dump({"rule_files": ["rules.yaml"], "evaluation_interval": "1m", "tests": tests},
                open(os.path.join(out, "queries.test.yaml"), "w"), sort_keys=False, width=100000)

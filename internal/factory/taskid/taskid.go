@@ -61,6 +61,16 @@ func ScheduleKey(name string, at time.Time) string {
 	return fmt.Sprintf("schedule:%s:%s", name, at.UTC().Format(time.RFC3339))
 }
 
+// RoutineKey is a scheduled routine task's idempotency key: one per repository, routine, and UTC firing slot.
+func RoutineKey(repo, name string, slot time.Time) string {
+	return fmt.Sprintf("routine:%s:%s:%s", repo, name, slot.UTC().Format(time.RFC3339))
+}
+
+// ManualRoutineKey is a manually triggered routine task's idempotency key.
+func ManualRoutineKey(repo, name, idempotencyKey string) string {
+	return fmt.Sprintf("routine:%s:%s:manual:%s", repo, name, idempotencyKey)
+}
+
 // CoordinationChildKey keys one generation of a coordination child (v4 MR2): one Task per parent,
 // child, plan version and generation, whatever replays. Generation 1 is a child's first.
 func CoordinationChildKey(parent, childID string, version, generation int) string {

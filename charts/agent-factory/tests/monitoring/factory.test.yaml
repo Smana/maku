@@ -195,3 +195,48 @@ tests:
     alert_rule_test:
       - {eval_time: 23h, alertname: AgentFactoryPolicyPausedLong, exp_alerts: []}
       - {eval_time: 24h1m, alertname: AgentFactoryPolicyPausedLong, exp_alerts: [{exp_labels: {severity: warning, namespace: agent-system, name: cloud-native-ref}}]}
+
+  # FactoryRoutinePaused: fires after 5m when maku_factory_routine_paused == 1; resolves when 0.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_routine_paused{repository="o/r", routine="dead-links", pod="agent-factory-0"}', values: '0x5 1x10 0x10'}
+      - {series: 'maku_factory_routine_paused{repository="o/r", routine="doc-drift", pod="agent-factory-0"}', values: '0x25'}
+    alert_rule_test:
+      - {eval_time: 8m, alertname: FactoryRoutinePaused, exp_alerts: []}
+      - {eval_time: 11m, alertname: FactoryRoutinePaused, exp_alerts: [{exp_labels: {severity: info, repository: o/r, routine: dead-links}}]}
+      - {eval_time: 20m, alertname: FactoryRoutinePaused, exp_alerts: []}
+
+  # FactoryUpkeepBudgetExhausted: fires after 5m when spent >= cap (cap > 0), clears on midnight reset.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_budget_cap_usd{principal="system:upkeep", pod="agent-factory-0"}', values: '10x30'}
+      - {series: 'maku_factory_budget_spent_usd{principal="system:upkeep", pod="agent-factory-0"}', values: '8x5 10x10 0x15'}
+    alert_rule_test:
+      - {eval_time: 9m, alertname: FactoryUpkeepBudgetExhausted, exp_alerts: []}
+      - {eval_time: 11m, alertname: FactoryUpkeepBudgetExhausted, exp_alerts: [{exp_labels: {severity: warning}}]}
+      - {eval_time: 21m, alertname: FactoryUpkeepBudgetExhausted, exp_alerts: []}
+
+  # FactoryUpkeepBudgetExhausted: skips with reason=upkeep_budget fire when cap > 0 (e.g. reserved ceiling).
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_budget_cap_usd{principal="system:upkeep", pod="agent-factory-0"}', values: '10x20'}
+      - {series: 'maku_factory_budget_spent_usd{principal="system:upkeep", pod="agent-factory-0"}', values: '8x20'}
+      - {series: 'maku_factory_routine_skips_total{repository="o/r", routine="dead-links", reason="upkeep_budget"}', values: '0 1x15'}
+    alert_rule_test:
+      - {eval_time: 7m, alertname: FactoryUpkeepBudgetExhausted, exp_alerts: [{exp_labels: {severity: warning}}]}
+
+  # FactoryUpkeepBudgetExhausted: intentional upkeepDailyUSD=0 never fires even when skips are recorded.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_budget_cap_usd{principal="system:upkeep", pod="agent-factory-0"}', values: '0x20'}
+      - {series: 'maku_factory_budget_spent_usd{principal="system:upkeep", pod="agent-factory-0"}', values: '0x20'}
+      - {series: 'maku_factory_routine_skips_total{repository="o/r", routine="dead-links", reason="upkeep_budget"}', values: '0 1x15'}
+    alert_rule_test:
+      - {eval_time: 10m, alertname: FactoryUpkeepBudgetExhausted, exp_alerts: []}
+
+  # FactoryUpkeepBudgetExhausted: absent budget_cap_usd series must stay silent even when skips increment.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_routine_skips_total{repository="o/r", routine="dead-links", reason="upkeep_budget"}', values: '0 1x15'}
+    alert_rule_test:
+      - {eval_time: 10m, alertname: FactoryUpkeepBudgetExhausted, exp_alerts: []}

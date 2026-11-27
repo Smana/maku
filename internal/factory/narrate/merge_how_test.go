@@ -23,6 +23,7 @@ var waitReasons = []string{
 	"not_adopted_author", "branch_not_allowed", "adoption_unread", "ci_cancelled", "adopted_head_moved", "adopt_ref_invalid",
 	"approval_stale", "contract_invalid", "contract_too_large", "contract_check_unset", "contract_disputed", "contract_modified", "contract_unread", "contract_push_unrecorded",
 	"label_missing", "label_not_adopted", "held", "waiting_daily_budget", "waiting_room_log", "waiting_broker_permission", "holdout_pending", "split_proposed", "budget-family",
+	"budget-upkeep", "waiting_human_priority", "waiting_upkeep_review_wip",
 }
 
 // The summary repeats the narration's prose (it may not import the factory): a reason added to

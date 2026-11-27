@@ -15,8 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/intake"
+	"github.com/Smana/maku/internal/factory/reconciler"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // fakeWiring connects every repository but those in refuse, and counts the connections.
@@ -131,11 +137,16 @@ func TestRepoConnsSyncReconnectsTheMergerWhenItsNeedChanges(t *testing.T) {
 // fakePublishMetrics records what a publish re-derives.
 type fakePublishMetrics struct {
 	repos    []string
+	routines map[string][]string
 	people   bool
 	budgets  map[string]float64
 	holdouts []string
 	cleared  []string
 	wireErrs []string
+}
+
+func (m *fakePublishMetrics) SetRoutines(byRepo map[string][]string) {
+	m.routines = maps.Clone(byRepo)
 }
 
 func (m *fakePublishMetrics) ClassWithHoldout(_ context.Context, repo, class string) {
@@ -429,5 +440,82 @@ func TestStartupWireServesTheReachableRepositories(t *testing.T) {
 	}
 	if !slices.Equal(conns.names(), []string{"o/a", "o/bad", "o/c"}) {
 		t.Fatalf("served after the App is installed %v", conns.names())
+	}
+}
+
+func TestRoutinesByRepoAndOnPublish(t *testing.T) {
+	cfg := repos("Acme/App", "Acme/Empty")
+	cfg.Repositories[0].Routines = []config.RoutineBinding{
+		{Name: "disabled-routine", Mode: config.RoutineModeDisabled, Cron: "0 * * * *"},
+		{Name: "dead-code", Mode: config.RoutineModePR, Cron: "0 * * * *"},
+	}
+	cfg.Repositories[0].ResolvedRoutines = map[string]config.ResolvedRoutine{
+		"dead-code": {Name: "dead-code"},
+		"doc-drift": {Name: "doc-drift"},
+	}
+	got := routinesByRepo(cfg)
+	want := map[string][]string{
+		"acme/app": {"dead-code", "disabled-routine", "doc-drift"},
+	}
+	if len(got) != 1 || !slices.Equal(got["acme/app"], want["acme/app"]) {
+		t.Fatalf("routinesByRepo = %v, want %v", got, want)
+	}
+	if _, ok := got["acme/empty"]; ok {
+		t.Fatalf("expected repo without routines to be omitted: %v", got)
+	}
+
+	w := newFakeWiring()
+	conns := w.conns()
+	prev := repos("Acme/App")
+	if err := conns.sync(t.Context(), prev); err != nil {
+		t.Fatal(err)
+	}
+	m := &fakePublishMetrics{budgets: map[string]float64{}}
+	var logs bytes.Buffer
+	kicks := 0
+	onPublish(t.Context(), newWiring(conns, &fakePollers{}, m, &logs, &kicks))(prev, cfg)
+	if !slices.Equal(m.routines["acme/app"], want["acme/app"]) {
+		t.Fatalf("onPublish routines = %v, want %v", m.routines, want)
+	}
+}
+
+func TestRoutineSchedulerAndReconcilerWiring(t *testing.T) {
+	m, err := fmetrics.New(nil, nil, "agent-system", func() bool { return false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached := fake.NewClientBuilder().Build()
+	apiReader := fake.NewClientBuilder().Build()
+	ledgers := fake.NewClientBuilder().Build()
+	log := slog.New(slog.DiscardHandler)
+	live := config.NewLive(&config.Config{})
+
+	sched := newRoutineScheduler(nil, cached, apiReader, ledgers, "agent-system", live, func(string) bool { return true }, func(context.Context) bool { return false }, m, log)
+	if sched.Client != cached {
+		t.Fatal("Scheduler.Client mismatch")
+	}
+	if sched.APIReader != apiReader {
+		t.Fatal("Scheduler.APIReader must be the uncached APIReader")
+	}
+	if sched.Ledger != ledgers {
+		t.Fatal("Scheduler.Ledger must be the uncached ledgers client")
+	}
+	st, ok := sched.State.(*upkeep.StateStore)
+	if !ok || st == nil {
+		t.Fatalf("Scheduler.State = %T, want *upkeep.StateStore", sched.State)
+	}
+	if st.Client != ledgers || st.Reader != ledgers || st.Namespace != "agent-system" {
+		t.Fatalf("StateStore must use uncached ledgers client: %+v", st)
+	}
+	if sched.RoutineMetrics != intake.RoutineSkipMetrics(m) {
+		t.Fatal("Scheduler.RoutineMetrics must be wired to *fmetrics.Set")
+	}
+	if sched.Nonce == nil || sched.Nonce() == "" {
+		t.Fatal("Scheduler.Nonce must be wired")
+	}
+
+	rec := &reconciler.Reconciler{Metrics: m, RoutineMetrics: m}
+	if rec.RoutineMetrics == nil {
+		t.Fatal("Reconciler.RoutineMetrics must accept *fmetrics.Set")
 	}
 }

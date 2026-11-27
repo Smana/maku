@@ -57,6 +57,17 @@ func (r *Reconciler) slotFree(ctx context.Context, cfg *config.Config, t *v1alph
 		if wip >= cfg.Caps.AwaitingHumanWIP {
 			return false, "waiting_review_wip", nil // back-pressure on the reviewers (§6.2)
 		}
+		if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+			upkeepWIP, err := r.countTasks(ctx, func(o *v1alpha1.Task) bool {
+				return o.Spec.Source.Kind == v1alpha1.SourceKindRoutine && o.Status.Phase == v1alpha1.PhaseAwaitingHuman
+			})
+			if err != nil {
+				return false, "", err
+			}
+			if upkeepWIP >= cfg.Caps.UpkeepWIP() {
+				return false, "waiting_upkeep_review_wip", nil
+			}
+		}
 	}
 	all, err := r.Runs.List(ctx)
 	if err != nil {
@@ -78,6 +89,15 @@ func (r *Reconciler) slotFree(ctx context.Context, cfg *config.Config, t *v1alph
 	}
 	if live >= cfg.Caps.ConcurrentRuns {
 		return false, "waiting_run_slot", nil
+	}
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		waiting, err := r.humanWaiting(ctx, t)
+		if err != nil {
+			return false, "", err
+		}
+		if waiting {
+			return false, "waiting_human_priority", nil
+		}
 	}
 	// CD22: a revision goes first. preferRevisions waits only for a task whose next run continues it and
 	// which a *slot* holds: a neighbour stopped by any other cap is not waiting for the slot, and priority
@@ -111,6 +131,26 @@ func (r *Reconciler) revisionWaiting(ctx context.Context, t *v1alpha1.Task) (boo
 			o.Status.Reason == "waiting_run_slot"
 	})
 	return queued > 0, err
+}
+
+// humanWaiting reports whether any non-routine, non-schedule, non-adopt task is queued for a run slot.
+func (r *Reconciler) humanWaiting(ctx context.Context, t *v1alpha1.Task) (bool, error) {
+	queued, err := r.countTasks(ctx, func(o *v1alpha1.Task) bool {
+		return o.Name != t.Name &&
+			o.Spec.Source.Kind != v1alpha1.SourceKindRoutine &&
+			o.Spec.Source.Kind != "schedule" &&
+			o.Spec.Source.Kind != "adopt" &&
+			o.Status.Phase == v1alpha1.PhaseQueued &&
+			o.Status.Reason == "waiting_run_slot"
+	})
+	return queued > 0, err
+}
+
+func routineName(t *v1alpha1.Task) string {
+	if t.Spec.Routine != nil && t.Spec.Routine.Name != "" {
+		return t.Spec.Routine.Name
+	}
+	return t.Spec.Source.Ref
 }
 
 // runID is the deterministic id of a task's nth run (R48): the claim a replay recomputes, so a
@@ -202,7 +242,14 @@ func (r *Reconciler) withChecks(cfg *config.Config, s *runs.Spec, t *v1alpha1.Ta
 		s.Checks, s.EgressProfiles = false, nil
 		return
 	}
-	s.Checks, s.EgressProfiles = true, slices.Clone(r.repo(cfg, t).Checks.Egress)
+	rc := r.repo(cfg, t)
+	egress := rc.Checks.Egress
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		if rr, ok := rc.ResolvedRoutines[routineName(t)]; ok && len(rr.Egress) > 0 {
+			egress = rr.Egress
+		}
+	}
+	s.Checks, s.EgressProfiles = true, slices.Clone(egress)
 }
 
 // checksOn: a decision frozen at triage survives later config changes; a task without one (a split
@@ -230,7 +277,8 @@ func (r *Reconciler) reserveFactoryDay(ctx context.Context, cfg *config.Config, 
 	person := r.person(cfg, t)
 	// F4, ledger ruling I1: a sponsored principal's day is a bound, not a shadow, whatever
 	// budgets.enforcePrincipal says, and whatever the fleet's own day.
-	enforce := cfg.Budgets.EnforcePrincipal || r.sponsored(cfg, t)
+	// Upkeep routines charged to system:upkeep are likewise always enforced against upkeepDailyUSD.
+	enforce := cfg.Budgets.EnforcePrincipal || r.sponsored(cfg, t) || person == config.PrincipalUpkeep
 	return ledger.Reserve(ctx, r.Ledger, r.Namespace, r.Now(), runID(t.Name, len(t.Status.Runs)),
 		ledger.Reservation{Principal: runs.PrincipalFactory, Person: person, MaxMicroUSD: runMicroUSD(t.Spec.Budget)}, limit,
 		cfg.Budgets.DailyMicroUSD(person), enforce)
@@ -251,10 +299,19 @@ func runMicroUSD(b v1alpha1.Budget) int64 {
 }
 
 // person is the key the task's runs are charged to beside the fleet: an api task's principal
-// always (R7), otherwise the person while per-person caps are on.
+// always (R7), system:upkeep for routine tasks unless per-person caps charge a GitHub payer (Q15),
+// otherwise the person while per-person caps are on.
 func (r *Reconciler) person(cfg *config.Config, t *v1alpha1.Task) string {
 	if p := t.Sponsored(); p != "" && t.Status.RetriedBy == "" {
 		return p
+	}
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		if cfg.Budgets.PerPerson.Enabled {
+			if p := t.Payer(); p != "" {
+				return p
+			}
+		}
+		return config.PrincipalUpkeep
 	}
 	if !cfg.Budgets.PerPerson.Enabled {
 		return ""
@@ -1264,7 +1321,13 @@ func (r *Reconciler) detectPR(ctx context.Context, t *v1alpha1.Task, run runs.Ru
 	if err := r.Runs.Annotate(ctx, run.ID, map[string]string{runs.AnnPullRequest: pr.URL}); err != nil {
 		return err
 	}
-	if err := r.gh(ctx).AddLabels(ctx, pr.Number, "factory/class:"+t.Spec.PredictedClass); err != nil {
+	labels := []string{"factory/class:" + t.Spec.PredictedClass}
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		if name := routineName(t); name != "" {
+			labels = append(labels, "factory/routine:"+name)
+		}
+	}
+	if err := r.gh(ctx).AddLabels(ctx, pr.Number, labels...); err != nil {
 		return err
 	}
 	d, source, tier, tmpl := r.Now().Sub(t.CreationTimestamp.Time), t.Spec.Source.Kind, t.Spec.Budget.Tier, t.Spec.Template

@@ -92,14 +92,14 @@ func (r *Reconciler) overlapDue(ctx context.Context, cfg *config.Config, t *v1al
 	return true, nil
 }
 
-// ordinaryOverlapTask limits both evaluation and candidates to issue, API, and schedule work.
-// Split parts/parents, coordination, adoption, and RunLore keep their existing lifecycles.
+// ordinaryOverlapTask limits both evaluation and candidates to issue and API work.
+// Routine, schedule, split parts/parents, coordination, adoption, and RunLore keep their existing lifecycles.
 func ordinaryOverlapTask(t *v1alpha1.Task) bool {
 	if t.Spec.Kind != "" || t.Spec.Parent != nil || t.Spec.CoordinationParent != nil || t.Status.Phase == v1alpha1.PhaseSplit {
 		return false
 	}
 	switch t.Spec.Source.Kind {
-	case "issue", "api", "schedule":
+	case "issue", "api":
 		return true
 	default:
 		return false

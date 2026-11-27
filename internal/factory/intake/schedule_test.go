@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -117,5 +118,67 @@ func TestSchedulerStoppedPauses(t *testing.T) {
 	_ = sch.Client.List(context.Background(), &l)
 	if len(l.Items) != 0 {
 		t.Fatalf("the stop holds intake: %d tasks", len(l.Items))
+	}
+}
+
+type countingScheduleForge struct {
+	*forgetest.Fake
+	openPRCalls int
+}
+
+func (c *countingScheduleForge) OpenPullRequests(ctx context.Context) ([]forge.PRSummary, error) {
+	c.openPRCalls++
+	return c.Fake.OpenPullRequests(ctx)
+}
+
+// UP15 / P1-R2: legacy schedules[] skip probing and creating a second Task while an open
+// non-terminal Task of that schedule already exists, and resume once only terminal Tasks remain.
+func TestLegacySchedulesOpenTaskDedup(t *testing.T) {
+	s := runtime.NewScheme()
+	_ = v1alpha1.AddToScheme(s)
+	now := time.Date(2026, 10, 5, 6, 20, 0, 0, time.UTC)
+
+	openLinkRot := v1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "aaaaaaaa", Namespace: "agent-system"},
+		Spec:       v1alpha1.TaskSpec{Repository: "Smana/cloud-native-ref", Source: v1alpha1.Source{Kind: "schedule", Ref: "link-rot"}},
+		Status:     v1alpha1.TaskStatus{Phase: v1alpha1.PhaseAwaitingHuman},
+	}
+	openRenovate := v1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "bbbbbbbb", Namespace: "agent-system"},
+		Spec:       v1alpha1.TaskSpec{Repository: "Smana/cloud-native-ref", Source: v1alpha1.Source{Kind: "schedule", Ref: "renovate-red"}},
+		Status:     v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing},
+	}
+
+	f := &countingScheduleForge{Fake: forgetest.NewFake()}
+	f.SetOpenPRs(forge.PRSummary{Number: 40, Author: "renovate[bot]", Created: now.Add(-48 * time.Hour)})
+	f.SetChecks(40, forge.Checks{Runs: []forge.Check{{Name: "ci", State: "FAILURE"}}})
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(&openLinkRot, &openRenovate)
+	sch := scheduler(f.Fake, c, func(context.Context) bool { return false }, now, schedulerCfg())
+	sch.Forge = f
+	if err := sch.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if f.openPRCalls != 0 {
+		t.Fatalf("expected renovate-red probe not to run while open task exists, got %d OpenPullRequests calls", f.openPRCalls)
+	}
+	var l v1alpha1.TaskList
+	_ = sch.Client.List(t.Context(), &l)
+	if len(l.Items) != 2 {
+		t.Fatalf("expected no new tasks while open tasks exist, got %d", len(l.Items))
+	}
+
+	// Terminal tasks do not block new slots.
+	openLinkRot.Status.Phase = v1alpha1.PhaseDone
+	openRenovate.Status.Phase = v1alpha1.PhaseClosed
+	c2 := fake.NewClientBuilder().WithScheme(s).WithObjects(&openLinkRot, &openRenovate)
+	sch2 := scheduler(f.Fake, c2, func(context.Context) bool { return false }, now, schedulerCfg())
+	sch2.Forge = f
+	if err := sch2.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_ = sch2.Client.List(t.Context(), &l)
+	if len(l.Items) != 4 || f.openPRCalls == 0 {
+		t.Fatalf("expected both tasks created after terminal tasks, got %d tasks, openPRCalls=%d", len(l.Items), f.openPRCalls)
 	}
 }

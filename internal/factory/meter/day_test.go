@@ -33,7 +33,7 @@ func TestYesterdaysPrincipalsReadZeroAtTheDaysFirstTick(t *testing.T) {
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if want := map[string]told{runs.PrincipalFactory: {1700, 42_500_000}, "human:1": {1700, 8_500_000}}; !maps.Equal(day, want) {
+	if want := map[string]told{runs.PrincipalFactory: {1700, 42_500_000}, "human:1": {1700, 8_500_000}, config.PrincipalUpkeep: {0, 10_000_000}}; !maps.Equal(day, want) {
 		t.Fatalf("the first day: %v, want %v", day, want)
 	}
 	now = now.Add(time.Minute) // 2026-10-23 00:00:30: only the fleet's run spends
@@ -41,7 +41,7 @@ func TestYesterdaysPrincipalsReadZeroAtTheDaysFirstTick(t *testing.T) {
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if want := map[string]told{runs.PrincipalFactory: {1700, 42_500_000}, "human:1": {0, 8_500_000}}; !maps.Equal(day, want) {
+	if want := map[string]told{runs.PrincipalFactory: {1700, 42_500_000}, "human:1": {0, 8_500_000}, config.PrincipalUpkeep: {0, 10_000_000}}; !maps.Equal(day, want) {
 		t.Fatalf("after midnight: %v, want %v", day, want)
 	}
 }

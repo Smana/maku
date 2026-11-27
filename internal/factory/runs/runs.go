@@ -41,6 +41,7 @@ const (
 	AnnPullRequest   = "agents.ogenki.io/pull-request"
 	AnnRevoked       = runwatch.RevokedAnnotation
 	PrincipalFactory = config.PrincipalFactory
+	PrincipalUpkeep  = config.PrincipalUpkeep
 	AnnTraceparent   = "agents.ogenki.io/traceparent" // W3C, set at CREATE; the composition hands it to the harness (R46)
 	LabelTier        = "agents.ogenki.io/tier"        // fixed per run, never re-routed within it (R47)
 	AnnTaskURL       = "agents.ogenki.io/task-url"    // set at CREATE; the harness footer's Agent-Task for a text task (SF)

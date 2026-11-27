@@ -460,6 +460,9 @@ func (m *fakeMetrics) Resumed(_ context.Context, reason string) { m.add("resumed
 func (m *fakeMetrics) RoomClosedAtCap(_ context.Context, reason string) {
 	m.add("room_closed_at_cap " + reason)
 }
+func (m *fakeMetrics) RoutineRun(_ context.Context, repository, routine, outcome string, usd float64) {
+	m.add(fmt.Sprintf("routine_run %s %s %s %v", repository, routine, outcome, usd))
+}
 
 var now = time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 
@@ -512,7 +515,7 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	seeingMeter(t, c)
 	g := &rig{c: c, f: forgetest.NewFake(), runs: newRuns(), log: &fakeLog{}, metrics: &fakeMetrics{}}
 	g.r = &Reconciler{Client: c, Ledger: c, Namespace: "agent-system", Cfg: cfg(), Forge: g.f, Merger: g.f, Runs: g.runs, Rooms: g.log,
-		Triage: triage.Static{Template: "solo"}, Metrics: g.metrics,
+		Triage: triage.Static{Template: "solo"}, Metrics: g.metrics, RoutineMetrics: g.metrics,
 		Now: func() time.Time { return now }, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Owned: func(string) bool { return true }, CanWrite: func(context.Context, string, string) (bool, error) { return true, nil }}
 	g.runs.now = func() time.Time { return g.r.Now() } // the claims carry the rig's clock

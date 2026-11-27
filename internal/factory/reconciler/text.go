@@ -5,6 +5,7 @@
 package reconciler
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -100,6 +101,8 @@ func firstBrief(t *v1alpha1.Task, nonce string, sc *Scoped) string {
 		fmt.Fprintf(&b, "Source: GitHub issue #%d, labelled for the factory by %s. Snapshot sha256 %s.\n",
 			t.Spec.Issue, strings.TrimPrefix(t.Spec.Source.RequestedBy, "github:"), t.Spec.Source.ContentSHA256)
 		fmt.Fprintf(&b, "When you open the pull request, its body must contain \"Fixes #%d\".\n", t.Spec.Issue)
+	case t.Spec.Source.Kind == v1alpha1.SourceKindRoutine:
+		fmt.Fprintf(&b, "Source: routine %s.\n", cmp.Or(routineName(t), t.Spec.Source.Ref))
 	default:
 		fmt.Fprintf(&b, "Source: %s %s.\n", t.Spec.Source.Kind, t.Spec.Source.Ref)
 	}

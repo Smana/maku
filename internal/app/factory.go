@@ -67,6 +67,7 @@ import (
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/factory/upkeep"
 	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/metrics"
@@ -458,6 +459,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	conns.failed = m.ConfigWireError
 	m.ListRepositories(conns.names()...)
+	m.SetRoutines(routinesByRepo(cfg))
+	m.BudgetDay(ctx, config.PrincipalUpkeep, 0, cfg.Budgets.DailyMicroUSD(config.PrincipalUpkeep))
 	warnConfig(log, cfg, m)
 	// D12 on App ids: the agents App is never the factory's or the merger's, and a merger that is the
 	// factory App merges as factoryLogin (review of #510).
@@ -556,7 +559,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	rec := &reconciler.Reconciler{Kind: cfg.Runs.Kind, Client: mgr.GetClient(), Ledger: ledgers, Namespace: ns, Cfg: live, Clients: conns.task, Owned: fenced.Owned,
 		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
 		Triage:  triage.Classify{Clients: conns.class}, // no C7: every task takes the static standard tier (WF9)
-		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
+		Metrics: m, RoutineMetrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
 		Trace: sink, Costs: costs, Decisions: recorder, Hardening: hardened}
 	if cfg.PolicyManagement.Manages() { // stage 5: grants read from the broker, never cached
 		rec.Grants = broker
@@ -868,8 +871,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	wired := &wiring{log: log, conns: conns, pollers: pollers, m: m, kick: fenced.Kick}
 	for _, r := range append(runnables,
-		&intake.Scheduler{Clients: conns.schedule, Owned: startable, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
-			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
+		newRoutineScheduler(conns.schedule, mgr.GetClient(), mgr.GetAPIReader(), ledgers, ns, live, startable, stopped, m, log),
 		// MC10: off unless a class adopts; leader-only, through the Scheduler's connections.
 		&intake.Adopter{Clients: conns.schedule, Owned: startable, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
@@ -1029,8 +1031,54 @@ type publishMetrics interface {
 	ClassWithHoldout(ctx context.Context, repository, class string)
 	ConfigWireError(ctx context.Context, repository string)
 	ListRepositories(names ...string)
+	SetRoutines(byRepo map[string][]string)
 	ChargePeople(on bool)
 	RunBudgetUSD(ctx context.Context, tier string, usd float64)
+}
+
+func newRoutineScheduler(clients func(string) (intake.ScheduleForge, intake.ScheduleMerger, bool), k8sClient client.Client, apiReader client.Reader, ledgers client.Client, ns string, live config.Source, startable func(string) bool, stopped func(context.Context) bool, m *fmetrics.Set, log *slog.Logger) *intake.Scheduler {
+	return &intake.Scheduler{
+		Clients:        clients,
+		Owned:          startable,
+		Client:         k8sClient,
+		APIReader:      apiReader,
+		Ledger:         ledgers,
+		State:          &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log},
+		RoutineMetrics: m,
+		Namespace:      ns,
+		Cfg:            live,
+		Stopped:        stopped,
+		Now:            time.Now,
+		Nonce:          taskid.Random,
+		Errors:         m,
+		Log:            log,
+	}
+}
+
+func routinesByRepo(cfg *config.Config) map[string][]string {
+	if cfg == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	for _, rc := range cfg.Repositories {
+		seen := make(map[string]struct{}, len(rc.ResolvedRoutines)+len(rc.Routines))
+		for name := range rc.ResolvedRoutines {
+			seen[name] = struct{}{}
+		}
+		for _, b := range rc.Routines {
+			seen[b.Name] = struct{}{}
+		}
+		if len(seen) == 0 {
+			continue
+		}
+		names := make([]string, 0, len(seen))
+		for name := range seen {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		out[strings.ToLower(rc.Name)] = names
+	}
+	return out
 }
 
 // wiring is what follows the served repository set (D12): the connections, the issue pollers,
@@ -1087,6 +1135,7 @@ func onPublish(ctx context.Context, w *wiring) func(prev, next *config.Config) {
 			}
 		}
 		names := w.served()
+		w.m.SetRoutines(routinesByRepo(next))
 		w.m.ChargePeople(next.Budgets.PerPerson.Enabled)
 		budgets := meter.RunUSD(next)
 		for tier := range meter.RunUSD(prev) {

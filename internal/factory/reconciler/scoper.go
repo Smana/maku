@@ -43,7 +43,7 @@ func (r *Reconciler) scoperSpec(cfg *config.Config, t *v1alpha1.Task, text strin
 			s.Model = tier.Model
 		}
 	}
-	if t.Spec.Source.Kind == "api" && t.Spec.Budget.RunTokens > 0 { // never above the ceiling-derived run (C4)
+	if (t.Spec.Source.Kind == "api" || t.Spec.Source.Kind == v1alpha1.SourceKindRoutine) && t.Spec.Budget.RunTokens > 0 { // never above the ceiling-derived run (C4)
 		s.MaxTokens = min(s.MaxTokens, t.Spec.Budget.RunTokens)
 	}
 	return s
@@ -71,7 +71,7 @@ const (
 // stopped it, or the task, its payer or the fleet has no budget left, or the cluster had no
 // capacity (run_unschedulable) or the task no budget (resume_budget) for it: capacity and budget
 // ends, not the scoper's failure. Every other end without a handoff goes to scoperFailed.
-var escalatesScoper = []string{"manual", "revoked", "deleted", "budget-task", "budget-principal", "budget-fleet", "budget-person",
+var escalatesScoper = []string{"manual", "revoked", "deleted", "budget-task", "budget-principal", "budget-fleet", "budget-person", "budget-upkeep",
 	"run_unschedulable", "resume_budget"}
 
 // scoped ends the scoper run (SC8, SC11): the implementer is queued with the scope, or without it

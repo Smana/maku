@@ -166,7 +166,7 @@ monitoring:
     docsURL: ""
   # The product dashboards (docs/observability.md#dashboards), one ConfigMap each, maku-dashboard-<uid>,
   # holding <uid>.json: agents-overview, agent-factory, agent-room, agent-run, agent-identity,
-  # agent-fleet, and agent-gateway with maku-gateway.enabled. labels: the set Grafana's dashboard
+  # agent-fleet, upkeep-routines, and agent-gateway with maku-gateway.enabled. labels: the set Grafana's dashboard
   # sidecar watches; empty, grafana_dashboard: "1". Set, they replace it (they are not merged with
   # it). annotations are added, e.g. {grafana_folder: Agents}. A grafana-operator
   # user points a GrafanaDashboard's configMapRef at each one. The uids are cloud-native-ref's, so

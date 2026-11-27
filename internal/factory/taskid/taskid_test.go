@@ -45,3 +45,23 @@ func TestCoordinationChildKey(t *testing.T) {
 		t.Fatalf("key %q", k)
 	}
 }
+
+func TestRoutineKeys(t *testing.T) {
+	c2 := regexp.MustCompile(`^[a-z2-7]{8}$`)
+	slot := time.Date(2026, 11, 26, 3, 0, 0, 0, time.UTC)
+	k1 := RoutineKey("acme/alpha", "dead-links", slot)
+	k2 := RoutineKey("acme/beta", "dead-links", slot)
+	if k1 != "routine:acme/alpha:dead-links:2026-11-26T03:00:00Z" {
+		t.Fatalf("RoutineKey = %q", k1)
+	}
+	if Name(k1) == Name(k2) || !c2.MatchString(Name(k1)) || !c2.MatchString(Name(k2)) {
+		t.Fatalf("two repos with same routine name must differ: %q vs %q", Name(k1), Name(k2))
+	}
+	mk := ManualRoutineKey("acme/alpha", "dead-links", "req-42")
+	if mk != "routine:acme/alpha:dead-links:manual:req-42" {
+		t.Fatalf("ManualRoutineKey = %q", mk)
+	}
+	if !c2.MatchString(Name(mk)) || Name(mk) == Name(k1) {
+		t.Fatalf("ManualRoutineKey Name = %q", Name(mk))
+	}
+}

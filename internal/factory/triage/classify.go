@@ -169,7 +169,7 @@ const LegacyLabelNote = "the `class:` and `profile:` labels are no longer read; 
 // intake's profile/harness with the sponsor login the factory resolved. modelLabels are its
 // model:<alias> labels, which ResolveModelPin judges against the task's data class.
 func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, outcome string) (pin, harnessPin Pin, modelLabels []LabelPin, legacy bool, err error) {
-	if Investigates(cfg, t) || t.Spec.Source.Kind == "schedule" || outcome == config.OutcomeReport || outcome == config.OutcomeReview {
+	if Investigates(cfg, t) || t.Spec.Source.Kind == "schedule" || t.Spec.Source.Kind == v1alpha1.SourceKindRoutine || outcome == config.OutcomeReport || outcome == config.OutcomeReview {
 		return Pin{}, Pin{}, nil, false, nil
 	}
 	var wfLabels, harnessLabels []LabelPin
@@ -244,9 +244,20 @@ func (c Classify) predictClass(cfg *config.Config, t *v1alpha1.Task) (class stri
 	if Investigates(cfg, t) {
 		return "review", false
 	}
-	if t.Spec.Source.Kind == "schedule" {
-		if _, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
-			return t.Spec.PredictedClass, true
+	if t.Spec.Source.Kind == "schedule" || t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		rc := cfg.RepositoryFor(t.Spec.Repository)
+		candidate := t.Spec.PredictedClass
+		if candidate == "" && t.Spec.Source.Kind == v1alpha1.SourceKindRoutine && rc != nil {
+			name := t.Spec.Source.Ref
+			if t.Spec.Routine != nil && t.Spec.Routine.Name != "" {
+				name = t.Spec.Routine.Name
+			}
+			if rr, ok := rc.ResolvedRoutines[name]; ok {
+				candidate = rr.OracleClass
+			}
+		}
+		if _, ok := rc.Class(candidate); candidate != "" && ok {
+			return candidate, true
 		}
 		return "review", false
 	}

@@ -47,6 +47,8 @@ const (
 	ReasonBudgetFleet = "budget-fleet"
 	// ReasonBudgetPrincipal is the principal's day spent (OD-10), read from the ledger (R07).
 	ReasonBudgetPrincipal = "budget-principal"
+	// ReasonBudgetUpkeep is the revocation when system:upkeep reaches budgets.upkeepDailyUSD.
+	ReasonBudgetUpkeep = "budget-upkeep"
 )
 
 // The limit behind a revocation. The reason stays C5's closed set, since the composition maps
@@ -57,6 +59,7 @@ const (
 	LimitGatewayCeiling = "gateway-ceiling" // B1
 	LimitFleet          = "fleet"           // B2
 	LimitPrincipalDay   = "principal-day"
+	LimitUpkeepDay      = "upkeep-day"
 )
 
 // Why a run whose tier caps in USD is capped in tokens instead.
@@ -883,8 +886,9 @@ func (m *Meter) Tick(ctx context.Context) error {
 		}
 		var limit string
 		if !runs.Terminal(r.Phase) && r.Revoked == "" {
+			dayReason, dayLimit := daySpent(in.budgets, r, spent)
 			if reason, l := m.revocation(in.budgets, r, n, b1Spend(n, usd, r.ID), usd[r.ID], caps[r.ID], hit[r.ID],
-				daySpent(in.budgets, r, spent)); reason != "" {
+				dayReason, dayLimit); reason != "" {
 				kv[runs.AnnRevoked], limit = reason, l
 			}
 		}
@@ -1271,26 +1275,33 @@ func charged(r runs.Run) []string {
 }
 
 // daySpent reports whether any key the run is charged to has spent its day: budget-principal's
-// test, a person's day included (D5). A nil spent column reads nothing spent.
+// test, a person's day included (D5), and system:upkeep's upkeepDailyUSD cap. A nil spent column
+// reads nothing spent.
 //
-// Unless EnforcePrincipal (R3's shadow), only a sponsored principal's day counts: it is a bound
-// whatever that flag says (F4, R7).
-func daySpent(b config.Budgets, r runs.Run, spent map[string]int64) bool {
+// Unless EnforcePrincipal (R3's shadow), only a sponsored principal's or system:upkeep's day
+// counts: both are bounds whatever that flag says (F4, R7, P1-R4).
+func daySpent(b config.Budgets, r runs.Run, spent map[string]int64) (reason, limit string) {
+	if spent == nil {
+		return "", ""
+	}
 	for _, k := range charged(r) {
-		if !b.EnforcePrincipal && !b.Sponsored(k) {
+		if !b.EnforcePrincipal && !b.Sponsored(k) && k != config.PrincipalUpkeep {
 			continue
 		}
-		if spent != nil && spent[k] >= b.DailyMicroUSD(k) {
-			return true
+		if spent[k] >= b.DailyMicroUSD(k) {
+			if k == config.PrincipalUpkeep {
+				return ReasonBudgetUpkeep, LimitUpkeepDay
+			}
+			return ReasonBudgetPrincipal, LimitPrincipalDay
 		}
 	}
-	return false
+	return "", ""
 }
 
 // revocation names why a live run must stop, and the limit that fired, in the order the design
 // lists the caps (C5). The token cap is a ceiling beside the USD one, never replaced by it (#465):
 // a flat-rate model's nominal prices leave the dollars out of reach while the run goes on.
-func (m *Meter) revocation(b config.Budgets, r runs.Run, tokens, b1, usd, capUSD int64, throttled bool, daySpent bool) (reason, limit string) {
+func (m *Meter) revocation(b config.Budgets, r runs.Run, tokens, b1, usd, capUSD int64, throttled bool, dayReason, dayLimit string) (reason, limit string) {
 	switch {
 	case r.MaxMicroUSD <= 0 && b.Sponsored(r.ChargedTo): // F4, N-1: fail closed, never on the tier's cap
 		return ReasonBudgetRun, LimitRunUSD
@@ -1302,8 +1313,8 @@ func (m *Meter) revocation(b config.Budgets, r runs.Run, tokens, b1, usd, capUSD
 		return ReasonBudgetRun, LimitGatewayCeiling
 	case throttled:
 		return ReasonBudgetFleet, LimitFleet // B2, the only other bucket on agent-router (R13)
-	case daySpent:
-		return ReasonBudgetPrincipal, LimitPrincipalDay
+	case dayReason != "":
+		return dayReason, dayLimit
 	}
 	return "", ""
 }
@@ -1482,13 +1493,17 @@ func (m *Meter) liveSpend() map[string]map[string]float64 {
 	return out
 }
 
-// tellDay hands Day every principal in day's ledger. At a day's first tick it first tells each
-// principal of the day before that is not in it yet a spend of 0: a gauge moves only when
-// recorded, and an 80% alert must not outlive midnight (TC8).
+// tellDay hands Day every principal in day's ledger, plus system:upkeep so its cap and spend stay
+// live even when no upkeep run has settled yet (e.g. upkeepDailyUSD: 0 or a fresh day). At a
+// day's first tick it first tells each principal of the day before that is not in it yet a spend
+// of 0: a gauge moves only when recorded, and an 80% alert must not outlive midnight (TC8).
 func (m *Meter) tellDay(b config.Budgets, day string, spent map[string]int64) {
+	if m.Day == nil {
+		return
+	}
 	if m.toldDay != day {
 		for p := range m.told {
-			if _, ok := spent[p]; !ok {
+			if _, ok := spent[p]; !ok && p != config.PrincipalUpkeep {
 				m.Day(p, 0, b.DailyMicroUSD(p))
 			}
 		}
@@ -1497,6 +1512,10 @@ func (m *Meter) tellDay(b config.Budgets, day string, spent map[string]int64) {
 	for p, n := range spent {
 		m.Day(p, n, b.DailyMicroUSD(p))
 		m.told[p] = true
+	}
+	if _, ok := spent[config.PrincipalUpkeep]; !ok {
+		m.Day(config.PrincipalUpkeep, 0, b.DailyMicroUSD(config.PrincipalUpkeep))
+		m.told[config.PrincipalUpkeep] = true
 	}
 }
 

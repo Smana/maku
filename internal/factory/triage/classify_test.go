@@ -282,7 +282,16 @@ func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
 // TE: a class a maintainer's intake or a schedule names is declared; an inferred one is not, and a
 // class: label names none (WF4).
 func TestPredictClassReportsDeclared(t *testing.T) {
+	cfg := testCfg()
+	cfg.Repositories[0].Classes["dead-links"] = config.Class{Oracle: &config.Oracle{Probe: "dead-links"}}
+	cfg.Repositories[0].ResolvedRoutines = map[string]config.ResolvedRoutine{
+		"doc-drift":  {Name: "doc-drift"},
+		"dead-links": {Name: "dead-links", OracleClass: "dead-links"},
+	}
 	sched := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, PredictedClass: "tests"}}
+	routinePlain := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "doc-drift"}}}
+	routineOracleSpec := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-links"}, PredictedClass: "dead-links"}}
+	routineOracleCfg := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-links"}}}
 	planned := issueTask()
 	planned.Spec.Intake = &v1alpha1.TaskIntake{Class: "docs", Login: "Smana"}
 	for name, c := range map[string]struct {
@@ -290,12 +299,15 @@ func TestPredictClassReportsDeclared(t *testing.T) {
 		want     string
 		declared bool
 	}{
-		"an issue":            {issueTask(), "review", false},
-		"a maintainer's plan": {planned, "docs", true},
-		"a schedule":          {sched, "tests", true},
+		"an issue":                     {issueTask(), "review", false},
+		"a maintainer's plan":          {planned, "docs", true},
+		"a schedule":                   {sched, "tests", true},
+		"a routine without oracle":     {routinePlain, "review", false},
+		"a routine with spec oracle":   {routineOracleSpec, "dead-links", true},
+		"a routine with config oracle": {routineOracleCfg, "dead-links", true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			class, declared := Classify{}.predictClass(testCfg(), c.task)
+			class, declared := Classify{}.predictClass(cfg, c.task)
 			if class != c.want || declared != c.declared {
 				t.Fatalf("(%q, %v), want (%q, %v)", class, declared, c.want, c.declared)
 			}
@@ -496,4 +508,68 @@ func TestARunLoreFindingStaysInternal(t *testing.T) {
 	if d.Template != "investigate" || d.DataClass != "internal" {
 		t.Fatalf("RunLore finding must run investigate at internal, got template=%q dataClass=%q", d.Template, d.DataClass)
 	}
+}
+
+func TestRoutineTriage(t *testing.T) {
+	cfg := testCfg()
+	cfg.Repositories[0].Classes["dead-links"] = config.Class{Shadow: true, Oracle: &config.Oracle{Probe: "dead-links"}}
+	cfg.Repositories[0].ResolvedRoutines = map[string]config.ResolvedRoutine{
+		"dead-links": {Name: "dead-links", OracleClass: "dead-links"},
+		"doc-drift":  {Name: "doc-drift"},
+	}
+
+	t.Run("oracle routine skips pin and C7, runs solo light static", func(t *testing.T) {
+		f := forgetest.NewFake()
+		// Even if an issue #7 existed with workflow:careful, routine pin must skip Forge entirely.
+		f.SetIssue(forge.Issue{Number: 7, Labels: []string{"workflow:careful"}})
+		c7 := &fakeC7{resp: C7Response{Tier: "frontier", Classifier: "semantic-router"}}
+		tk := &v1alpha1.Task{
+			ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"},
+			Spec: v1alpha1.TaskSpec{
+				Source:      v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-links"},
+				Issue:       7,
+				DataClass:   "public",
+				MaxMicroUSD: 600_000,
+				Text:        "fix dead link",
+			},
+		}
+		d, err := Classify{C: c7, Forge: f}.Triage(t.Context(), cfg, tk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Template != "solo" || d.PredictedClass != "dead-links" || !d.Declared || d.Pinned || d.Pin.Name != "" ||
+			d.Budget.Tier != "light" || d.Classification.Classifier != "static" || c7.got.Text != "" {
+			t.Fatalf("unexpected oracle routine triage: %+v (c7=%+v)", d, c7.got)
+		}
+		capped := Ceiling(d.Budget, tk.Spec.MaxMicroUSD)
+		if capped.TaskMicroUSD != 600_000 || capped.RunMicroUSD != 200_000 {
+			t.Fatalf("unexpected ceiling: %+v", capped)
+		}
+	})
+
+	t.Run("non-oracle routine skips pin, uses C7 and Ceiling", func(t *testing.T) {
+		c7 := &fakeC7{resp: C7Response{Tier: "standard", Classifier: "semantic-router", Fallback: "none"}}
+		tk := &v1alpha1.Task{
+			ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"},
+			Spec: v1alpha1.TaskSpec{
+				Source:      v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "doc-drift"},
+				DataClass:   "public",
+				MaxMicroUSD: 900_000,
+				Text:        "sync docs",
+				Intake:      &v1alpha1.TaskIntake{Profile: "careful", Login: "Smana"},
+			},
+		}
+		d, err := Classify{C: c7}.Triage(t.Context(), cfg, tk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Template != "pair" || d.PredictedClass != "review" || d.Declared || d.Pinned || d.Pin.Name != "" ||
+			d.Budget.Tier != "standard" || c7.got.Ref != "3buqdlot" {
+			t.Fatalf("unexpected non-oracle routine triage: %+v", d)
+		}
+		capped := Ceiling(d.Budget, tk.Spec.MaxMicroUSD)
+		if capped.TaskMicroUSD != 900_000 || capped.RunMicroUSD != 300_000 {
+			t.Fatalf("unexpected ceiling: %+v", capped)
+		}
+	})
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/taskid"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // scheduleLookback bounds how far LastSlot walks back: a factory that was down for a day must
@@ -62,31 +63,52 @@ type ScheduleMerger interface {
 	DeadLinksMerger
 }
 
-// Scheduler is a leader-only manager.Runnable that turns config's schedules into Tasks (§1):
+// RoutineStateStore persists operator pause flags and skip diagnostics per routine.
+type RoutineStateStore interface {
+	Get(ctx context.Context, repo, routine string) (upkeep.RoutineState, error)
+	RecordSkip(ctx context.Context, repo, routine, slotKey, reason string, at time.Time) error
+}
+
+// RoutineSkipMetrics records bounded routine skip counters.
+type RoutineSkipMetrics interface {
+	RoutineSkip(ctx context.Context, repository, routine, reason string)
+}
+
+// Scheduler is a leader-only manager.Runnable that turns config's schedules and routines into Tasks (§1):
 // a slot fires once — the task's name is the slot's key, so AlreadyExists is the dedup, even
 // across a failover — and only a slot of the last hour fires. Stopped reports the kill switch:
-// intake pauses while it holds, schedules included.
+// intake pauses while it holds, schedules and routines included.
 type Scheduler struct {
 	Forge  ScheduleForge
 	Merger ScheduleMerger
 	// Clients is v2 D8: a repository's factory App and merger connections. Set, each entry's
 	// probe reads its own repository, and one with no connection probes nothing; nil, Forge and
 	// Merger serve every entry (one repository).
-	Clients   func(repository string) (ScheduleForge, ScheduleMerger, bool)
-	Client    client.Client
-	Namespace string
-	Cfg       config.Source
+	Clients        func(repository string) (ScheduleForge, ScheduleMerger, bool)
+	Client         client.Client
+	APIReader      client.Reader
+	Ledger         client.Reader
+	State          RoutineStateStore
+	RoutineMetrics RoutineSkipMetrics
+	Namespace      string
+	Cfg            config.Source
 	// Owned is v2 D7's fence: an entry not owned by this factory fires nothing; nil owns nothing.
 	Owned   func(repository string) bool
 	Stopped func(context.Context) bool
 	Now     func() time.Time
+	Nonce   func() string
 	Errors  errorCounter
 	Log     *slog.Logger
 
 	seenMu sync.Mutex
 	seen   map[string]weighedRuns // schedule -> the detector run pair last evaluated, outcome final
 	// pending is a pair whose findings await their Task; settle saves it once the Task exists.
-	pending map[string]weighedRuns
+	pending        map[string]weighedRuns
+	routineSeen    map[string]routineCacheEntry
+	routinePending map[string]string
+
+	skipMetricMu   sync.Mutex
+	skipMetricSeen map[string]skipMetricEntry
 }
 
 // weighedRuns is the two detector runs weighed, each as (run ID, run attempt): a maintainer's re-run
@@ -123,33 +145,54 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 }
 
-// Tick creates one Task per schedule whose last slot is within the hour; a probe that finds
-// nothing starts nothing (§1).
+// Tick creates one Task per schedule or routine whose last slot is within the hour; a probe that
+// finds nothing starts nothing (§1). Routines still evaluate under Stopped/!Owned so skip
+// diagnostics are recorded.
 func (s *Scheduler) Tick(ctx context.Context) error {
-	if s.Stopped(ctx) {
-		return nil
-	}
+	stopped := s.Stopped != nil && s.Stopped(ctx)
 	cfg := s.Cfg.Current()
 	var errs []error
 	for _, rc := range cfg.Repos() {
-		if s.Owned == nil || !s.Owned(rc.Name) {
-			continue // another factory's, or nobody's (v2 D7)
+		owned := s.Owned != nil && s.Owned(rc.Name)
+		if !stopped && owned {
+			errs = append(errs, s.tick(ctx, cfg, &rc)...)
 		}
-		errs = append(errs, s.tick(ctx, cfg, &rc)...)
+		errs = append(errs, s.tickRoutines(ctx, cfg, &rc, stopped, owned)...)
 	}
 	return errors.Join(errs...)
 }
 
-// tick is one repository's schedules, each stamped with that repository (v2 D1).
+// tick is one repository's legacy schedules, each stamped with that repository (v2 D1) and guarded
+// by maxOpenPRs=1 before probing (UP15 / P1-R2).
 func (s *Scheduler) tick(ctx context.Context, cfg *config.Config, rc *config.Repository) []error {
 	var errs []error
+	var (
+		listed bool
+		tasks  []v1alpha1.Task
+	)
 	for _, e := range rc.Schedules {
 		now := s.Now().UTC()
 		slot, ok := LastSlot(e.Cron, now)
 		if !ok || now.Sub(slot) > time.Hour {
 			continue
 		}
+		if !listed {
+			var l v1alpha1.TaskList
+			if err := s.Client.List(ctx, &l, client.InNamespace(s.Namespace)); err != nil {
+				errs = append(errs, err)
+				return errs
+			}
+			tasks = l.Items
+			listed = true
+		}
 		key := taskid.ScheduleKey(e.Name, slot)
+		taskName := taskid.Name(key)
+		if slices.ContainsFunc(tasks, func(t v1alpha1.Task) bool { return t.Name == taskName }) {
+			continue
+		}
+		if countOpenScheduleTasks(tasks, rc.Name, len(cfg.Repos()), e.Name) >= 1 {
+			continue
+		}
 		text := e.Text
 		var findings []v1alpha1.Finding
 		if e.Probe != "" {
@@ -169,7 +212,7 @@ func (s *Scheduler) tick(ctx context.Context, cfg *config.Config, rc *config.Rep
 		}
 		sum := sha256.Sum256([]byte(text))
 		t := &v1alpha1.Task{
-			ObjectMeta: metav1.ObjectMeta{Name: taskid.Name(key), Namespace: s.Namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: s.Namespace},
 			Spec: v1alpha1.TaskSpec{
 				Source: v1alpha1.Source{Kind: "schedule", Ref: e.Name, Key: key, RequestedBy: "system:scheduler",
 					Trust: "trusted", ContentSHA256: hex.EncodeToString(sum[:])},
@@ -178,11 +221,27 @@ func (s *Scheduler) tick(ctx context.Context, cfg *config.Config, rc *config.Rep
 		}
 		if err := s.Client.Create(ctx, t); err != nil && !apierrors.IsAlreadyExists(err) {
 			errs = append(errs, err) // AlreadyExists is the dedup (S2)
-		} else if len(findings) > 0 {
-			s.settle(rc.Name + "/" + e.Name)
+		} else {
+			tasks = append(tasks, *t)
+			if len(findings) > 0 {
+				s.settle(rc.Name + "/" + e.Name)
+			}
 		}
 	}
 	return errs
+}
+
+func countOpenScheduleTasks(tasks []v1alpha1.Task, repo string, repoCount int, schedName string) int {
+	n := 0
+	for i := range tasks {
+		t := &tasks[i]
+		if t.Spec.Source.Kind == "schedule" && t.Spec.Source.Ref == schedName &&
+			(strings.EqualFold(t.Spec.Repository, repo) || (t.Spec.Repository == "" && repoCount == 1)) &&
+			!v1alpha1.TerminalPhase(t.Status.Phase) {
+			n++
+		}
+	}
+	return n
 }
 
 // remember saves a run pair as weighed.
@@ -321,6 +380,10 @@ func (s *Scheduler) renovateRed(ctx context.Context, rc *config.Repository, auth
 	if err != nil {
 		return false, "", err
 	}
+	return s.renovateRedFindings(ctx, gh, merger, author)
+}
+
+func (s *Scheduler) renovateRedFindings(ctx context.Context, gh ScheduleForge, merger ScheduleMerger, author string) (bool, string, error) {
 	prs, err := gh.OpenPullRequests(ctx)
 	if err != nil {
 		return false, "", err

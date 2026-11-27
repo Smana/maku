@@ -161,6 +161,11 @@ func (r *Reconciler) inputTrust(ctx context.Context, cfg *config.Config, t *v1al
 		it.Record(hardening.SourceRunLore, hardening.SourceRunLore.Level())
 	case "schedule", "coordination":
 		it.Record(hardening.SourceFactory, hardening.Merged)
+	case v1alpha1.SourceKindRoutine:
+		it.Record(hardening.SourceFactory, hardening.Merged)
+		if t.Spec.Routine != nil && len(t.Spec.Routine.FindingIDs) > 0 {
+			it.Record(hardening.SourceOwnCI, hardening.SourceOwnCI.Level())
+		}
 	case "adopt":
 		author := strings.TrimPrefix(t.Spec.Source.RequestedBy, "github:")
 		it.Record(hardening.SourceIssue, pol.LevelOf(hardening.Author{Login: author}, false))
