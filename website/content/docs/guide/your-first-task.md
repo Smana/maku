@@ -117,7 +117,7 @@ checkout both exit 0.
 
 **6. Try the branch locally (optional).** Run `maku checkout gmmrmund` (or `room_checkout`) to inspect the branch in a clean worktree beside your checkout.
 
-**7. Approve on GitHub.** Read the diff and reviewer verdict, then approve. The factory merges and posts the token summary.
+**7. Approve on GitHub.** Read the diff and reviewer verdict, then approve. The factory merges and posts what it spent (`Spent: $0.16 (433 k tokens)`).
 
 {{< /tab >}}
 {{< tab name="GitHub issue" icon="code" >}}
@@ -173,7 +173,7 @@ Whichever path you took, the factory ran five steps:
 
 ## You review {#you-review}
 
-Review the pull request on GitHub as you would a colleague's:
+Review the pull request on GitHub as you would a colleague's. Its body ends with **Try it**: the `maku checkout` line that puts the branch in a new worktree beside yours, and the room's link.
 
 - **Request changes:** the factory launches a revision run on the same branch using your review comments.
 - **Approve:** wait until the room shows no active run so your approval lands on the exact head ([chapter 7]({{< relref "merging.md#approve-the-exact-head" >}})).

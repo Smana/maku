@@ -72,6 +72,7 @@ flowchart LR
 | **Merge policy** | A fold: the task's policy, its mode, and what it takes to merge ([chapter 7]({{< relref "merging.md" >}})) |
 | **Run rail** | One node per run: implementer, reviewer, then the merge, each with its state, cost, and model. Click a node to see only that run's events |
 | **Conversation** | Every message and tool call. Plumbing folds into one line per turn; **Raw events** shows everything |
+| **Screenshots** | On a repository with browser checks on: the pages the agent opened in its sandbox, in a gallery. The reviewer's verdict links them |
 | **Dock** | The composer, the theme button, and the connection |
 
 {{< themed-img light="/images/web-ui/room-fold-light.png" dark="/images/web-ui/room-fold-dark.png" alt="A room page showing the status header, run rail, merge policy fold, and live stream in Ogenki Day and Night themes." caption="A room page with the run header, merge policy fold, and conversation stream." >}}

@@ -21,6 +21,7 @@ Use this page to see what Maku can do today and what comes next. **Proven live**
 | Harness visual verification: opt-in loopback `maku-browser` Playwright sidecar, vision aliases, and room screenshot strip | [Browser verification]({{< relref "/docs/use/browser-verification.md" >}}) |
 | Opt-in loopback service sidecars: per-repository PostgreSQL and Redis sidecars inside sandboxed run pods | [The factory]({{< relref "/docs/concepts/factory.md" >}}) |
 | Gemini and Vertex AI gateway presets, GitHub install egress window, and built-in `maven`/`node` egress allowlists | [Model gateway]({{< relref "/docs/install/gateway.md" >}}) |
+| Developer ergonomics: auto-rebase run on PR conflicts, **Try it** PR footer, `maku why` and `maku help`, **New task** repository picker, and per-repository runtime image and size | [Cheat sheet]({{< relref "/docs/guide/cheat-sheet.md" >}}) |
 | Dedicated Maku website (`maku.ogenki.io`) with interactive `/demo/` room replay, 12-chapter User Guide, and product ADRs | [User guide]({{< relref "/docs/guide/_index.md" >}}), [Decisions]({{< relref "/docs/decisions/_index.md" >}}) |
 
 ## Proven live {#landed}
@@ -40,6 +41,7 @@ These capabilities were demonstrated end to end on real Kubernetes clusters; evi
 | RunLore investigates alerts, hands off fix proposals via signed webhooks, and records post-merge alert verdicts | [RunLore]({{< relref "/docs/concepts/runlore.md" >}}), [agent-to-agent runbook](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/20-runlore-agent-to-agent.md), [KB runbook](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/25-runlore-kb-phase-1.md) |
 | Model calls are authenticated, routed by data class, and metered in USD with cache-aware pricing | [ADR-0053]({{< relref "/docs/decisions/0053-agent-router-on-agentgateway.md" >}}), [Providers]({{< relref "/docs/concepts/providers.md" >}}), [Budgets runbook](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/04-gateway-secrets-budgets.md) |
 | Natural-language handoff with confirmation form and diff-driven shadow merge gate | [v4 validation](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/28-v4-aws-validation.md), [results](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/results-aws-0-2026-11-16.md) |
+| GitHub release-download egress window opens only while pinned toolchains install, then refuses later agent downloads | [GitHub egress drill](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/31-github-egress-drill.md), [results](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/results-github-egress-drill-2026-11-27.md) |
 | Upkeep routines catalog, `/routines` UI, preview/ceiling validation, and `/settings` environment and version panel | [Upkeep routines]({{< relref "/docs/use/upkeep-routines.md" >}}), [Maku v0.58.0](https://github.com/Smana/maku/releases/tag/v0.58.0) |
 
 <span id="class-modes"></span>
@@ -57,9 +59,11 @@ Built and shipped in Maku releases, awaiting broader live field evidence or swit
 | Multi-repository integration runtime | Planning works in `plan` mode; exact-commit worktrees and typed integration checks stay inert until repository authority and hardening ship. [Multi-repository]({{< relref "/docs/concepts/multi-repository.md" >}}) |
 | Untrusted-input hardening | Stage H0 contracts ship off by default; stages H1–H5 follow incrementally. [Hardening]({{< relref "/docs/concepts/hardening.md" >}}) |
 | Workflows as stage lists, step-up retries, and `plan-first` / `report` / `factory/review` acts | Shipped on `main`; awaiting full live run coverage across real repositories. [The factory]({{< relref "/docs/concepts/factory.md" >}}) |
-| OpenCode, the default harness | Every unlabelled task runs on OpenCode (with OpenHands as fallback via `harness:openhands`, and Gemini/Vertex-pinned tasks falling back to OpenHands until agentgateway translates exclusive schema bounds). [OpenCode harness]({{< relref "/docs/concepts/opencode-harness.md" >}}) |
+| OpenCode, the default harness | Every unlabelled task runs on OpenCode (with OpenHands as fallback via `harness:openhands`, and Gemini/Vertex-pinned tasks falling back to OpenHands until agentgateway translates exclusive schema bounds, [maku#798](https://github.com/Smana/maku/issues/798)). [OpenCode harness]({{< relref "/docs/concepts/opencode-harness.md" >}}) |
+| Gemini on Vertex AI | `gemini-standard` and `gemini-light` serve public work keyless via GKE Workload Identity and list-price metering; integration test passed, paired comparison against `agent-default` deferred. [Providers]({{< relref "/docs/concepts/providers.md" >}}), [results](https://github.com/Smana/ai-native-ref/blob/main/docs/runbooks/agent-factory/results-gcp-0-gemini-2026-11-27.md) |
+| Developer additions (v0.56–v0.58) and `access.start: write` | Auto-rebase on PR conflicts, **Try it** PR footer, `maku why` / `maku help`, **New task** repository picker, `maven`/`node` allowlists, per-repository runtime images/sizes, and write-access task start (requires enforced per-person caps) ship and await wider live proof. [Cheat sheet]({{< relref "/docs/guide/cheat-sheet.md" >}}) |
 | Upkeep routines scheduled yield and breaker trips | All six starter `Routine` objects, `/routines`, catalog, and preview validation ship; measuring rolling merge yield and live breaker trips on active repositories is next. [Upkeep routines]({{< relref "/docs/use/upkeep-routines.md" >}}) |
-| Harness visual verification and loopback service sidecars | Opt-in `maku-browser` Playwright sidecar and loopback Postgres/Redis sidecars ship in v0.58 and await live repository validation. [Browser verification]({{< relref "/docs/use/browser-verification.md" >}}) |
+| Harness visual verification and loopback service sidecars | Opt-in `maku-browser` Playwright sidecar and loopback Postgres/Redis sidecars ship in v0.58 and await live repository validation. [Browser verification]({{< relref "/docs/use/browser-verification.md" >}}), [Make a repository ready]({{< relref "/docs/use/make-a-repository-ready.md#services" >}}) |
 | Laptop quickstart outside-user checks | `task demo` runs end to end; outside-user onboarding checks on fresh laptops remain. [Quickstart]({{< relref "/docs/get-started/quickstart.md" >}}) |
 
 ## In progress {#in-progress}
@@ -100,13 +104,16 @@ v4 lets anyone run Maku standalone; v5 proves Maku with an external GitHub and K
 | OTel spans across bridge → broker → store (`traceparent` on every hop) | End-to-end distributed traces across rooms and factory (`AGENTS.md`, Observability) |
 | Two-pane room page | Task panel on the left, live stream and dock on the right ([room readability design](https://github.com/Smana/maku/blob/main/docs/superpowers/specs/2026-10-15-room-readability-design.md#later-two-panes)) |
 | Recorded installs beyond the reference (GKE and kubeadm) | Chart defaults proved on standalone clusters beyond the reference deployment |
-| Reviewer calibration, GitLab/Jira/Linear, event triggers, signed provenance, and Gemini evaluation | Partner demand or funded eval bench; Gemini preset already ships in `maku-gateway` with per-role permissions and cost checks next |
+| OpenCode on Vertex, in-cluster `GOPROXY`, room CI logs, retained harness logs, and review-only pins | Tracked engineering follow-ups: [maku#798](https://github.com/Smana/maku/issues/798) (OpenCode on Vertex), [maku#808](https://github.com/Smana/maku/issues/808) (in-cluster `GOPROXY`), [maku#804](https://github.com/Smana/maku/issues/804) (server-side CI log tool), [maku#801](https://github.com/Smana/maku/issues/801) (post-pod harness logs), and [maku#797](https://github.com/Smana/maku/issues/797) (`model:`/`harness:` pins on `factory/review`) |
+| Reviewer calibration, GitLab/Jira/Linear, event triggers, signed provenance, and Gemini evaluation | Partner demand or funded eval bench; Gemini preset already ships in `maku-gateway` with lower-effort rerun and paired comparison next |
 | Platform-agnostic spin-out review | Reached when 2 of 4 triggers hold: daily use, AHP 1.0 still omitting identity/audit, second harness/runtime needed, outside demand (`AGENTS.md`, Seams) |
 | Schema cleanup: drop `rooms.bridge_seen_at` | Once every running broker no longer writes it ([room log]({{< relref "/docs/reference/room-log.md#schema" >}})) |
 
 ## Known limitations {#before-v3}
 
 - The conversational planner reads public repositories only; for private repositories, file the issue on GitHub or through `maku`'s local issue flow (private-repository planning is part of v5 pre-pitch readiness).
-- A completion judge can quote a CI log only when the sandbox's egress allow-list includes GitHub's Actions log host.
+- A completion judge can quote a CI log only when the sandbox's egress allow-list includes GitHub's Actions log host ([maku#804](https://github.com/Smana/maku/issues/804)).
+- A queued task whose issue was closed still starts ([maku#811](https://github.com/Smana/maku/issues/811)).
+- A `factory/ready` label on a repository the factory does not serve gets no answer ([maku#784](https://github.com/Smana/maku/issues/784)).
 - Some final costs settle after task status is written ([maku#279](https://github.com/Smana/maku/issues/279), [maku#280](https://github.com/Smana/maku/issues/280)); a few approval-binding edge cases remain ([maku#304](https://github.com/Smana/maku/issues/304)).
 - Mistral can spend an entire run budget on a small change and is not recommended as an implementer.

@@ -29,7 +29,7 @@ A failing check reads `FAIL <check>: …` with its fix, and a `warn` line flags 
 | `FAIL dns`, or `no such host` on the rooms address | Off the private network (for private-exposure installs) | Connect to your organisation's VPN or private gateway, then run `maku doctor` again |
 | `FAIL tls`, or `x509: certificate signed by unknown authority` | Internal CA certificate is not trusted | Add the CA certificate your platform team gave you to your trust store ([chapter 2]({{< relref "before-your-first-task.md#five-things" >}})) |
 | `FAIL login`, `not_logged_in` | Your session ended | Run `maku login` |
-| `FAIL github`; `maku rooms` lists nothing | Your GitHub account is not linked to your sign-in | Link it through the rooms UI ([GitHub link]({{< relref "/docs/use/github-link.md" >}})) |
+| `FAIL github`; `maku rooms` lists nothing | Your GitHub account is not linked to your sign-in | Open `/link/github` on the room pages and press **Link GitHub** ([GitHub link]({{< relref "/docs/use/github-link.md" >}})) |
 | A `403` on the room list | You are not in the configured rooms member group | Ask an administrator to add you |
 | `FAIL skill` | A `maku-handoff` skill from another `maku` release | Run `maku setup <client>` again, or delete the stale copy |
 | Your coding agent has no factory tools | The client was running before `maku setup` | Restart it; for OpenCode, `maku doctor` says whether its background service needs a restart |
@@ -48,7 +48,7 @@ Full Slack behaviour and flows live in [Use › Slack]({{< relref "/docs/use/sla
 
 ## A task looks stuck {#stuck}
 
-1. **Open the room and read the status line and NEXT.** A task waiting for you says so, and names the move. Check **Needs you** ([chapter 6]({{< relref "when-the-factory-needs-you.md" >}})).
+1. **Open the room and read the status line and NEXT.** A task waiting for you says so, and names the move. Check **Needs you** ([chapter 6]({{< relref "when-the-factory-needs-you.md" >}})). From a terminal, `maku why <task>` says in one line why it stopped, then what to do next.
 2. **Read NOW.** An agent still calling tools is working; long runs are normal up to their deadline.
 3. **Queued, with no run?** Another task may hold the factory's run slots, or you hold the room's driver token ([hold]({{< relref "when-the-factory-needs-you.md#hold" >}})).
 4. **Nothing moves, nothing needs you?** Label the issue `factory/stop`, then [continue it](#continue) or start over with `factory/ready`.

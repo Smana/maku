@@ -6,7 +6,7 @@ description: "How Maku isolates model providers by data class, configures per-ro
 diataxis: explanation
 ---
 
-Maku is model-agnostic: `maku-gateway` ships presets for OpenAI-compatible and Anthropic-compatible APIs (Anthropic, Z.ai, Moonshot Kimi, Mistral, OpenAI, Gemini, Vertex AI, or any custom self-hosted endpoint; see [The model gateway]({{< relref "/docs/install/gateway.md#presets" >}})). Every run asks for `agent-default` unless its workflow or role picks another alias, and each run's cost is metered at the served model's configured price in `meter.prices` ([Budgets]({{< relref "/docs/reference/budgets.md" >}})).
+Maku is model-agnostic: `maku-gateway` ships presets for OpenAI-compatible and Anthropic-compatible APIs (Anthropic, Z.ai, Moonshot Kimi, Mistral, OpenAI, Gemini, Vertex AI, or any custom self-hosted endpoint; see [The model gateway]({{< relref "/docs/install/gateway.md#presets" >}})). Every run asks for `agent-default` unless its workflow selects another alias per role or a maintainer pins one task with a `model:<alias>` label, and each run's cost is metered at the served model's configured price in `meter.prices` ([Budgets]({{< relref "/docs/reference/budgets.md" >}})).
 
 ## Data-class separation {#data-classes}
 
@@ -16,15 +16,17 @@ Each repository and task carries a **data class**: `public` or `internal`. Provi
 2. **Run admission:** `maku-run-controller` refuses an `internal` `AgentRun` that names a public-only provider alias ([Roles]({{< relref "/docs/concepts/roles.md#profiles" >}})).
 3. **Factory config validation:** `maku-factory` applies public-only per-role overrides to `public` tasks only.
 
-Example (the [ai-native-ref](https://airef.ogenki.io/) reference deployment): `agent-default` maps to GLM on Z.ai for `public` tasks and Claude on the Anthropic API for `internal` tasks, with Moonshot Kimi and Mistral configured as opt-in public-only aliases:
+Example (the [ai-native-ref](https://airef.ogenki.io/) reference deployment): `agent-default` maps to GLM on Z.ai for `public` tasks and Claude on the Anthropic API for `internal` tasks, with Moonshot Kimi, Mistral, and Gemini on Vertex AI (on Google Cloud) configured as opt-in public-only aliases:
 
 | Alias | Model (reference example) | Tier | Processed in |
 |---|---|---|---|
 | `kimi-frontier` | Kimi K3.1 Pro (`k3.1-pro`) | frontier | China |
 | `mistral-standard` | Mistral Medium 3.5 (`mistral-medium-2604`) | standard | EU |
 | `mistral-light` | Mistral Small 4 (`mistral-small-2603`) | light | EU |
+| `gemini-standard` | Gemini 4 Neon (`gemini-4-neon`), on Vertex AI | standard | EU (Vertex `eu` multi-region) |
+| `gemini-light` | Gemini 4 Hydrogen (`gemini-4-hydrogen`), on Vertex AI | light | EU (Vertex `eu` multi-region) |
 
-Field note from live runs: Mistral is **not recommended as an implementer** because it can spend a run's full token budget on a small change.
+Field note from live runs: Mistral is **not recommended as an implementer** because it can spend a run's full token budget on a small change. The harness is chosen separately: OpenCode by default unless a maintainer labels the task `harness:openhands` ([OpenCode harness]({{< relref "/docs/concepts/opencode-harness.md" >}})).
 
 ## Selecting a second provider per role {#switch-a-workflow-on}
 
@@ -46,6 +48,8 @@ workflows:
 A run never switches model mid-conversation, and there is no automatic failover to another provider: a provider `429` ends the run cleanly rather than silently moving data to a different processor.
 
 **Provider quirk (Mistral):** `agentgateway` v1.6 expects Chat Completions `content` as a string, whereas Mistral reasoning models return structured content chunks; `maku-gateway`'s Mistral preset forces `reasoning_effort: "none"`.
+
+**Keyless Gemini on Vertex AI:** `maku-gateway` can call Vertex AI using GKE Workload Identity with no API key in a Secret. A task pinned to a Gemini/Vertex alias runs on OpenHands (with one comment explaining why) until `agentgateway` translates OpenCode's exclusive tool-schema bounds ([maku#798](https://github.com/Smana/maku/issues/798)).
 
 ## Hosted APIs vs self-hosted models {#why-self-host-at-all}
 

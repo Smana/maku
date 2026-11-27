@@ -20,7 +20,7 @@ It is a one-time set-up. To hand over a task from GitHub you need only the first
 
 **4. Membership in the rooms access group.** You sign in to the room pages with your organisation's OIDC identity provider (Okta, Entra ID, Keycloak, ZITADEL, or any standard OIDC IdP). Sign in once so your account exists, then ask an administrator to add you to the configured member group (commonly `agents-member`; see [Identity]({{< relref "/docs/install/identity.md" >}})).
 
-**5. Your GitHub account linked to your sign-in.** You see a room only if GitHub lets you read its repository, so the broker must know who you are on GitHub. Link the accounts yourself once through the room UI ([GitHub link]({{< relref "/docs/use/github-link.md" >}})), or check if your identity provider already supplies the GitHub claim automatically.
+**5. Your GitHub account linked to your sign-in.** You see a room only if GitHub lets you read its repository, so the broker must know who you are on GitHub. Link the accounts yourself once: open `/link/github` on the room pages and press **Link GitHub** ([GitHub link]({{< relref "/docs/use/github-link.md" >}})), or check if your identity provider supplies the GitHub claim automatically.
 
 ## Check it works {#check}
 

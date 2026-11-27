@@ -18,6 +18,8 @@ A **shadow** policy runs the same checks and records what it *would* have done, 
 
 Most changes match no live policy and always come to you. That is the default, not a failure.
 
+The gate's comments and the **Settings** pages use a few words precisely. A policy **holds** when every check passes on one head: the change is inside the policy, not proven right. A decision is **signal-checked** when a check independent of the author, such as a link checker, judged what the change means. A shadow decision you merge unchanged is **agreed**, and a live merge with no revert, regression, or follow-up in its watch window is **quiet**. Every term: [Merge policies]({{< relref "/docs/use/merge-policies.md#holds-agreed-signal-checked" >}}).
+
 ## Why a pull request comes to you {#why-a-human}
 
 The hand-off comment carries a reason. The ones you will meet:
@@ -33,6 +35,8 @@ The hand-off comment carries a reason. The ones you will meet:
 | `human_commit_in_pr` | A person pushed a commit to the agent's branch | Read that commit; an admin merges, or close the pull request |
 
 The last row is the one an approval cannot fix. The factory cannot vouch for a commit it did not make, so the merge bot refuses it, and the ruleset blocks a plain merge. A maintainer with admin rights and the ruleset bypass merges it by hand, after reading it.
+
+A pull request that conflicts with main does not come to you first: the factory starts one rebase run, counted as one of the task's CI fix runs. With none left, it waits for you as `not_mergeable`.
 
 Every gate reason and its check is listed in [Merge policies]({{< relref "/docs/use/merge-policies.md" >}}).
 
