@@ -205,7 +205,6 @@
         <div class="maku-tabs" role="tablist" aria-label="Maku Web UI views">
           <button type="button" class="maku-tab" role="tab" id="tab-policies" aria-controls="panel-policies" aria-selected="true">Merge policies</button>
           <button type="button" class="maku-tab" role="tab" id="tab-routines" aria-controls="panel-routines" aria-selected="false" tabindex="-1">Upkeep routines</button>
-          <button type="button" class="maku-tab" role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1">Cluster posture</button>
           <button type="button" class="maku-tab" role="tab" id="tab-room" aria-controls="panel-room" aria-selected="false" tabindex="-1">Live room</button>
         </div>
 
@@ -228,17 +227,6 @@
           <div class="maku-panel-bar">
             <span>Bind starter or custom <code>Routine</code> CRDs across propose, draft, or PR modes with yield breakers and an isolated upkeep budget.</span>
             <a href="{{ "docs/use/upkeep-routines/" | relURL }}">Upkeep routines →</a>
-          </div>
-        </div>
-
-        <div class="maku-panel" role="tabpanel" id="panel-settings" aria-labelledby="tab-settings" hidden>
-          <figure class="maku-shot">
-            <img class="maku-shot-light" src="{{ "images/web-ui/settings-env-1280-light.png" | relURL }}" alt="Maku Settings page in Day theme showing broker and factory versions, skew indicator, and read-only cluster posture." loading="lazy" />
-            <img class="maku-shot-dark" src="{{ "images/web-ui/settings-env-1280-dark.png" | relURL }}" alt="Maku Settings page in Night theme showing broker and factory versions, skew indicator, and read-only cluster posture." loading="lazy" />
-          </figure>
-          <div class="maku-panel-bar">
-            <span>Check broker and factory version skew, bounded cluster posture, connected repositories, and CLI setup in one read-only view.</span>
-            <a href="{{ "docs/reference/web-ui-settings/" | relURL }}">Settings reference →</a>
           </div>
         </div>
 
