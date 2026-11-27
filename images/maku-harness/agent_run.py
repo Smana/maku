@@ -2377,7 +2377,8 @@ def report_head(env: dict, steps, notes, start: str | None, remote=pushed_head, 
     second. Best effort: returns the commit reported, or None."""
     if env.get("ROLE") != "implementer" or notes is None or steps is None:
         return None
-    took = getattr(steps, "handoff", None) or {}
+    took = getattr(steps, "handoff", None)
+    took = took if isinstance(took, dict) else {}
     if steps.handed_off and not took.get("commit"):
         return None
     commit = remote(env, start)
