@@ -75,6 +75,16 @@ mergePolicies:
     enabled: true
     exclude: []
 
+# The starter routine catalog, rendered with the factory: six Routine objects (dead-links,
+# renovate-red, doc-drift, dead-code, flaky-tests, dup-unifier) labelled maku.ogenki.io/catalog.
+# Catalog routines stay inert until a Repository explicitly binds them under spec.routines[].
+# exclude leaves out the ones the platform keeps as its own objects: an existing Routine of a
+# catalog name, unlabelled, fails the install until it is listed here.
+routines:
+  catalog:
+    enabled: true
+    exclude: []
+
 # ExternalSecrets (v4 D14; docs/install-secrets.md#externalsecrets), off by default: one for each seam
 # listed under secrets, against the store named here (never rendered by this chart). Each target is
 # the seam's resolved Secret name. A seam id is a row of docs/install-secrets.md:

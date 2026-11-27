@@ -23,7 +23,8 @@ var (
 
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion, &Task{}, &TaskList{},
-		&Factory{}, &FactoryList{}, &Repository{}, &RepositoryList{}, &MergePolicy{}, &MergePolicyList{})
+		&Factory{}, &FactoryList{}, &Repository{}, &RepositoryList{}, &MergePolicy{}, &MergePolicyList{},
+		&Routine{}, &RoutineList{})
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
 }

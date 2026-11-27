@@ -44,7 +44,7 @@ for set in cnref demo; do
 done
 # The aggregated roles are the CRD chart's, under their names, kept like the CRDs.
 roles="$(helm template af-crds ../agent-factory-crds | yq e 'select(.kind == "ClusterRole") | .metadata.name + " " + (.metadata.annotations."helm.sh/resource-policy" // "")' - | grep -v '^---$' | sort | tr '\n' ',')"
-[[ $roles == "agent-factory-flux-reader keep,maku-factory-admin keep,maku-mergepolicy-editor keep,maku-viewer keep," ]] ||
+[[ $roles == "agent-factory-flux-reader keep,maku-factory-admin keep,maku-mergepolicy-editor keep,maku-routine-editor keep,maku-viewer keep," ]] ||
   { echo "FAIL: agent-factory-crds' ClusterRoles are '$roles'" >&2; fail=1; }
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory two-install checks passed"

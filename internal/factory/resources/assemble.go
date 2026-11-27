@@ -24,14 +24,15 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 )
 
-// Kind is one of the three resource kinds.
+// Kind is one of the four resource kinds.
 type Kind string
 
-// The three resource kinds.
+// The four resource kinds.
 const (
 	KindFactory     Kind = "Factory"
 	KindRepository  Kind = "Repository"
 	KindMergePolicy Kind = "MergePolicy"
+	KindRoutine     Kind = "Routine"
 )
 
 // Object is one resource as the API server stores it: its spec raw, so a field the author
@@ -44,8 +45,8 @@ type Object struct {
 	Namespace  string
 	Generation int64
 	Spec       map[string]any
-	// Catalog is a MergePolicy labelled v1alpha1.LabelCatalog "true": every Repository that does
-	// not bind it evaluates it in shadow (merge policies review MR2).
+	// Catalog is a MergePolicy or Routine labelled v1alpha1.LabelCatalog "true": an unbound
+	// catalog MergePolicy evaluates in shadow (MR2); an unbound catalog Routine stays inert (UP2).
 	Catalog bool
 }
 
@@ -68,6 +69,12 @@ type Result struct {
 	Bindings []BindingOutcome
 	// Resolved are the bindings resolved this time, for the caller to keep as Options.LastResolved.
 	Resolved map[BindingKey]ResolvedClass
+	// RoutineBindings are the outcomes of the served Repositories' routine bindings, by Repository
+	// then in list order. A binding that is not Accepted never refuses its Repository.
+	RoutineBindings []RoutineOutcome
+	// ResolvedRoutines are the routine bindings resolved this time, for the caller to keep as
+	// Options.LastResolvedRoutines.
+	ResolvedRoutines map[BindingKey]config.ResolvedRoutine
 }
 
 // CatalogueKeys are the top-level file keys a Factory replaces (D12), in the file's spelling.
@@ -147,9 +154,9 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 	}
 	refuseInvalid := func(c candidate, msg string) { refuse(c.object(), v1alpha1.ReasonInvalid, "%s", msg) }
 
-	set, policies := structural(base, name, objs, refuse)
+	set, policies, routines := structural(base, name, objs, refuse)
 	tryParse := func(set []candidate) (*config.Config, []string, resolution, error) {
-		return assemble(base, set, policies, opt)
+		return assemble(base, set, policies, routines, opt)
 	}
 
 	cfg, warnings, rs, err := tryParse(set)
@@ -219,8 +226,14 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Name, b.Name))
 	})
 	res.Bindings, res.Resolved = rs.bindings, rs.resolved
+	res.RoutineBindings, res.ResolvedRoutines = rs.routineBindings, rs.resolvedRoutines
 	if cfg != nil {
 		cfg.Policies = rs.policies
+		for i := range cfg.Repositories {
+			if rr := rs.repoRoutines[strings.ToLower(cfg.Repositories[i].Name)]; len(rr) > 0 {
+				cfg.Repositories[i].ResolvedRoutines = rr
+			}
+		}
 	}
 	res.Config, res.Warnings = cfg, append(res.Warnings, warnings...)
 	return res, err
@@ -261,9 +274,9 @@ func containsAll(have, want []string) bool {
 }
 
 // structural applies the refusals that need no Parse and returns the candidate set (Repositories
-// sorted by name, then the Factory) and the MergePolicies, sorted by name.
-func structural(base map[string]any, name string, objs []Object, refuse func(Object, string, string, ...any)) ([]candidate, []Object) {
-	var factories, repos, policies []Object
+// sorted by name, then the Factory), the MergePolicies, and the Routines, each sorted by name.
+func structural(base map[string]any, name string, objs []Object, refuse func(Object, string, string, ...any)) ([]candidate, []Object, []Object) {
+	var factories, repos, policies, routines []Object
 	for _, o := range objs {
 		switch o.Kind {
 		case KindFactory:
@@ -272,9 +285,12 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 			repos = append(repos, o)
 		case KindMergePolicy:
 			policies = append(policies, o)
+		case KindRoutine:
+			routines = append(routines, o)
 		}
 	}
 	slices.SortFunc(policies, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(routines, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
 
 	// Factories: only this factory's, and only the first by name.
 	var factory *Object
@@ -310,7 +326,7 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 	if factory != nil {
 		set = append(set, candidate{factory: factory})
 	}
-	return set, policies
+	return set, policies, routines
 }
 
 // fileRepositoryNames lowercases the names of the file's repositories, in both shapes.
@@ -333,9 +349,9 @@ func fileRepositoryNames(base map[string]any) map[string]bool {
 }
 
 // assemble merges set into a copy of base, resolving the Repositories' bindings against the
-// policies, and parses it.
-func assemble(base map[string]any, set []candidate, policies []Object, opts Options) (*config.Config, []string, resolution, error) {
-	m, warnings, rs, err := merge(base, set, policies, opts)
+// policies and routines, and parses it.
+func assemble(base map[string]any, set []candidate, policies, routines []Object, opts Options) (*config.Config, []string, resolution, error) {
+	m, warnings, rs, err := merge(base, set, policies, routines, opts)
 	if err != nil {
 		return nil, nil, rs, err
 	}
@@ -345,7 +361,7 @@ func assemble(base map[string]any, set []candidate, policies []Object, opts Opti
 
 // merge builds one map from a deep copy of base and the set: the Factory first, since resolving a
 // binding reads the merged catalogue (plan PR7), then each Repository's entry.
-func merge(base map[string]any, set []candidate, policies []Object, opts Options) (map[string]any, []string, resolution, error) {
+func merge(base map[string]any, set []candidate, policies, routines []Object, opts Options) (map[string]any, []string, resolution, error) {
 	var rs resolution
 	m, err := cloneMap(base)
 	if err != nil {
@@ -361,6 +377,7 @@ func merge(base map[string]any, set []candidate, policies []Object, opts Options
 		read = true
 		if ctx, ctxErr = policyContext(m); ctxErr == nil {
 			judgePolicies(policies, ctx, &rs)
+			judgeRoutines(routines, routineConfigContext(m, ctx), &rs)
 		}
 	}
 	for _, c := range set {
@@ -457,28 +474,45 @@ func boundEntry(entry map[string]any, r Object, m map[string]any, ctx config.Pol
 	}
 	entry["classes"] = cm
 	v, ok := r.Spec["mergePolicies"]
-	if !ok && len(implied) == 0 {
-		return nil
-	}
-	// The catalog's implied bindings follow the Repository's own (MR2): a binding names them, so
-	// the rules that read Bound and Bindings see them. A list that does not decode stays as
-	// written, and Parse refuses it.
-	if list, isList := v.([]any); isList || v == nil {
-		for _, b := range implied {
-			list = append(list, map[string]any{"name": b.Name, "mode": b.Mode})
+	var boundNames []string
+	if ok || len(implied) > 0 {
+		// The catalog's implied bindings follow the Repository's own (MR2): a binding names them, so
+		// the rules that read Bound and Bindings see them. A list that does not decode stays as
+		// written, and Parse refuses it.
+		if list, isList := v.([]any); isList || v == nil {
+			for _, b := range implied {
+				list = append(list, map[string]any{"name": b.Name, "mode": b.Mode})
+			}
+			v = list
 		}
-		v = list
-	}
-	entry["bindings"] = v
-	var bound []any
-	if list, ok := v.([]any); ok {
-		for _, b := range list {
-			if b, ok := b.(map[string]any); ok {
-				bound = append(bound, b["name"])
+		entry["bindings"] = v
+		var bound []any
+		if list, ok := v.([]any); ok {
+			for _, b := range list {
+				if b, ok := b.(map[string]any); ok {
+					bound = append(bound, b["name"])
+					if name, _ := b["name"].(string); name != "" {
+						boundNames = append(boundNames, name)
+					}
+				}
 			}
 		}
+		entry["bound"] = bound
 	}
-	entry["bound"] = bound
+	if ctxErr == nil {
+		kept, validShape := resolveRoutines(r, routineConfigContext(m, ctx), classes, boundNames, opts, rs)
+		if !validShape {
+			entry["routines"] = r.Spec["routines"]
+		} else if len(kept) > 0 {
+			rawRoutines, err := toRoutineAnySlice(kept)
+			if err != nil {
+				return err
+			}
+			entry["routines"] = rawRoutines
+		}
+	} else if rawRoutines, hasRoutines := r.Spec["routines"]; hasRoutines {
+		entry["routines"] = rawRoutines
+	}
 	return nil
 }
 

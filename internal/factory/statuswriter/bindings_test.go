@@ -76,7 +76,7 @@ func binding(t *testing.T, st v1alpha1.RepositoryStatus, name string) v1alpha1.B
 // B10, Q8: the per-binding status on the Repository and the consumers on the MergePolicy.
 func TestDesiredBindings(t *testing.T) {
 	in, repos, policies := bindingsWorld()
-	out := Desired(in, nil, repos, policies, now)
+	out := Desired(in, nil, repos, policies, nil, now)
 
 	anr := out.Repositories["ai-native-ref"]
 	if b := binding(t, anr, "dead-links"); b.Accepted || b.Reason != config.ReasonMissingParameter || b.PolicyGeneration != 3 || b.Mode != "shadow" || b.Message == "" {
@@ -132,7 +132,7 @@ func TestDesiredBindings(t *testing.T) {
 func TestDesiredBindingMessageBounded(t *testing.T) {
 	in, repos, policies := bindingsWorld()
 	in.Outcomes[0].Bindings[1].Message = strings.Repeat("x", 2000)
-	out := Desired(in, nil, repos, policies, metav1.NewTime(time.Now()))
+	out := Desired(in, nil, repos, policies, nil, metav1.NewTime(time.Now()))
 	if n := len(binding(t, out.Repositories["ai-native-ref"], "dead-links").Message); n != 1024 {
 		t.Fatalf("message of %d characters", n)
 	}
@@ -148,7 +148,7 @@ func TestDesiredConsumersBounded(t *testing.T) {
 			PolicyGeneration: 4, Accepted: true, Served: true})
 	}
 	in.Outcomes[2].Consumers = consumers
-	p := Desired(in, nil, repos, policies, now).MergePolicies["dead-links"]
+	p := Desired(in, nil, repos, policies, nil, now).MergePolicies["dead-links"]
 	if len(p.Consumers) != maxConsumers || p.ConsumerCount != 65 || p.CurrentCount != 65 || p.LiveCount != 65 {
 		t.Fatalf("%d consumers listed, counts %d %d %d", len(p.Consumers), p.ConsumerCount, p.CurrentCount, p.LiveCount)
 	}
@@ -162,7 +162,7 @@ func TestDesiredPolicyLiveCountNeedsServed(t *testing.T) {
 		{Repository: "a", Name: "dead-links", Mode: "live", Reason: config.ReasonMissingParameter},
 		{Repository: "b", Name: "dead-links", Mode: "live", PolicyGeneration: 4, Accepted: true, Served: true},
 	}
-	if p := Desired(in, nil, repos, policies, now).MergePolicies["dead-links"]; p.LiveCount != 1 {
+	if p := Desired(in, nil, repos, policies, nil, now).MergePolicies["dead-links"]; p.LiveCount != 1 {
 		t.Fatalf("liveCount %d, want 1", p.LiveCount)
 	}
 }

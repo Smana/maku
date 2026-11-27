@@ -328,11 +328,14 @@ func TestARefusedObjectNotServedIsNotAcceptedAtGenerationZero(t *testing.T) {
 	}
 }
 
-// A MergePolicy no served Repository binds records no generations, under "" or anywhere.
+// A MergePolicy or Routine no served Repository binds records no generations, under "" or anywhere.
 func TestGenerationsIgnoreAnUnboundPolicy(t *testing.T) {
-	g := generations([]resources.Object{{Kind: resources.KindMergePolicy, Name: "p", Generation: 3, Spec: map[string]any{}}}, nil)
+	g := generations([]resources.Object{
+		{Kind: resources.KindMergePolicy, Name: "p", Generation: 3, Spec: map[string]any{}},
+		{Kind: resources.KindRoutine, Name: "r", Generation: 2, Spec: map[string]any{}},
+	}, nil, nil)
 	if len(g.Repos) != 0 {
-		t.Fatalf("generations %+v, want none for an unbound policy", g.Repos)
+		t.Fatalf("generations %+v, want none for an unbound policy or routine", g.Repos)
 	}
 }
 

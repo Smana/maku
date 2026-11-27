@@ -40,6 +40,8 @@ func Decode(raw []byte) ([]Object, error) {
 			typed = &v1alpha1.Repository{}
 		case KindMergePolicy:
 			typed = &v1alpha1.MergePolicy{}
+		case KindRoutine:
+			typed = &v1alpha1.Routine{}
 		default:
 			return nil, fmt.Errorf("document %d: kind %q is not a factory resource", i+1, kind)
 		}
@@ -68,7 +70,7 @@ func Decode(raw []byte) ([]Object, error) {
 		}
 		labels, _ := meta["labels"].(map[string]any)
 		objs = append(objs, Object{Kind: Kind(kind), Name: name, Namespace: str(meta, "namespace"), Generation: gen, Spec: spec,
-			Catalog: Kind(kind) == KindMergePolicy && str(labels, v1alpha1.LabelCatalog) == "true"})
+			Catalog: (Kind(kind) == KindMergePolicy || Kind(kind) == KindRoutine) && str(labels, v1alpha1.LabelCatalog) == "true"})
 	}
 	return objs, nil
 }

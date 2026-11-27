@@ -207,7 +207,7 @@ func TestWaitServableWordingFollowsCRDs(t *testing.T) {
 		absent bool
 		want   string
 	}{
-		"CRDs installed": {false, "apply the factory's Factory, Repository and MergePolicy resources"},
+		"CRDs installed": {false, "apply the factory's Factory, Repository, MergePolicy and Routine resources"},
 		"CRDs absent":    {true, "fix the file"},
 	} {
 		t.Run(name, func(t *testing.T) {

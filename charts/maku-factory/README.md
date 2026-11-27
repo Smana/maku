@@ -4,7 +4,7 @@ Deploys the agent factory: two replicas of the `maku-factory` controller (Deploy
 PodDisruptionBudget, RBAC in two namespaces (a Role in the release namespace and a Role in
 `config.runs.namespace`, default `agents`, `templates/rbac.yaml`). It ships no CRD: install
 [agent-factory-crds](../agent-factory-crds/README.md) first, which carries the `Task`, `Factory`,
-`Repository` and `MergePolicy` CRDs (v0.49.0 removed this chart's `crds/`). It ships as
+`Repository`, `MergePolicy` and `Routine` CRDs (v0.49.0 removed this chart's `crds/`). It ships as
 `oci://ghcr.io/smana/charts/maku-factory`, at the version of the release tag.
 
 Install it only after the secrets below exist in the release namespace. The factory's behaviour
@@ -55,7 +55,7 @@ uid and nobody else.
 | `api.tls.secretName` | `""` | The run-request API's key pair (`tls.crt`, `tls.key`), mounted at `/etc/agent-factory-api-tls`; the chart writes `config.api.tls` to read it and names the Service port `https`. Empty: plaintext, and the broker needs `factoryInsecure: true` |
 | `api.tls.issuerRef` | `{kind: ClusterIssuer, name: ""}` | `name` set: a cert-manager `Certificate` `agent-factory-api-tls` for `agent-factory.<ns>.svc[.<clusterDomain>]` writes `api.tls.secretName`; empty: bring the Secret yourself |
 | `clusterDomain` | `cluster.local` | The cluster's DNS domain, for the Certificate's names |
-| `config` | `{}` | The factory config, rendered through `tpl` (`{{ .Release.Namespace }}` works). An empty config, one that is not YAML, has an unknown key or a duplicated `coordination`/`hardening` block fails the start at once. A config that serves nothing until the `Factory`, `Repository` and `MergePolicy` resources are applied does not fail the start: the pod stays live and unready, `/readyz` saying `waiting for a servable config`, and starts once they are |
+| `config` | `{}` | The factory config, rendered through `tpl` (`{{ .Release.Namespace }}` works). An empty config, one that is not YAML, has an unknown key or a duplicated `coordination`/`hardening` block fails the start at once. A config that serves nothing until the `Factory`, `Repository`, `MergePolicy` and `Routine` resources are applied does not fail the start: the pod stays live and unready, `/readyz` saying `waiting for a servable config`, and starts once they are |
 
 ## Ports
 
@@ -76,26 +76,29 @@ ledgers they replaced, `agent-factory-ledger-<UTC day>`, once 35 days old. The n
 factory can touch every ConfigMap in it, its own config included: keep no ConfigMap there it must
 not touch. In `config.runs.namespace` (default `agents`), a second Role manages the `AgentRun`s of `config.runs.group` (default `maku.ogenki.io`, the only group the binary accepts): the values the binary reads, so the two cannot disagree. `tests/render.sh` asserts the ConfigMap rule's shape and the 8082 ports.
 
-The factory's own Role reads (`get`, `list`, `watch`) the three kinds and updates their `status`:
-every replica lists them to build its configuration. Without that grant the factory refuses to
-start, and the message names the Role. Only the leader writes the status (every 30 seconds and after
-each config sync); the other replicas read. See [architecture](../../docs/architecture.md#how-the-factory-reads-its-configuration).
+The factory's own Role reads (`get`, `list`, `watch`) the four kinds (`Factory`, `Repository`,
+`MergePolicy`, `Routine`) and updates their `status` without holding write permissions on
+`repositories` or `routines` specs: every replica lists them to build its configuration. Without
+that grant the factory refuses to start, and the message names the Role. Only the leader writes the
+status (every 30 seconds and after each config sync); the other replicas read. See
+[architecture](../../docs/architecture.md#how-the-factory-reads-its-configuration).
 
-Three ClusterRoles cover the `Factory`, `Repository` and `MergePolicy` kinds for people, not for
-the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `edit` or `admin`
-grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the three kinds) into `view`,
-`maku-mergepolicy-editor` (every verb on `mergepolicies` only) into `edit`, and `maku-factory-admin`
-(every verb on the three kinds) into `admin`. Their names are fixed, and one set serves every
-install in a cluster: `clusterRoles: true`, the default, renders them here for an
-install of this chart alone; the umbrella sets it false, and `agent-factory-crds` renders them once
-per cluster. `tests/render.sh` asserts each role's rules.
+Four ClusterRoles cover the `Factory`, `Repository`, `MergePolicy` and `Routine` kinds for people,
+not for the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `edit` or
+`admin` grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the four kinds) into
+`view`, `maku-mergepolicy-editor` (every verb on `mergepolicies` only) and `maku-routine-editor`
+(every verb on `routines` only) into `edit`, and `maku-factory-admin` (every verb on the four
+kinds) into `admin`. Their names are fixed, and one set serves every install in a cluster:
+`clusterRoles: true`, the default, renders them here for an install of this chart alone; the
+umbrella sets it false, and `agent-factory-crds` renders them once per cluster. `tests/render.sh`
+asserts each role's rules.
 
 ## Config
 
 `config` is rendered as-is into `/etc/agent-factory/config/config.yaml` (a ConfigMap; a change
 rolls the pods through its `checksum/config` annotation). The factory also reads the `Factory`,
-`Repository` and `MergePolicy` resources live: a change to one of them applies the catalogue and
-`repositories` without a rollout. A repository a change adds that fails to wire (its GitHub App
+`Repository`, `MergePolicy` and `Routine` resources live: a change to one of them applies the
+catalogue and `repositories` without a rollout. A repository a change adds that fails to wire (its GitHub App
 installation, a merger key) is retried every minute, as is a served one whose merger reconnect
 failed. The startup keys (`policyManagement`, `coordination`, `hardening`, `intake`, `api`, `runs`,
 `sandbox`, `demo`, `broker`, `github`, `meter.url`, `meter.query`, `meter.logsURL`,

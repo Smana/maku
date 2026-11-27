@@ -31,12 +31,20 @@ type RepoGenerations struct {
 	RepositoryName string
 	// Classes are the per-class generations (B12): each bound class's own MergePolicy.
 	Classes map[string]ClassGeneration
+	// Routines are the per-routine generations: each bound routine's own Routine.
+	Routines map[string]RoutineGeneration
 }
 
 // ClassGeneration is the generation of the MergePolicy one bound class was resolved from.
 type ClassGeneration struct {
 	Policy     int64
 	PolicyName string
+}
+
+// RoutineGeneration is the generation of the Routine one bound routine was resolved from.
+type RoutineGeneration struct {
+	Routine     int64
+	RoutineName string
 }
 
 // ClassGenerations returns the generations class of repository was decided under (B12): its own
@@ -46,6 +54,17 @@ func (c *Config) ClassGenerations(repository, class string) (policy, repo int64,
 	g := c.Generations.Repos[strings.ToLower(repository)]
 	if cg, ok := g.Classes[class]; ok {
 		return cg.Policy, g.Repository, true
+	}
+	return 0, g.Repository, false
+}
+
+// RoutineGenerations returns the generations routine of repository was resolved under: its own
+// Routine's and the Repository's, bound true, when served; the Repository's alone, bound false,
+// otherwise; zeros for the file.
+func (c *Config) RoutineGenerations(repository, routine string) (routineGen, repoGen int64, bound bool) {
+	g := c.Generations.Repos[strings.ToLower(repository)]
+	if rg, ok := g.Routines[routine]; ok {
+		return rg.Routine, g.Repository, true
 	}
 	return 0, g.Repository, false
 }

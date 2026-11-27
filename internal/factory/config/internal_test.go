@@ -47,6 +47,7 @@ func TestInternalPrincipalConfig(t *testing.T) {
 		"an onBehalfOf":        {"verification: true\n", "verification: true\n      onBehalfOf: {slack: {\"T01ABC/U02DEF\": smana}}\n", "onBehalfOf is not allowed"},
 		"self-serve links":     {"verification: true\n", "verification: true\n      onBehalfOf: {slackLinks: true}\n", "onBehalfOf is not allowed"},
 		"a reserved name":      {"name: runlore", "name: factory", `"factory" is reserved`},
+		"the upkeep name":      {"name: runlore", "name: upkeep", `"upkeep" is reserved`},
 		"a ceiling over a day": {"maxCostUSD: 2", "maxCostUSD: 11", "maxCostUSD must be above 0 and at most dailyUSD"},
 	} {
 		t.Run(name, func(t *testing.T) {

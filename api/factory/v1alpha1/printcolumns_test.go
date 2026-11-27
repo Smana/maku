@@ -15,11 +15,14 @@ func TestPrinterColumnFieldsAreAlwaysPresent(t *testing.T) {
 		status any
 		keys   []string
 	}{
-		"factory":     {FactoryStatus{}, []string{`"stopped":false`, `"repositories":0`}},
-		"mergepolicy": {MergePolicyStatus{}, []string{`"liveCount":0`, `"consumerCount":0`, `"currentCount":0`}},
-		"repository":  {RepositoryStatus{}, []string{`"classCount":0`, `"liveCount":0`}},
-		"binding":     {BindingStatus{}, []string{`"accepted":false`}},
-		"consumer":    {ConsumerStatus{}, []string{`"accepted":false`}},
+		"factory":         {FactoryStatus{}, []string{`"stopped":false`, `"repositories":0`}},
+		"mergepolicy":     {MergePolicyStatus{}, []string{`"liveCount":0`, `"consumerCount":0`, `"currentCount":0`}},
+		"repository":      {RepositoryStatus{}, []string{`"classCount":0`, `"liveCount":0`}},
+		"binding":         {BindingStatus{}, []string{`"accepted":false`}},
+		"consumer":        {ConsumerStatus{}, []string{`"accepted":false`}},
+		"routine":         {RoutineStatus{}, []string{`"consumerCount":0`, `"activeCount":0`, `"pausedCount":0`}},
+		"routineconsumer": {RoutineConsumerStatus{}, []string{`"accepted":false`}},
+		"routinebinding":  {RoutineBindingStatus{}, []string{`"accepted":false`}},
 	} {
 		b, err := json.Marshal(tc.status)
 		if err != nil {

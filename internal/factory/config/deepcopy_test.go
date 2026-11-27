@@ -24,4 +24,44 @@ func TestDeepCopySharesNothing(t *testing.T) {
 	if l.Models["reviewer"]["frontier"] != "kimi" {
 		t.Fatal("Loop.Models is shared")
 	}
+
+	rt := RoutineSpec{
+		DefaultPrompt:  "prompt",
+		Requires:       []string{"probeWorkflow"},
+		ProtectedPaths: []string{"^docs/"},
+		Egress:         []string{"pypi"},
+		Breaker:        BreakerSpec{MinMergeRate: new(0.25)},
+	}
+	rtc := rt.DeepCopy()
+	rtc.Requires[0] = "x"
+	rtc.ProtectedPaths[0] = "x"
+	rtc.Egress[0] = "x"
+	*rtc.Breaker.MinMergeRate = 0.9
+	if rt.Requires[0] != "probeWorkflow" || rt.ProtectedPaths[0] != "^docs/" || rt.Egress[0] != "pypi" || *rt.Breaker.MinMergeRate != 0.25 {
+		t.Fatal("RoutineSpec DeepCopy shares memory with its source")
+	}
+
+	rb := RoutineBinding{
+		Name:           "dead-links",
+		Mode:           RoutineModePR,
+		RepoPrompt:     new(false),
+		ProtectedPaths: []string{"^docs/"},
+		Egress:         []string{"pypi"},
+		Breaker:        &BreakerSpec{MinMergeRate: new(0.5)},
+	}
+	rbc := rb.DeepCopy()
+	*rbc.RepoPrompt = true
+	rbc.ProtectedPaths[0] = "x"
+	rbc.Egress[0] = "x"
+	*rbc.Breaker.MinMergeRate = 0.1
+	if *rb.RepoPrompt || rb.ProtectedPaths[0] != "^docs/" || rb.Egress[0] != "pypi" || *rb.Breaker.MinMergeRate != 0.5 {
+		t.Fatal("RoutineBinding DeepCopy shares memory with its source")
+	}
+
+	bg := Budgets{UpkeepDailyUSD: new(5.0)}
+	bgc := bg.DeepCopy()
+	*bgc.UpkeepDailyUSD = 1.0
+	if *bg.UpkeepDailyUSD != 5.0 {
+		t.Fatal("Budgets DeepCopy shares UpkeepDailyUSD")
+	}
 }

@@ -66,6 +66,10 @@ type TaskList struct {
 // +kubebuilder:validation:XValidation:rule="has(self.intake) == has(oldSelf.intake) && (!has(self.intake) || self.intake == oldSelf.intake)",message="spec.intake is fixed at creation"
 // +kubebuilder:validation:XValidation:rule="self.source.kind != 'api' || (has(self.maxMicroUSD) && self.maxMicroUSD > 0)",message="an api task carries maxMicroUSD"
 // +kubebuilder:validation:XValidation:rule="self.source.kind != 'api' || !has(self.budget) || (has(self.maxMicroUSD) && (!has(self.budget.runMicroUSD) || self.budget.runMicroUSD <= self.maxMicroUSD) && (!has(self.budget.taskMicroUSD) || self.budget.taskMicroUSD <= self.maxMicroUSD))",message="an api task's budget stays under its ceiling"
+// +kubebuilder:validation:XValidation:rule="has(self.routine) == has(oldSelf.routine) && (!has(self.routine) || self.routine == oldSelf.routine)",message="spec.routine is fixed at creation"
+// +kubebuilder:validation:XValidation:rule="has(self.routine) == (self.source.kind == 'routine')",message="a routine task, and only one, has spec.routine"
+// +kubebuilder:validation:XValidation:rule="self.source.kind != 'routine' || (has(self.maxMicroUSD) && self.maxMicroUSD > 0)",message="a routine task carries maxMicroUSD"
+// +kubebuilder:validation:XValidation:rule="self.source.kind != 'routine' || !has(self.budget) || (has(self.maxMicroUSD) && (!has(self.budget.runMicroUSD) || self.budget.runMicroUSD <= self.maxMicroUSD) && (!has(self.budget.taskMicroUSD) || self.budget.taskMicroUSD <= self.maxMicroUSD))",message="a routine task's budget stays under its ceiling"
 // +kubebuilder:validation:XValidation:rule="!has(self.__loop__) || !has(self.__loop__.judgeModel) || self.__loop__.judgeModel != 'mistral-light' || self.dataClass == 'public'",message="a provider judgeModel is a public task's only"
 // +kubebuilder:validation:XValidation:rule="has(self.kind) == has(oldSelf.kind) && (!has(self.kind) || self.kind == oldSelf.kind)",message="spec.kind is fixed at creation"
 // +kubebuilder:validation:XValidation:rule="has(self.coordinationParent) == has(oldSelf.coordinationParent) && (!has(self.coordinationParent) || self.coordinationParent == oldSelf.coordinationParent)",message="spec.coordinationParent is fixed at creation"
@@ -192,6 +196,45 @@ type TaskSpec struct {
 	// +kubebuilder:validation:MaxItems=8
 	// +optional
 	CoordinationArtifacts []LandedArtifact `json:"coordinationArtifacts,omitempty"`
+	// Routine is the upkeep routine provenance and resolved parameters, fixed at creation when
+	// source.kind is routine.
+	// +optional
+	Routine *TaskRoutine `json:"routine,omitempty"`
+}
+
+// SourceKindRoutine is Source.Kind for a scheduled or manual upkeep routine task.
+const SourceKindRoutine = "routine"
+
+// TaskRoutine records the Routine and prompt provenance that started a routine Task.
+type TaskRoutine struct {
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=propose;draft;pr
+	Mode string `json:"mode"`
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	RoutineGeneration int64 `json:"routineGeneration,omitempty"`
+	// +kubebuilder:validation:Enum=routine;repo
+	PromptSource string `json:"promptSource"`
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{64}$`
+	// +kubebuilder:validation:MaxLength=64
+	PromptSHA string `json:"promptSHA"`
+	// +kubebuilder:validation:MaxLength=256
+	// +optional
+	PromptPath string `json:"promptPath,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,62}[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	Skill string `json:"skill,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{40,64}$`
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	SkillSHA string `json:"skillSHA,omitempty"`
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=160
+	// +optional
+	FindingIDs []string `json:"findingIds,omitempty"`
 }
 
 // Published records the issue the factory filed from an investigate task's proposal (RA9): once
@@ -378,7 +421,7 @@ type Source struct {
 	// adopt: another author's pull request the factory decides (merge gate MC10).
 	// coordination: a coordination parent or integration Task (MR2); a child is an issue.
 	// review: a pull request the factory did not write, reviewed read-only (phase F4).
-	// +kubebuilder:validation:Enum=issue;runlore;schedule;api;adopt;coordination;review
+	// +kubebuilder:validation:Enum=issue;runlore;schedule;routine;api;adopt;coordination;review
 	Kind string `json:"kind"`
 	// Smana/cloud-native-ref#2112 (owner/name#<n>), runlore:<alert>/<resource>, or the schedule name.
 	// +kubebuilder:validation:MaxLength=512

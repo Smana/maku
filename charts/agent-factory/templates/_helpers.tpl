@@ -5,13 +5,15 @@ app.kubernetes.io/part-of: agent-factory
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{/* The merge policy catalog's guard (merge policies review): an existing MergePolicy of a catalog name
+{{/* The catalog's guard: an existing catalog object (MergePolicy or Routine) of a catalog name
 that is not labelled maku.ogenki.io/catalog is a platform's own, and the render fails naming it, before
 Helm would refuse its ownership at apply. lookup is empty under helm template; a live install reads it. */}}
 {{- define "afumbrella.catalogOwner" -}}
-{{- $o := lookup "maku.ogenki.io/v1alpha1" "MergePolicy" .namespace .name -}}
+{{- $kind := .kind | default "MergePolicy" -}}
+{{- $excludeKey := .excludeKey | default "mergePolicies.catalog.exclude" -}}
+{{- $o := lookup "maku.ogenki.io/v1alpha1" $kind .namespace .name -}}
 {{- if and $o (ne (dig "metadata" "labels" "maku.ogenki.io/catalog" "" $o) "true") -}}
-{{- fail (printf "MergePolicy %s exists and is not the catalog's: add it to mergePolicies.catalog.exclude" .name) -}}
+{{- fail (printf "%s %s exists and is not the catalog's: add it to %s" $kind .name $excludeKey) -}}
 {{- end -}}
 {{- end }}
 

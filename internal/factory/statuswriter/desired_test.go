@@ -85,7 +85,7 @@ func TestAccepted(t *testing.T) {
 			if tt.outcome != nil {
 				in.Outcomes = []configsource.Outcome{*tt.outcome}
 			}
-			got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 5)}, nil, now).Repositories["r"]
+			got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 5)}, nil, nil, now).Repositories["r"]
 			c := want(t, got.Conditions, v1alpha1.ConditionAccepted, tt.status, tt.reason)
 			if c.Message != tt.message {
 				t.Errorf("message %q, want %q", c.Message, tt.message)
@@ -109,7 +109,7 @@ func TestAcceptedEveryKind(t *testing.T) {
 		{Kind: resources.KindFactory, Name: "f", Accepted: true},
 		{Kind: resources.KindMergePolicy, Name: "p", Reason: v1alpha1.ReasonMissingRef, Message: "no repo"},
 	}}
-	got := Desired(in, []v1alpha1.Factory{obj("f", 1)}, nil, []v1alpha1.MergePolicy{policyObj("p", 1)}, now)
+	got := Desired(in, []v1alpha1.Factory{obj("f", 1)}, nil, []v1alpha1.MergePolicy{policyObj("p", 1)}, nil, now)
 	want(t, got.Factories["f"].Conditions, v1alpha1.ConditionAccepted, metav1.ConditionTrue, "Served")
 	want(t, got.MergePolicies["p"].Conditions, v1alpha1.ConditionAccepted, metav1.ConditionFalse, v1alpha1.ReasonMissingRef)
 }
@@ -139,7 +139,7 @@ func TestRepository(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := Inputs{Config: tt.cfg, Connected: tt.conn, WireErr: func(string) error { return tt.wire }}
-			got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 1)}, nil, now).Repositories["r"]
+			got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 1)}, nil, nil, now).Repositories["r"]
 			c := want(t, got.Conditions, "Connected", tt.status, tt.reason)
 			if c.Message != tt.msg {
 				t.Errorf("message %q, want %q", c.Message, tt.msg)
@@ -167,7 +167,7 @@ func TestRepositoryAuthorityAndClasses(t *testing.T) {
 	t.Run("central", func(t *testing.T) {
 		in := repoIn(cfg(config.Repository{Name: repo, Classes: classes}))
 		in.Decisions = decisionsAt(at)
-		got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+		got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 		if got.Authority != "central" || got.ClassCount != 1 || got.LiveCount != 1 {
 			t.Errorf("got %+v", got)
 		}
@@ -180,14 +180,14 @@ func TestRepositoryAuthorityAndClasses(t *testing.T) {
 	t.Run("cut over", func(t *testing.T) {
 		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
 		c.PolicyManagement.Stage = config.StageManage
-		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]; got.Authority != "repository" {
+		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]; got.Authority != "repository" {
 			t.Errorf("authority %q", got.Authority)
 		}
 	})
 	t.Run("repository authority needs the central switch", func(t *testing.T) {
 		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
 		c.PolicyManagement.Stage = config.StageRead
-		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]; got.Authority != "central" {
+		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]; got.Authority != "central" {
 			t.Errorf("authority %q", got.Authority)
 		}
 	})
@@ -196,13 +196,13 @@ func TestRepositoryAuthorityAndClasses(t *testing.T) {
 		in.Decisions = func(string) map[string]decision.Last {
 			return map[string]decision.Last{"docs": {Verdict: "hold", Reason: strings.Repeat("é", 100), At: at}}
 		}
-		got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+		got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 		if l := []rune(got.Classes[0].LastDecision); len(l) != 63 || !strings.HasPrefix(string(l), "hold:é") {
 			t.Errorf("lastDecision %q (%d)", string(l), len(l))
 		}
 	})
 	t.Run("not served has no authority, no classes", func(t *testing.T) {
-		got := Desired(Inputs{Config: cfg()}, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+		got := Desired(Inputs{Config: cfg()}, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 		if got.Authority != "" || got.Classes != nil {
 			t.Errorf("got %+v", got)
 		}
@@ -240,7 +240,7 @@ func TestRepositoryFileConditions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			in := repoIn(cfg(config.Repository{Name: repo}))
 			in.Snapshot = tt.snap
-			got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+			got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 			v := want(t, got.Conditions, "RepositoryFileValid", tt.validS, tt.validR)
 			s := want(t, got.Conditions, "InSync", tt.syncS, tt.syncR)
 			if !strings.Contains(v.Message, tt.validMsg) || !strings.Contains(s.Message, tt.syncMsgHas) {
@@ -259,7 +259,7 @@ func TestFenceOnlyFileUnderRepositoryAuthority(t *testing.T) {
 	c.PolicyManagement.Stage = config.StageManage
 	in := repoIn(c)
 	in.Snapshot = func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, true }
-	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 	if v := want(t, got.Conditions, "RepositoryFileValid", metav1.ConditionFalse, "Invalid"); !strings.Contains(v.Message, "no classes") {
 		t.Errorf("message %q", v.Message)
 	}
@@ -270,7 +270,7 @@ func TestFenceOnlyFileUnderRepositoryAuthority(t *testing.T) {
 func TestRepositoryRefusedStillComputed(t *testing.T) {
 	in := repoIn(cfg(config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}}}))
 	in.Outcomes[0].Accepted, in.Outcomes[0].Reason, in.Outcomes[0].Message, in.Outcomes[0].ServedGeneration = false, v1alpha1.ReasonInvalid, "x", 2
-	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 	want(t, got.Conditions, v1alpha1.ConditionAccepted, metav1.ConditionFalse, v1alpha1.ReasonInvalid)
 	if got.ClassCount != 1 || got.LiveCount != 1 || got.Authority != "central" {
 		t.Errorf("last good version not shown: %+v", got)
@@ -305,7 +305,7 @@ func TestFactory(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.in.Config = cfg(config.Repository{Name: repo}, config.Repository{Name: "acme/b"})
 			tt.in.Stopped = true
-			got := Desired(tt.in, []v1alpha1.Factory{obj("f", 2)}, nil, nil, now).Factories["f"]
+			got := Desired(tt.in, []v1alpha1.Factory{obj("f", 2)}, nil, nil, nil, now).Factories["f"]
 			c := want(t, got.Conditions, "Ready", tt.status, tt.reason)
 			if c.Message != tt.msg {
 				t.Errorf("message %q, want %q", c.Message, tt.msg)
@@ -325,7 +325,7 @@ func TestOneObservedGenerationPerObject(t *testing.T) {
 		Snapshot:  func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{HasClasses: true}, true },
 		Connected: func(string) (metav1.ConditionStatus, string) { return metav1.ConditionTrue, "" },
 		Outcomes:  []configsource.Outcome{served(resources.KindFactory, "f"), served(resources.KindRepository, "r"), served(resources.KindMergePolicy, "p")}}
-	got := Desired(in, []v1alpha1.Factory{obj("f", 5)}, []v1alpha1.Repository{repoObj("r", repo, 5)}, []v1alpha1.MergePolicy{policyObj("p", 5)}, now)
+	got := Desired(in, []v1alpha1.Factory{obj("f", 5)}, []v1alpha1.Repository{repoObj("r", repo, 5)}, []v1alpha1.MergePolicy{policyObj("p", 5)}, nil, now)
 	check := func(kind string, gen int64, cs []metav1.Condition, types ...string) {
 		t.Helper()
 		if gen != 3 {
@@ -374,39 +374,39 @@ func TestPrivateCode(t *testing.T) {
 			if tc.served != nil {
 				in.Config = cfg(*tc.served)
 			}
-			st := Desired(in, nil, []v1alpha1.Repository{repoObj("app", repo, 1)}, nil, now).Repositories["app"]
+			st := Desired(in, nil, []v1alpha1.Repository{repoObj("app", repo, 1)}, nil, nil, now).Repositories["app"]
 			c := want(t, st.Conditions, v1alpha1.ConditionPrivateCode, tc.status, tc.reason)
 			if !strings.Contains(c.Message, tc.message) {
 				t.Fatalf("message %q, want %q", c.Message, tc.message)
 			}
 		})
 	}
-	st := Desired(Inputs{Config: cfg(config.Repository{Name: repo})}, nil, []v1alpha1.Repository{repoObj("app", repo, 1)}, nil, now).Repositories["app"]
+	st := Desired(Inputs{Config: cfg(config.Repository{Name: repo})}, nil, []v1alpha1.Repository{repoObj("app", repo, 1)}, nil, nil, now).Repositories["app"]
 	want(t, st.Conditions, v1alpha1.ConditionPrivateCode, metav1.ConditionUnknown, "NotChecked")
 }
 
 func TestRepositoryServedModeAndReady(t *testing.T) {
 	in := repoIn(cfg(config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}}}))
 	in.Outcomes[0].Bindings[0].Mode = config.ModeShadow
-	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 	if len(got.Classes) != 1 || got.Classes[0].Mode != config.ModeShadow || got.Classes[0].ServedMode != config.ModeLive {
 		t.Fatalf("written/served mode %+v", got.Classes)
 	}
 	want(t, got.Conditions, ConditionReady, metav1.ConditionTrue, "Ready")
 
 	in.Outcomes[0].Accepted, in.Outcomes[0].Reason, in.Outcomes[0].Message = false, v1alpha1.ReasonInvalid, "bad generation"
-	got = Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	got = Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 	want(t, got.Conditions, ConditionReady, metav1.ConditionFalse, v1alpha1.ReasonInvalid)
 
 	in.Outcomes[0].Accepted, in.Outcomes[0].Reason, in.Outcomes[0].Message = true, "", ""
 	in.Outcomes[0].Bindings[0].Accepted = false
-	got = Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	got = Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 	want(t, got.Conditions, ConditionReady, metav1.ConditionFalse, "BindingsRefused")
 }
 
 func TestRepositoryPausedCondition(t *testing.T) {
 	in := repoIn(cfg(config.Repository{Name: repo, Merge: config.Merge{Paused: &config.MergePause{Reason: "Incident freeze"}}}))
-	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, nil, now).Repositories["r"]
 	condition := want(t, got.Conditions, ConditionPaused, metav1.ConditionTrue, "OperatorPaused")
 	if condition.Message != "Incident freeze" {
 		t.Fatalf("pause message %q", condition.Message)

@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-// Reserved are names another component answers to: the fleet, the two system intakes, the broker
-// and the policy engine. A sponsored principal never takes one (C22).
-var Reserved = []string{"factory", "runlore", "scheduler", "room-broker", "policy"}
+// Reserved are names another component answers to: the fleet, the two system intakes, the broker,
+// the policy engine and cron upkeep. A sponsored principal never takes one (C22).
+var Reserved = []string{"factory", "runlore", "scheduler", "room-broker", "policy", "upkeep"}
 
 // IsReserved reports whether name is one of Reserved.
 func IsReserved(name string) bool { return slices.Contains(Reserved, name) }

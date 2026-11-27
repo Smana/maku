@@ -99,6 +99,9 @@ const LabelParent = "agents.ogenki.io/parent"
 // independent of the splitter's LabelParent so the two lineages never collide.
 const LabelCoordinationParent = "agents.ogenki.io/coordination-parent"
 
+// LabelRoutine carries the name of the upkeep Routine that started this Task.
+const LabelRoutine = "agents.ogenki.io/routine"
+
 // childOfPrefix is the GitHub label a child's issue carries, with its parent issue's number (SL8).
 const childOfPrefix = "factory/child-of:#"
 

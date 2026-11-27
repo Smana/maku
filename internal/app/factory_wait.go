@@ -21,7 +21,7 @@ const (
 	servableMax      = 60 * time.Second
 	servableLogEvery = time.Minute
 
-	applyHint = "apply the factory's Factory, Repository and MergePolicy resources"
+	applyHint = "apply the factory's Factory, Repository, MergePolicy and Routine resources"
 	fileHint  = "the factory CRDs are not installed and the config file alone holds nothing to serve: fix the file"
 )
 

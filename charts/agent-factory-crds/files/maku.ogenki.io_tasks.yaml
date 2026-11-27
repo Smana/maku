@@ -451,6 +451,57 @@ spec:
                 maxLength: 140
                 pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
                 type: string
+              routine:
+                description: |-
+                  Routine is the upkeep routine provenance and resolved parameters, fixed at creation when
+                  source.kind is routine.
+                properties:
+                  findingIds:
+                    items:
+                      maxLength: 160
+                      type: string
+                    maxItems: 16
+                    type: array
+                  mode:
+                    enum:
+                    - propose
+                    - draft
+                    - pr
+                    type: string
+                  name:
+                    maxLength: 40
+                    pattern: ^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$
+                    type: string
+                  promptPath:
+                    maxLength: 256
+                    type: string
+                  promptSHA:
+                    maxLength: 64
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  promptSource:
+                    enum:
+                    - routine
+                    - repo
+                    type: string
+                  routineGeneration:
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  skill:
+                    maxLength: 64
+                    pattern: ^[a-z0-9]([-a-z0-9]{0,62}[a-z0-9])?$
+                    type: string
+                  skillSHA:
+                    maxLength: 64
+                    pattern: ^[0-9a-f]{40,64}$
+                    type: string
+                required:
+                - mode
+                - name
+                - promptSHA
+                - promptSource
+                type: object
               scope:
                 description: 'This child''s part of its parent''s task (SL5): one
                   scope of the approved split, fixed once set.'
@@ -568,6 +619,7 @@ spec:
                     - issue
                     - runlore
                     - schedule
+                    - routine
                     - api
                     - adopt
                     - coordination
@@ -712,6 +764,19 @@ spec:
                 > 0)
             - message: an api task's budget stays under its ceiling
               rule: self.source.kind != 'api' || !has(self.budget) || (has(self.maxMicroUSD)
+                && (!has(self.budget.runMicroUSD) || self.budget.runMicroUSD <= self.maxMicroUSD)
+                && (!has(self.budget.taskMicroUSD) || self.budget.taskMicroUSD <=
+                self.maxMicroUSD))
+            - message: spec.routine is fixed at creation
+              rule: has(self.routine) == has(oldSelf.routine) && (!has(self.routine)
+                || self.routine == oldSelf.routine)
+            - message: a routine task, and only one, has spec.routine
+              rule: has(self.routine) == (self.source.kind == 'routine')
+            - message: a routine task carries maxMicroUSD
+              rule: self.source.kind != 'routine' || (has(self.maxMicroUSD) && self.maxMicroUSD
+                > 0)
+            - message: a routine task's budget stays under its ceiling
+              rule: self.source.kind != 'routine' || !has(self.budget) || (has(self.maxMicroUSD)
                 && (!has(self.budget.runMicroUSD) || self.budget.runMicroUSD <= self.maxMicroUSD)
                 && (!has(self.budget.taskMicroUSD) || self.budget.taskMicroUSD <=
                 self.maxMicroUSD))

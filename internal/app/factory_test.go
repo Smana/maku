@@ -105,7 +105,7 @@ func TestFactoryManagerOptions(t *testing.T) {
 			}
 			// The chart's Roles grant exactly these namespaces: a cluster-wide informer is refused.
 			want := map[string][]string{"Task": {ns}, "Room": {ns}, "ConfigMap": {ns}, rk.GVK().Kind: {rk.Namespace},
-				"Factory": {ns}, "Repository": {ns}, "MergePolicy": {ns}}
+				"Factory": {ns}, "Repository": {ns}, "MergePolicy": {ns}, "Routine": {ns}}
 			if len(o.Cache.ByObject) != len(want) || o.Cache.DefaultNamespaces != nil {
 				t.Fatalf("cached kinds: %v, default namespaces %v", o.Cache.ByObject, o.Cache.DefaultNamespaces)
 			}
@@ -128,6 +128,8 @@ func TestFactoryManagerOptions(t *testing.T) {
 					kind = "Repository"
 				case *factoryv1.MergePolicy:
 					kind = "MergePolicy"
+				case *factoryv1.Routine:
+					kind = "Routine"
 				case *unstructured.Unstructured:
 					kind = x.GroupVersionKind().Kind
 					if x.GroupVersionKind() != rk.GVK() {
