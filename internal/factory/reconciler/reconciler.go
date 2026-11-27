@@ -1352,12 +1352,16 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 		cohort = triage.CohortTreatment
 	}
 	harness, harnessSource := triage.HarnessFor(cfg, t, d.HarnessPin, cohort)
-	model := ""
-	if d.ModelPin.Honoured() {
-		model = d.ModelPin.Name
+	model, modelRoles, modelSource := "", []string(nil), ""
+	switch e := cfg.Evaluation; {
+	case d.ModelPin.Honoured():
+		model, modelRoles, modelSource = d.ModelPin.Name, []string{"implementer", "reviewer"}, v1alpha1.ModelSourceLabel
+	case cohort == triage.CohortTreatment && e.TreatmentModel != "" && (!config.PublicOnly(e.TreatmentModel) || d.DataClass == "public"):
+		// The measurement's one variable (Gemini plan A8): the model of treatmentRoles, frozen here.
+		model, modelRoles, modelSource = e.TreatmentModel, slices.Clone(e.ModelRoles()), v1alpha1.ModelSourceTreatment
 	}
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
-		Harness: harness, HarnessSource: harnessSource, Model: model,
+		Harness: harness, HarnessSource: harnessSource, Model: model, ModelRoles: modelRoles, ModelSource: modelSource,
 		Checks: p.EffectiveChecks(), TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused,
 		Screenshots: screenshotsOf(r.repo(cfg, t))}
 }

@@ -248,3 +248,22 @@ func TestPinModelFromLabel(t *testing.T) {
 		})
 	}
 }
+
+// A treatment profile's model reaches only its roles, recorded as modelSource treatment.
+func TestPinModelFromTreatment(t *testing.T) {
+	g := newRig(t)
+	tk := issueTask("3buqdlot", 7, "x")
+	tk.Spec.DataClass, tk.Spec.PredictedClass, tk.Spec.Template = "public", "review", "pair"
+	tk.Spec.Budget = v1alpha1.Budget{Tier: "standard", Model: "agent-default", RunTokens: 1_500_000, RunMinutes: 45}
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "standard", Source: "repository", Cohort: "treatment",
+		Model: "gemini-standard", ModelRoles: []string{"implementer"}, ModelSource: v1alpha1.ModelSourceTreatment}
+	impl := g.r.implementerSpec(g.r.Cfg.Current(), tk, "x")
+	if got := g.r.pinModel(g.r.Cfg.Current(), tk, &impl); impl.Model != "gemini-standard" || got != v1alpha1.ModelSourceTreatment {
+		t.Fatalf("implementer: %q %q", impl.Model, got)
+	}
+	rev := g.r.implementerSpec(g.r.Cfg.Current(), tk, "x")
+	rev.Role = "reviewer"
+	if got := g.r.pinModel(g.r.Cfg.Current(), tk, &rev); rev.Model == "gemini-standard" || got == v1alpha1.ModelSourceTreatment {
+		t.Fatalf("reviewer is not a treatment role: %q %q", rev.Model, got)
+	}
+}

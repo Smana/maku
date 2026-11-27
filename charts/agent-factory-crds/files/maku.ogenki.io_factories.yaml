@@ -208,6 +208,22 @@ spec:
                     - openhands
                     - opencode
                     type: string
+                  treatmentModel:
+                    description: |-
+                      TreatmentModel puts the treatment cohort's TreatmentRoles on a gateway alias (Gemini plan A8),
+                      changing nothing else: workflow, template, harness, effort and caps stay the control's. A
+                      provider alias applies to public tasks only. The measurement's one variable: it is refused
+                      beside treatmentHarness or a treatment workflow.
+                    maxLength: 64
+                    type: string
+                  treatmentRoles:
+                    description: TreatmentRoles are the roles TreatmentModel moves;
+                      unset, the implementer.
+                    items:
+                      maxLength: 32
+                      type: string
+                    maxItems: 4
+                    type: array
                 type: object
               facts:
                 description: |-

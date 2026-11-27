@@ -5,6 +5,7 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestPinHonouredInObserveAndApply(t *testing.T) {
 			tk := g.reconcile(t, "3buqdlot", 1)
 			want := v1alpha1.ProfileStatus{Name: "review-search", Source: "label", Cohort: triage.CohortLabeled, Harness: "openhands", HarnessSource: "default", Checks: false,
 				Requested: "review-search"}
-			if p := tk.Status.Profile; p == nil || *p != want {
+			if p := tk.Status.Profile; p == nil || !reflect.DeepEqual(*p, want) {
 				t.Fatalf("%+v, want %+v", p, want)
 			}
 			if tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 7 {

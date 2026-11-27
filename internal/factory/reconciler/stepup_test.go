@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -279,7 +280,7 @@ func TestARefusedStepWriteChangesNothing(t *testing.T) {
 	if err := g.r.end(t.Context(), g.r.Cfg.Current(), tk, v1alpha1.PhaseEscalated, "stalled"); err == nil {
 		t.Fatal("the refusal should surface")
 	}
-	if tk.Status.Phase != before.Phase || *tk.Status.Profile != *before.Profile || tk.Status.NextTrigger != "" || len(tk.Status.Outbox) != 0 {
+	if tk.Status.Phase != before.Phase || !reflect.DeepEqual(*tk.Status.Profile, *before.Profile) || tk.Status.NextTrigger != "" || len(tk.Status.Outbox) != 0 {
 		t.Fatalf("%+v", tk.Status)
 	}
 	stored := g.get(t)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -274,7 +275,7 @@ func TestASplitChildKeepsToday(t *testing.T) {
 	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
-	if *tk.Status.Profile != before || len(tk.Status.Outbox) != 0 || countProfile(g.metrics.recorded) != 0 {
+	if !reflect.DeepEqual(*tk.Status.Profile, before) || len(tk.Status.Outbox) != 0 || countProfile(g.metrics.recorded) != 0 {
 		t.Fatalf("%+v %+v", tk.Status.Profile, tk.Status.Outbox)
 	}
 }
