@@ -173,7 +173,7 @@ An approval counts only once the head has stopped moving. GitHub must have recor
 | `oracle_finding_open` | A finding of the task is still a link target in the head, was not one on the base, or the task has no findings |
 | `oracle_unrequested` | The head moves a link target no finding asked to move, or moves one anywhere but the exact snapshot its finding gave |
 | `no_approving_verdict` | The template has a reviewer and its verdict is not approve |
-| `head_unreported` | No implementer run of the task reported the current head in the room (a `handoff` naming the commit). An approval of that head does not merge it: it returns to the gate once a run of the task reports it, and the approval then arms it. Meanwhile, a maintainer with admin merges it by bypass. The harness reports the pushed head itself when the agent finished without a handoff |
+| `head_unreported` | No implementer run of the task reported the current head in the room (a `handoff` naming the commit). An approval of that head does not merge it: it returns to the gate once a run of the task reports it, and the approval then arms it. Meanwhile, a maintainer with admin merges it by bypass. The harness reports the pushed head itself when the agent finished without a handoff, or with one that names another commit |
 | `verdict_stale` | The approval was for an older head. Next step: review the current head, or the factory asks for a new review |
 | `foreign_trailer` | The head commit's `Agent-Run` trailer names another task's run |
 | `human_commit_in_pr` | It holds a commit no run of the task pushed, so the factory neither fixes nor merges on top of it |

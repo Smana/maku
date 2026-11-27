@@ -1340,6 +1340,9 @@ class StepLog:
         # ends the count once its observation comes back with no error; while one is in flight, no stop.
         # A resumed pod re-reads the first pod's events: past nudgeAt, its nudge was sent.
         self.scoper, self.scoper_nudged, self.handed_off, self.handoffs = scoper, False, False, set()
+        # The arguments of each handoff call in flight, by call id, and of the last one the broker took:
+        # report_head checks its commit against the head the run really pushed.
+        self.handoff_args, self.handoff = {}, None
         self.resumed = resumed
         # Search nudge: lookup-ish steps seen with no search call; one note per run, never twice.
         self.nudge_after, self.lookups, self.search_calls, self.nudged = nudge_after, 0, 0, False
@@ -1470,6 +1473,7 @@ class StepLog:
             tool = event.get("tool_name") or action.get("kind")
             if tool and (tool == HANDOFF_TOOL or tool.endswith("_" + HANDOFF_TOOL)):  # the gateway's prefixes
                 self.handoffs.add(event.get("tool_call_id") or "")
+                self.handoff_args[event.get("tool_call_id") or ""] = handoff_arguments(action)
             if tool == SEARCH_TOOL:
                 self.search_calls += 1
             elif LOOKUP.search(action.get("command") or "") or tool == "grep":
@@ -1481,7 +1485,11 @@ class StepLog:
             call = event.get("tool_call_id") or ""
             if call in self.handoffs:  # a refused handoff is no handoff: the count goes on
                 self.handoffs.discard(call)
-                self.handed_off = self.handed_off or not (event.get("observation") or {}).get("is_error")
+                took = not (event.get("observation") or {}).get("is_error")
+                self.handed_off = self.handed_off or took
+                args = self.handoff_args.pop(call, None)
+                if took:
+                    self.handoff = args
             if self.notes:
                 self.notes.result(call, event.get("observation") or {})
         if kind == "AgentErrorEvent":
@@ -2313,7 +2321,13 @@ def checkpoint(env: dict, deadline: float) -> str:
 # This grants nothing the model lacks: it may call room_handoff with any commit itself.
 HEAD_REPORT = ("Harness (implementer): the agent finished without a room_handoff; the harness reports the head "
                "this run pushed, %s.")
+# mhln4xkd (gcp-0, Maku v0.56.0): the agent's handoff named 56b8ffb3bf4a…, the right seven digits and a made-up
+# rest; the pushed head was 56b8ffb7f93d…, so R02 held the pull request head_unreported. A handoff's commit is the
+# model's text: the harness hands off again with the head the run pushed, keeping the agent's summary.
+HEAD_FIX = ("Harness (implementer): the agent's handoff named commit %s, which is not the head this run pushed; "
+            "the harness reports the pushed head, %s.")
 LS_REMOTE_S = 15
+HANDOFF_SUMMARY_MAX = 8192  # room_handoff's summary bound, in bytes
 REMOTE_URL = "https://github.com/%s.git"
 
 
@@ -2345,20 +2359,48 @@ def pushed_head(env: dict, start: str | None) -> str | None:
     return local if remote == local else None
 
 
+def handoff_arguments(action) -> dict:
+    """A handoff call's arguments from its ActionEvent's action: OpenCode's tool input itself, OpenHands'
+    MCPToolAction under data. {} when neither holds a dict."""
+    if not isinstance(action, dict):
+        return {}
+    data = action.get("data")
+    if isinstance(data, dict) and action.get("kind") == "MCPToolAction":
+        return data
+    return action
+
+
 def report_head(env: dict, steps, notes, start: str | None, remote=pushed_head, sleep=time.sleep) -> str | None:
-    """A finished implementer run's handoff of its pushed head, when the agent made none that the broker took
-    (steps.handed_off). Retried once past the broker's one call a second. Best effort: returns the commit
-    reported, or None."""
-    if env.get("ROLE") != "implementer" or notes is None or steps is None or steps.handed_off:
+    """A finished implementer run's handoff of its pushed head: when the agent made none that the broker took
+    (steps.handed_off), or when the one it made names another commit (steps.handoff), which keeps the agent's
+    summary and role. A handoff whose arguments were not read stands. Retried once past the broker's one call a
+    second. Best effort: returns the commit reported, or None."""
+    if env.get("ROLE") != "implementer" or notes is None or steps is None:
+        return None
+    took = getattr(steps, "handoff", None)
+    took = took if isinstance(took, dict) else {}
+    if steps.handed_off and not took.get("commit"):
         return None
     commit = remote(env, start)
     if not commit:
         return None
-    args = {"toRole": "reviewer", "summary": HEAD_REPORT % commit, "commit": commit}
+    if steps.handed_off:
+        named = str(took.get("commit"))
+        if named == commit:
+            return None
+        note = HEAD_FIX % (_short(named, 64), commit)
+        summary = str(took.get("summary") or "").strip()
+        keep = HANDOFF_SUMMARY_MAX - len(note.encode()) - 2
+        summary = (summary.encode()[:keep].decode(errors="ignore") + "\n\n" + note) if summary else note
+        to = took.get("toRole") if took.get("toRole") in ("reviewer", "tester") else "reviewer"
+        args = {"toRole": to, "summary": summary, "commit": commit}
+    else:
+        args = {"toRole": "reviewer", "summary": HEAD_REPORT % commit, "commit": commit}
     for attempt in range(2):
         try:
             notes.harness_call(HANDOFF_TOOL, args)
-            print("agent-run: the agent made no handoff: reported the pushed head %s" % commit, flush=True)
+            print("agent-run: reported the pushed head %s (%s)" % (commit, "the agent's handoff named another commit"
+                                                                    if steps.handed_off else "the agent made no handoff"), flush=True)
             return commit
         except Exception as exc:  # noqa: BLE001 -- a report never fails a finished run
             if attempt == 0 and str(exc).startswith("rate_limited"):
