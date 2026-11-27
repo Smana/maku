@@ -5,6 +5,7 @@
 {{- $images := list $c.images.harness.repository $c.images.bridge.repository $c.image.repository -}}
 {{- if and $c.images.opencode $c.images.opencode.tag }}{{ $images = append $images $c.images.opencode.repository }}{{ end -}}
 {{- if and $c.images.browser $c.images.browser.tag }}{{ $images = append $images $c.images.browser.repository }}{{ end -}}
+{{- range $svc := list "postgres" "redis" }}{{ $img := index $c.images $svc }}{{ if and $img $img.tag }}{{ $images = append $images $img.repository }}{{ end }}{{ end -}}
 {{- range .Values.runPodPolicy.extraImages }}{{ $images = append $images . }}{{ end -}}
 {{- $quoted := list -}}
 {{- /* Each value below is pasted into a CEL string: one that could close the quote is refused. */ -}}
