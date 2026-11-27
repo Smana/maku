@@ -43,14 +43,24 @@ status() {
     }' "$1"
 }
 
-# slugs FILE: one GitHub heading slug per line, fenced code skipped, repeats numbered.
-# perl, not awk: lowercasing and "letter" must hold for any script (Démarrage, Écrire),
-# and the default awk on Ubuntu (mawk) is byte-only. Only punctuation and symbols go.
+# slugs FILE: one GitHub/Goldmark heading slug or explicit id per line, fenced code skipped,
+# repeats numbered. perl, not awk: lowercasing and "letter" must hold for any script
+# (Démarrage, Écrire), and the default awk on Ubuntu (mawk) is byte-only.
 slugs() {
   perl -CSDA -ne '
     if (/^ {0,3}(```|~~~)/) { $f = !$f; next }
-    next if $f || !/^#{1,6}[ \t]/;
+    next if $f;
+    while (/<(?:span|a)\b[^>]*\bid=["\x27]([A-Za-z0-9_.-]+)["\x27]/g) {
+      print lc($1) . "\n";
+    }
+    next unless /^#{1,6}[ \t]/;
     s/^#+[ \t]+//; s/[ \t]+#+[ \t]*$//; s/\n$//;
+    if (s/[ \t]*\{#([A-Za-z0-9_.-]+)\}[ \t]*$//) {
+      my $id = lc($1);
+      my $n = $seen{$id}++;
+      print $n ? "$id-$n\n" : "$id\n";
+      next;
+    }
     s/\]\([^)]*\)//g; s/[\[\]]//g;
     $_ = lc;
     s/[^\p{L}\p{N}\p{M}_ \t-]//g;
@@ -150,15 +160,19 @@ ceiling() {
 rc=0
 for f in "${files[@]}"; do
   case "$f" in *docs/superpowers/*) continue;; esac
-  if ! ceiling "$f"; then rc=1; fi
-  while IFS=$'\t' read -r n word; do
-    echo "$f:$n: status vocabulary: $word"; rc=1
-  done < <(status "$f" | awk '!seen[$0]++')
   case "$f" in
-    *docs/contributing/*|*website/content/docs/contributing/*) ;;
-    *) while IFS=$'\t' read -r n rule m; do
-         echo "$f:$n: $rule: $m"; rc=1
-       done < <(ids "$f" | awk '!seen[$0]++');;
+    *website/content/docs/decisions/*) ;;
+    *)
+      if ! ceiling "$f"; then rc=1; fi
+      while IFS=$'\t' read -r n word; do
+        echo "$f:$n: status vocabulary: $word"; rc=1
+      done < <(status "$f" | awk '!seen[$0]++')
+      case "$f" in
+        *docs/contributing/*|*website/content/docs/contributing/*) ;;
+        *) while IFS=$'\t' read -r n rule m; do
+             echo "$f:$n: $rule: $m"; rc=1
+           done < <(ids "$f" | awk '!seen[$0]++');;
+      esac;;
   esac
   dir=$(dirname "$f")
   while IFS=$'\t' read -r n link; do

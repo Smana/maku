@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 
-skip='^(docs/(api|upgrading|event-envelope|room-log)\.md|website/content/docs/(reference/|contributing/|operate/upgrading\.md))'
+skip='^(docs/(api|upgrading|event-envelope|room-log)\.md|website/content/docs/(reference/|contributing/|decisions/|operate/upgrading\.md))'
 hits=""
 out=""
 files=()
