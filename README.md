@@ -67,6 +67,9 @@ egress, touch another repository's token or approve its own merge, however it is
   ([merge policies](docs/merge-policies.md)).
 - **Revert breaker.** After a merge, Maku watches the default branch; a red build opens a revert PR
   and trips a breaker that pauses the class.
+- **Scheduled upkeep routines.** Opt-in [upkeep routines](docs/upkeep-routines.md) run recurring
+  maintenance (`dead-links`, `renovate-red`, `doc-drift`, `dead-code`, `flaky-tests`, `dup-unifier`,
+  or custom `Routine` CRDs) inside an isolated daily upkeep budget, open-PR cap, and yield breaker.
 
 ## How it works
 
@@ -145,7 +148,7 @@ Looking for a full GitOps reference deployment alongside optional self-hosted GP
 |---|---|
 | Evaluating Maku | [Quickstart](docs/quickstart.md) · [Tier-1 Pilot](docs/pilot.md) · [Concepts](docs/concepts.md) |
 | Installing on Kubernetes | [Install on your cluster](docs/install.md) · [The database](docs/database.md) · [Model gateway](docs/gateway.md) |
-| Using Maku day to day | [Web UI](docs/web-ui.md) · [the `maku` CLI](docs/cli.md) · [The factory](docs/factory.md) |
+| Using Maku day to day | [Web UI](docs/web-ui.md) · [the `maku` CLI](docs/cli.md) · [Upkeep routines](docs/upkeep-routines.md) · [The factory](docs/factory.md) |
 | Reviewing security | [Security](docs/security.md) · [Room log](docs/reference/room-log.md) · [Architecture](docs/architecture.md) |
 | Operating in production | [Operations](docs/operations.md) · [Observability](docs/observability.md) · [Integration](docs/integration.md) |
 | Contributing | [AGENTS.md](AGENTS.md) · [Development](docs/contributing/development.md) |

@@ -26,6 +26,7 @@ Reference for the broker, bridge, factory, CLI and web UI. See the [status page]
 | [Browser verification](browser-verification.md) | Opting a Repository into the headless browser, the vision aliases, and the screenshots humans see |
 | [Make a repository ready](make-a-repository-ready.md) | The three files that let an agent build and test before it pushes, with a worked set per stack |
 | [Merge policies](merge-policies.md) | Catalog, bindings, rollout stages, fields, recipes, checking and promoting |
+| [Upkeep routines](upkeep-routines.md) | Starter catalog, custom routines, probes, `/routines` UI, CLI, and Slack upkeep digest |
 | [maku](cli.md) | Install, one-command setup, subcommands, MCP tools and `maku-handoff` |
 | [Web UI](web-ui.md) | Signing in, the room list, working a room, approvals and refusals |
 | [GitHub account link](github-link.md) | Linking a GitHub account, revocation and the activity window |
