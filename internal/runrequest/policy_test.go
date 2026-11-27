@@ -44,7 +44,7 @@ func TestPolicyReadsForwardTheCallersToken(t *testing.T) {
 	if _, err := f.PolicyEvidence(t.Context(), "tok", "Smana/other"); !errors.As(err, &ref) || ref.Status != http.StatusNotFound || ref.Reason != "not_found" {
 		t.Fatalf("%v", err)
 	}
-	if rs, err := f.PolicyRepositories(t.Context(), "tok"); err != nil || len(rs) != 1 {
+	if rs, err := f.PolicyRepositories(t.Context(), "tok"); err != nil || len(rs.Repositories) != 1 {
 		t.Fatalf("%q %v", rs, err)
 	}
 	if pv, err := f.PolicyPreview(t.Context(), "tok", "Smana/cloud-native-ref", "factory: aws-0\n"); err != nil || !pv.Valid {

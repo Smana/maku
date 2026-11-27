@@ -76,7 +76,8 @@ else
   echo "set ROOMCTL=<a maku built from this checkout>: UP_HELM_ARGS sets the images, so there is no release to take maku from" >&2
   exit 1
 fi
-.quickstart/bin/maku help | grep -q '^  run --repo' ||
+# maku help run prints the run command's lines; an older maku prints its whole usage, run included.
+.quickstart/bin/maku help run 2>&1 | grep -q '^  run --repo' ||
   { echo ".quickstart/bin/maku has no run command: use a release that has it (AP_VERSION) or ROOMCTL" >&2; exit 1; }
 
 step "gVisor binaries ($GVISOR_RELEASE)"

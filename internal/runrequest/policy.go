@@ -24,14 +24,18 @@ func (f Factory) PolicyEvidence(ctx context.Context, accessToken, repository str
 	return out, err
 }
 
-// PolicyRepositories is GET /v1/policy/repositories with the caller's own token: the configured
-// repositories they read.
-func (f Factory) PolicyRepositories(ctx context.Context, accessToken string) ([]string, error) {
-	var out struct {
-		Repositories []string `json:"repositories"`
-	}
+// PolicyIndex is the configured repositories a caller reads, and the ones of them they maintain.
+// Maintains is nil from a factory that does not say (an older release).
+type PolicyIndex struct {
+	Repositories []string `json:"repositories"`
+	Maintains    []string `json:"maintains"`
+}
+
+// PolicyRepositories is GET /v1/policy/repositories with the caller's own token.
+func (f Factory) PolicyRepositories(ctx context.Context, accessToken string) (PolicyIndex, error) {
+	var out PolicyIndex
 	err := f.call(ctx, http.MethodGet, accessToken, "/v1/policy/repositories", http.NoBody, &out)
-	return out.Repositories, err
+	return out, err
 }
 
 // PolicyPreview is POST /v1/policy/preview with the caller's own token: a proposed policy file

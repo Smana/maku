@@ -29,7 +29,7 @@ import (
 // own token (merge policy stage 6). runrequest.Factory satisfies it.
 type PolicyGateway interface {
 	PolicyEvidence(ctx context.Context, accessToken, repository string) (evidence.Report, error)
-	PolicyRepositories(ctx context.Context, accessToken string) ([]string, error)
+	PolicyRepositories(ctx context.Context, accessToken string) (runrequest.PolicyIndex, error)
 	PolicyPreview(ctx context.Context, accessToken, repository, file string) (policyview.Preview, error)
 	PolicyDecisions(ctx context.Context, accessToken, repository string, pr int) (policyview.Timeline, error)
 	PolicyRecentDecisions(ctx context.Context, accessToken, repository, since string) (policyview.Recent, error)
@@ -209,7 +209,10 @@ func (s *Server) policyRepositories(w http.ResponseWriter, r *http.Request) {
 		refuseJSON(w, http.StatusServiceUnavailable, "evidence_unavailable")
 		return
 	}
-	writeJSON(w, map[string][]string{"repositories": rs})
+	if rs.Repositories == nil {
+		rs.Repositories = []string{}
+	}
+	writeJSON(w, rs) // maintains is null from an older factory: the gear then shows as before
 }
 
 // policyRepository is GET /api/policy/repositories/{owner}/{name}: the evidence the factory reads

@@ -25,6 +25,24 @@ describe("mountSettingsLink", () => {
     expect(a.hidden).toBe(false);
   });
 
+  it("stays hidden from a caller who maintains no repository (developer review gap 10)", async () => {
+    const host = document.createElement("header");
+    const body = JSON.stringify({ repositories: ["acme/api"], maintains: [] });
+    const get = () => Promise.resolve(new Response(body, { status: 200 }));
+    const a = mountSettingsLink(host, "/settings", get as typeof fetch);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(a.hidden).toBe(true);
+  });
+
+  it("appears for a maintainer", async () => {
+    const host = document.createElement("header");
+    const body = JSON.stringify({ repositories: ["acme/api"], maintains: ["acme/api"] });
+    const get = () => Promise.resolve(new Response(body, { status: 200 }));
+    const a = mountSettingsLink(host, "/settings", get as typeof fetch);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(a.hidden).toBe(false);
+  });
+
   it("stays hidden when the settings API is unavailable", async () => {
     const host = document.createElement("header");
     const get = () => Promise.resolve(new Response("", { status: 404 }));

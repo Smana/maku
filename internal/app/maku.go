@@ -267,7 +267,11 @@ func flags(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for {
 		if err := fs.Parse(args); err != nil {
-			return nil, fmt.Errorf("%s: %w\n%s", fs.Name(), err, makuUsage)
+			usage, ok := commandHelp(strings.Fields(fs.Name()))
+			if !ok {
+				usage = everydayUsage()
+			}
+			return nil, fmt.Errorf("%s: %w\n%s", fs.Name(), err, usage)
 		}
 		if args = fs.Args(); len(args) == 0 {
 			return pos, nil
@@ -283,7 +287,7 @@ func (r Maku) Run(ctx context.Context, args []string) error {
 
 func (r Maku) run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("a command is required\n%s", makuUsage)
+		return fmt.Errorf("a command is required\n%s", everydayUsage())
 	}
 	cmd, args := args[0], args[1:]
 	cfgPath, tokPath := filepath.Join(r.Dir, "config.json"), filepath.Join(r.Dir, "token.json")
@@ -313,11 +317,10 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "completion":
 		return r.completion(args)
 	case "help", "-h", "--help":
-		_, err := fmt.Fprintln(r.Out, makuUsage)
-		return err
+		return r.help(args)
 	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "workflow", "routine", "fork", "run", "doctor", "mcp":
 	default:
-		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
+		return fmt.Errorf("unknown command %q\n%s", cmd, everydayUsage())
 	}
 	var cfg maku.Config
 	if err := maku.LoadJSON(cfgPath, &cfg); err != nil {

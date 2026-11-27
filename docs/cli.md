@@ -61,7 +61,7 @@ maku completion fish > ~/.config/fish/completions/maku.fish
 
 ## Commands
 
-`maku --help` prints the list below. A `<room>` is a room id, the last part of a room page's `…/r/<room>` URL. The MCP tools and prompts also take `#<issue>`, `PR #<n>`, a bare number or a title fragment ([below](#the-mcp-server)); the CLI takes ids only, since a shell drops an unquoted `#42`.
+`maku help` (or `maku --help`) prints the everyday commands; `maku help admin` prints the platform team's (`install`, `db`, `preflight`, `repo`, `demo`, `config`, `policy`, `drill`, `fork`, `run`, `stages`, `workflow`, `routine`); `maku help <command>` prints one command, and a flag error prints that command's lines. Together they are the list below. A `<room>` is a room id, the last part of a room page's `…/r/<room>` URL. The MCP tools and prompts also take `#<issue>`, `PR #<n>`, a bare number or a title fragment ([below](#the-mcp-server)); the CLI takes ids only, since a shell drops an unquoted `#42`.
 
 | Command | What it does |
 |---|---|

@@ -174,10 +174,22 @@ func TestPolicyEvidenceAnswersTheReport(t *testing.T) {
 func TestPolicyRepositoriesListsWhatTheCallerReads(t *testing.T) {
 	s, _ := evidenceServer(true)
 	w := getAs(s.Handler(), "human", "/v1/policy/repositories")
-	if w.Code != http.StatusOK || w.Body.String() != "{\"repositories\":[\""+coordPrimary+"\"]}\n" {
+	if w.Code != http.StatusOK || w.Body.String() != "{\"maintains\":[],\"repositories\":[\""+coordPrimary+"\"]}\n" {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	if w := getAs(s.Handler(), "reader", "/v1/policy/repositories"); w.Body.String() != "{\"repositories\":[]}\n" {
+	if w := getAs(s.Handler(), "reader", "/v1/policy/repositories"); w.Body.String() != "{\"maintains\":[],\"repositories\":[]}\n" {
+		t.Fatalf("%s", w.Body)
+	}
+}
+
+// Developer review gap 10: the settings gear is a maintainer's, so the list says which of the
+// repositories the caller reads they maintain.
+func TestPolicyRepositoriesSaysWhichTheCallerMaintains(t *testing.T) {
+	s, _ := evidenceServer(true)
+	s.Logins = coordLogins{"291": "Smana"}
+	s.Cfg.Current().Repositories[0].Maintainers = []string{"smana"}
+	w := getAs(s.Handler(), "human", "/v1/policy/repositories")
+	if w.Body.String() != "{\"maintains\":[\""+coordPrimary+"\"],\"repositories\":[\""+coordPrimary+"\"]}\n" {
 		t.Fatalf("%s", w.Body)
 	}
 }
