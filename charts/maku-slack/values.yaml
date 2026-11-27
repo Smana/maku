@@ -16,6 +16,12 @@ config: {}
 #  teamID: T0123ABCD
 #  channels:
 #    C0123ABCD: {repositories: [owner/repo], maxCostUSD: 2, approvals: true}
+#    C0123UPKEEP:
+#      upkeep:
+#        repositories: [owner/repo]
+#        routines: [] # optional subset of routine names; empty subscribes to all
+#        notify: [room.pr_opened, room.waiting_for_human, room.ended, routine.paused]
+#        digest: {cron: "0 9 * * 1"} # UTC 5-field cron; fetched via brokerURL (no new egress)
 
 # The broker's human listener (no path: the App appends /mcp). Empty:
 # http://room-broker.<release namespace>.svc.<clusterDomain>:8080.

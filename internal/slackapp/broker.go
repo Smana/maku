@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -648,15 +649,25 @@ var defaultBrokerHTTPClient = sync.OnceValue(func() *http.Client {
 // send is one POST to the broker, as the App's principal: path is the listener's route, mcp adds
 // the tools endpoint's own headers (the decide route takes none).
 func (b Broker) send(ctx context.Context, path string, body []byte, mcp bool) ([]byte, int, error) {
+	return b.sendMethod(ctx, http.MethodPost, path, body, mcp)
+}
+
+func (b Broker) sendMethod(ctx context.Context, method, path string, body []byte, mcp bool) ([]byte, int, error) {
 	tok, err := b.Tokens.Token(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(b.URL, "/")+path, bytes.NewReader(body))
+	var reqBody io.Reader = http.NoBody
+	if body != nil {
+		reqBody = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(b.URL, "/")+path, reqBody)
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Accept", "application/json")
 	if mcp {
 		req.Header.Set("MCP-Protocol-Version", protocolVersion)
@@ -676,6 +687,69 @@ func (b Broker) send(ctx context.Context, path string, body []byte, mcp bool) ([
 		return nil, 0, fmt.Errorf("slackapp: broker reply: %w", err)
 	}
 	return raw, resp.StatusCode, nil
+}
+
+// RoutineDigest is the weekly upkeep scorecard returned by GET /api/routines/digest.
+type RoutineDigest struct {
+	Window       string              `json:"window"`
+	GeneratedAt  time.Time           `json:"generatedAt"`
+	Repositories []RoutineDigestRepo `json:"repositories"`
+}
+
+// RoutineDigestRepo holds one repository's routine scorecard rows.
+type RoutineDigestRepo struct {
+	Repository string               `json:"repository"`
+	Routines   []RoutineDigestEntry `json:"routines"`
+}
+
+// RoutineDigestEntry holds bounded metrics for one routine in a digest window.
+type RoutineDigestEntry struct {
+	Name          string   `json:"name"`
+	Runs          int      `json:"runs"`
+	NoOps         int      `json:"noOps"`
+	PRsOpened     int      `json:"prsOpened"`
+	Merged        int      `json:"merged"`
+	Closed        int      `json:"closed"`
+	Stale         int      `json:"stale"`
+	Escalated     int      `json:"escalated"`
+	MergeRate     *float64 `json:"mergeRate"`
+	CostUSD       float64  `json:"costUSD"`
+	USDPerMerged  *float64 `json:"usdPerMerged"`
+	Paused        bool     `json:"paused"`
+	BreakerReason string   `json:"breakerReason,omitempty"`
+}
+
+// RoutineDigest fetches GET /api/routines/digest from the broker with the App's token.
+func (b Broker) RoutineDigest(ctx context.Context, repos []string, window string) (RoutineDigest, error) {
+	q := url.Values{}
+	if window != "" {
+		q.Set("window", window)
+	}
+	if len(repos) > 0 {
+		q.Set("repositories", strings.Join(repos, ","))
+	}
+	path := "/api/routines/digest"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	for attempt := 0; ; attempt++ {
+		raw, status, err := b.sendMethod(ctx, http.MethodGet, path, nil, false)
+		if err != nil {
+			return RoutineDigest{}, err
+		}
+		if status == http.StatusUnauthorized && attempt == 0 {
+			b.Tokens.Invalidate()
+			continue
+		}
+		if status != http.StatusOK {
+			return RoutineDigest{}, fmt.Errorf("slackapp: routine digest answered %d", status)
+		}
+		var out RoutineDigest
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return RoutineDigest{}, fmt.Errorf("slackapp: routine digest decode: %w", err)
+		}
+		return out, nil
+	}
 }
 
 func decodeResult(raw []byte) (json.RawMessage, error) {

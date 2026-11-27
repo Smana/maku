@@ -125,6 +125,59 @@ func TestTaskFactsValidate(t *testing.T) {
 	}
 }
 
+func TestTaskFactsSourceAndRoutine(t *testing.T) {
+	for _, src := range TaskSources() {
+		f := TaskFacts{Phase: "Queued", Source: src}
+		if err := f.Validate(); err != nil {
+			t.Fatalf("source %q refused: %v", src, err)
+		}
+	}
+	if !ValidTaskSource("routine") || ValidTaskSource("bogus") {
+		t.Fatal("ValidTaskSource mismatch")
+	}
+	if !ValidRoutineName("dead-code") || ValidRoutineName("Dead_Code") || ValidRoutineName(strings.Repeat("a", 41)) || ValidRoutineName("") {
+		t.Fatal("ValidRoutineName mismatch")
+	}
+	for name, tc := range map[string]struct {
+		f    TaskFacts
+		want string
+	}{
+		"unknown source":         {TaskFacts{Phase: "Queued", Source: "bogus"}, "source"},
+		"invalid routine":        {TaskFacts{Phase: "Queued", Source: "routine", Routine: "Bad_Name"}, "routine"},
+		"routine too long":       {TaskFacts{Phase: "Queued", Source: "routine", Routine: strings.Repeat("a", 41)}, "routine"},
+		"routine without source": {TaskFacts{Phase: "Queued", Routine: "dead-code"}, "source routine"},
+		"routine with issue src": {TaskFacts{Phase: "Queued", Source: "issue", Routine: "dead-code"}, "source routine"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := tc.f.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+	want := TaskFacts{Phase: "Implementing", Source: "routine", Routine: "dead-code"}
+	if err := want.Validate(); err != nil {
+		t.Fatalf("valid routine facts refused: %v", err)
+	}
+	b, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var got TaskFacts
+	if err := dec.Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round trip got %+v, want %+v", got, want)
+	}
+	bare, _ := json.Marshal(TaskFacts{Phase: "Queued"})
+	if strings.Contains(string(bare), "source") || strings.Contains(string(bare), "routine") {
+		t.Fatalf("unset source/routine not omitted: %s", bare)
+	}
+}
+
 func TestTaskFactsRoundTripsRunsAndDollars(t *testing.T) {
 	t0 := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
 	want := TaskFacts{Phase: "Done",

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,8 @@ const (
 	maxRooms = 10000
 	// disableAfter is how many given-up deliveries in a row disable a subscriber (R17).
 	disableAfter = 3
+	// maxPausedQueue caps buffered routine.paused deliveries per subscriber.
+	maxPausedQueue = 256
 )
 
 // retryWaits are the waits before each retry of one delivery: one try, then three retries.
@@ -92,26 +95,36 @@ type Emitter struct {
 	// LaggingLimit is how many rooms one catch-up asks for; 0 means 1,000.
 	LaggingLimit int
 
-	mu         sync.Mutex
-	subs       []*subState
-	running    map[workerKey]bool
-	again      map[workerKey]bool // a notification came while the worker ran
-	dirty      map[workerKey]bool // to retry on the next sweep
-	mismatched map[workerKey]bool
-	catchup    map[string]bool // subscribers whose Lagging must still run (or run again)
-	rooms      map[string]*roomInfo
-	epoch      int // bumped on every (re)connect: notifications sent in the gap are gone
-	trackers   map[workerKey]*list.Element
-	lru        *list.List // of *trackerEntry, most recent first
-	wg         sync.WaitGroup
+	mu              sync.Mutex
+	initOnce        sync.Once
+	subs            []*subState
+	hasPausedRunner atomic.Bool
+	pausedSeq       atomic.Int64
+	running         map[workerKey]bool
+	again           map[workerKey]bool // a notification came while the worker ran
+	dirty           map[workerKey]bool // to retry on the next sweep
+	mismatched      map[workerKey]bool
+	catchup         map[string]bool // subscribers whose Lagging must still run (or run again)
+	rooms           map[string]*roomInfo
+	epoch           int // bumped on every (re)connect: notifications sent in the gap are gone
+	trackers        map[workerKey]*list.Element
+	lru             *list.List // of *trackerEntry, most recent first
+	wg              sync.WaitGroup
+}
+
+type pausedItem struct {
+	id string
+	ev Event
 }
 
 type subState struct {
 	Subscriber
-	client   *http.Client
-	disabled atomic.Bool
-	notify   chan struct{} // buffered 1: wakes a worker when pending has work
-	pending  []string      // rooms waiting for a worker; guarded by e.mu
+	client       *http.Client
+	disabled     atomic.Bool
+	notify       chan struct{} // buffered 1: wakes a worker when pending has work
+	pending      []string      // rooms waiting for a worker; guarded by e.mu
+	pausedNotify chan struct{} // buffered 1: wakes a paused worker when paused has work
+	paused       []pausedItem  // routine.paused deliveries waiting; guarded by e.mu
 }
 
 type nopRecorder struct{}
@@ -184,53 +197,151 @@ type trackerEntry struct {
 // NeedLeaderElection makes the emitter the leader's: two emitters would deliver everything twice.
 func (e *Emitter) NeedLeaderElection() bool { return true }
 
+// PausedRunner returns a non-leader-elected runnable that delivers routine.paused events on every
+// broker replica (since bridgeapi receives POST /v1/events/routine-paused on any replica).
+func (e *Emitter) PausedRunner() *PausedRunner {
+	e.hasPausedRunner.Store(true)
+	return &PausedRunner{e: e}
+}
+
+// PausedRunner delivers routine.paused events without leader election.
+type PausedRunner struct {
+	e *Emitter
+}
+
+// NeedLeaderElection returns false so every broker replica delivers routine.paused requests it accepts.
+func (p *PausedRunner) NeedLeaderElection() bool { return false }
+
+// Start initializes subscribers, refreshes disabled state, and delivers queued routine.paused events until ctx ends.
+func (p *PausedRunner) Start(ctx context.Context) error {
+	p.e.initSubs()
+	for _, st := range p.e.subs {
+		if p.e.State != nil {
+			disabled, err := p.e.register(ctx, st.Subscriber)
+			if err != nil {
+				return nil // ctx ended
+			}
+			st.disabled.Store(disabled)
+			p.e.Metrics.WebhookDisabled(ctx, st.Name, disabled)
+		}
+	}
+	var wg sync.WaitGroup
+	for _, st := range p.e.subs {
+		wg.Add(1)
+		go func(st *subState) {
+			defer wg.Done()
+			p.e.runPausedWorker(ctx, st)
+		}(st)
+	}
+	wg.Wait()
+	return nil
+}
+
+func (e *Emitter) initSubs() {
+	e.initOnce.Do(func() {
+		if e.Logger == nil {
+			e.Logger = slog.New(slog.DiscardHandler)
+		}
+		if e.Metrics == nil {
+			e.Metrics = nopRecorder{}
+		}
+		if e.Now == nil {
+			e.Now = time.Now
+		}
+		if e.SweepEvery <= 0 {
+			e.SweepEvery = 10 * time.Second
+		}
+		if e.MinBackoff <= 0 {
+			e.MinBackoff = time.Second
+		}
+		if e.LaggingLimit <= 0 {
+			e.LaggingLimit = laggingLimit
+		}
+		for _, s := range e.Subs {
+			st := &subState{
+				Subscriber:   s,
+				notify:       make(chan struct{}, 1),
+				pausedNotify: make(chan struct{}, 1),
+			}
+			if s.Network == "internet" {
+				st.client = SafeClient(10 * time.Second)
+			} else {
+				st.client = httpx.New(10*time.Second, nil)
+				st.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+			}
+			e.subs = append(e.subs, st)
+		}
+	})
+}
+
+// RoutinePaused enqueues a routine.paused webhook for every enabled subscriber matching repo and
+// subscribed to "routine.paused". It returns true if at least one subscriber was queued.
+func (e *Emitter) RoutinePaused(_ context.Context, repo, routine, reason string) bool {
+	e.initSubs()
+	eventKey := strconv.FormatInt(e.pausedSeq.Add(1), 10) + ":" + strconv.FormatInt(e.Now().UnixNano(), 10)
+	var enqueued bool
+	var wake []*subState
+	var full []string
+	e.mu.Lock()
+	for _, st := range e.subs {
+		if st.disabled.Load() ||
+			!slices.Contains(st.Events, "routine.paused") ||
+			!slices.ContainsFunc(st.Repositories, func(r string) bool { return strings.EqualFold(r, repo) }) {
+			continue
+		}
+		if len(st.paused) >= maxPausedQueue {
+			full = append(full, st.Name)
+			continue
+		}
+		st.paused = append(st.paused, pausedItem{
+			id: RoutinePausedID(st.Name, repo, routine, eventKey),
+			ev: Event{Type: "routine.paused", Repo: repo, Routine: routine, Reason: reason},
+		})
+		wake = append(wake, st)
+		enqueued = true
+	}
+	e.mu.Unlock()
+	for _, name := range full {
+		e.Logger.Warn("webhook: routine.paused queue full; dropping", "subscriber", name, "repository", repo, "routine", routine)
+	}
+	for _, st := range wake {
+		select {
+		case st.pausedNotify <- struct{}{}:
+		default:
+		}
+	}
+	return enqueued
+}
+
 // Start registers the subscribers, then delivers until ctx ends.
 func (e *Emitter) Start(ctx context.Context) error {
-	if e.Logger == nil {
-		e.Logger = slog.New(slog.DiscardHandler)
-	}
-	if e.Metrics == nil {
-		e.Metrics = nopRecorder{}
-	}
-	if e.Now == nil {
-		e.Now = time.Now
-	}
-	if e.SweepEvery <= 0 {
-		e.SweepEvery = 10 * time.Second
-	}
-	if e.MinBackoff <= 0 {
-		e.MinBackoff = time.Second
-	}
-	if e.LaggingLimit <= 0 {
-		e.LaggingLimit = laggingLimit
-	}
+	e.initSubs()
 	e.running, e.again, e.dirty = map[workerKey]bool{}, map[workerKey]bool{}, map[workerKey]bool{}
 	e.catchup, e.rooms = map[string]bool{}, map[string]*roomInfo{}
 	e.mismatched = map[workerKey]bool{}
 	e.trackers, e.lru = map[workerKey]*list.Element{}, list.New()
-	for _, s := range e.Subs {
-		st := &subState{Subscriber: s, notify: make(chan struct{}, 1)}
-		disabled, err := e.register(ctx, s)
+	for _, st := range e.subs {
+		disabled, err := e.register(ctx, st.Subscriber)
 		if err != nil {
 			return nil // ctx ended
 		}
 		st.disabled.Store(disabled)
-		e.Metrics.WebhookDisabled(ctx, s.Name, disabled)
-		if s.Network == "internet" {
-			st.client = SafeClient(10 * time.Second)
-		} else {
-			st.client = httpx.New(10*time.Second, nil)
-			st.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-		}
-		e.subs = append(e.subs, st)
+		e.Metrics.WebhookDisabled(ctx, st.Name, disabled)
 	}
 	for _, st := range e.subs {
 		for range maxWorkers {
 			e.wg.Add(1)
-			go func() {
+			go func(st *subState) {
 				defer e.wg.Done()
 				e.runWorker(ctx, st)
-			}()
+			}(st)
+		}
+		if !e.hasPausedRunner.Load() {
+			e.wg.Add(1)
+			go func(st *subState) {
+				defer e.wg.Done()
+				e.runPausedWorker(ctx, st)
+			}(st)
 		}
 	}
 	queue := make(chan string, queueSize)
@@ -676,15 +787,87 @@ const (
 	noKey                   // the key file is unreadable: the room is held, nothing counts against the subscriber
 )
 
+func (e *Emitter) runPausedWorker(ctx context.Context, s *subState) {
+	for {
+		item, ok := e.nextPaused(s)
+		if !ok {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.pausedNotify:
+				continue
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		e.signalIfPausedPending(s)
+		if s.disabled.Load() {
+			continue
+		}
+		switch e.deliverEvent(ctx, s, item.id, item.ev) {
+		case ctxEnded:
+			return
+		case noKey:
+			if wait(ctx, e.SweepEvery) != nil {
+				return
+			}
+			e.requeuePausedFront(s, item)
+		}
+	}
+}
+
+func (e *Emitter) nextPaused(s *subState) (pausedItem, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(s.paused) == 0 {
+		return pausedItem{}, false
+	}
+	item := s.paused[0]
+	s.paused[0] = pausedItem{}
+	s.paused = s.paused[1:]
+	if len(s.paused) == 0 {
+		s.paused = nil
+	}
+	return item, true
+}
+
+func (e *Emitter) signalIfPausedPending(s *subState) {
+	e.mu.Lock()
+	more := len(s.paused) > 0
+	e.mu.Unlock()
+	if more {
+		select {
+		case s.pausedNotify <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (e *Emitter) requeuePausedFront(s *subState, item pausedItem) {
+	e.mu.Lock()
+	if len(s.paused) < maxPausedQueue {
+		s.paused = append([]pausedItem{item}, s.paused...)
+	}
+	e.mu.Unlock()
+	select {
+	case s.pausedNotify <- struct{}{}:
+	default:
+	}
+}
+
 // deliver posts ev with its retries. A delivery given up is counted against the subscriber and
 // moves on. A missing key is not the subscriber's failure and drops nothing: it is counted once
 // and the room is held for the next sweep.
 func (e *Emitter) deliver(ctx context.Context, s *subState, room string, seq int64, ev Event) outcome {
+	return e.deliverEvent(ctx, s, ID(s.Name, room, seq, ev.Type), ev)
+}
+
+func (e *Emitter) deliverEvent(ctx context.Context, s *subState, id string, ev Event) outcome {
 	body, err := json.Marshal(ev)
 	if err != nil {
 		return moveOn
 	}
-	id := ID(s.Name, room, seq, ev.Type)
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
 			return ctxEnded
@@ -695,8 +878,10 @@ func (e *Emitter) deliver(ctx context.Context, s *subState, room string, seq int
 		result := e.post(ctx, s, id, body)
 		if result == "delivered" {
 			e.Metrics.WebhookDelivery(ctx, s.Name, result)
-			if err := e.State.Succeeded(ctx, s.Name); err != nil {
-				e.Logger.Warn("webhook: record success", "subscriber", s.Name, "error", err)
+			if e.State != nil {
+				if err := e.State.Succeeded(ctx, s.Name); err != nil {
+					e.Logger.Warn("webhook: record success", "subscriber", s.Name, "error", err)
+				}
 			}
 			return moveOn
 		}
@@ -712,6 +897,9 @@ func (e *Emitter) deliver(ctx context.Context, s *subState, room string, seq int
 		if e.sleep(ctx, retryWaits[attempt]) != nil {
 			return ctxEnded
 		}
+	}
+	if e.State == nil {
+		return moveOn
 	}
 	n, err := e.State.Failed(ctx, s.Name)
 	if err != nil {

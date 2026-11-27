@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -835,5 +836,114 @@ func TestEmitterNilMetrics(t *testing.T) {
 	rig.waitCursor(t, "aaaaaaaa", 1)
 	if hits.Load() != 1 {
 		t.Fatalf("hits = %d, want 1", hits.Load())
+	}
+}
+
+func TestEmitterRoutinePausedAndPausedRunner(t *testing.T) {
+	var mu sync.Mutex
+	var matchedBodies []string
+	var matchedIDs []string
+	matchedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		id, err := Verify([][]byte{k1}, r.Header, body, time.Now())
+		if err != nil {
+			t.Errorf("unsigned delivery: %v", err)
+		}
+		mu.Lock()
+		matchedBodies = append(matchedBodies, string(body))
+		matchedIDs = append(matchedIDs, id)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer matchedSrv.Close()
+
+	var otherHits atomic.Int32
+	otherSrv := counting(&otherHits)
+	defer otherSrv.Close()
+
+	var wrongEventHits atomic.Int32
+	wrongEventSrv := counting(&wrongEventHits)
+	defer wrongEventSrv.Close()
+
+	rig := newEmitterRig(t, matchedSrv.URL, []string{"routine.paused"})
+	rig.addSubscriber("other-repo", otherSrv.URL, []string{"routine.paused"})
+	rig.em.Subs[1].Repositories = []string{"Smana/other"}
+	rig.addSubscriber("no-paused-ev", wrongEventSrv.URL, []string{"room.ended"})
+
+	// Run PausedRunner independently of leader-elected Start (standby replica case).
+	runner := rig.em.PausedRunner()
+	if runner.NeedLeaderElection() {
+		t.Fatal("PausedRunner must not require leader election")
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.Start(rig.ctx)
+	}()
+	t.Cleanup(func() {
+		rig.cancel()
+		<-done
+	})
+
+	if !rig.em.RoutinePaused(rig.ctx, "smana/ai-native-ref", "dead-code", "consecutive_closed") {
+		t.Fatal("expected RoutinePaused to enqueue matching subscriber")
+	}
+	waitFor(t, "routine.paused delivery", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(matchedBodies) == 1
+	})
+	mu.Lock()
+	gotBody, gotID := matchedBodies[0], matchedIDs[0]
+	mu.Unlock()
+	want := `{"type":"routine.paused","repo":"smana/ai-native-ref","routine":"dead-code","reason":"consecutive_closed"}`
+	if gotBody != want {
+		t.Fatalf("body = %s, want %s", gotBody, want)
+	}
+	if !strings.HasPrefix(gotID, "evt_") {
+		t.Fatalf("unexpected webhook-id %q", gotID)
+	}
+	if otherHits.Load() != 0 || wrongEventHits.Load() != 0 {
+		t.Fatalf("unmatched subscribers hit: other=%d wrongEvent=%d", otherHits.Load(), wrongEventHits.Load())
+	}
+	// Second trip produces a distinct webhook-id.
+	if !rig.em.RoutinePaused(rig.ctx, "smana/ai-native-ref", "dead-code", "low_merge_rate") {
+		t.Fatal("expected second RoutinePaused to enqueue")
+	}
+	waitFor(t, "second routine.paused delivery", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(matchedIDs) == 2
+	})
+	mu.Lock()
+	if matchedIDs[0] == matchedIDs[1] {
+		t.Fatalf("separate trips shared webhook-id %q", matchedIDs[0])
+	}
+	mu.Unlock()
+}
+
+func TestEmitterStartDeliversRoutinePausedAndCapsQueue(t *testing.T) {
+	var hits atomic.Int32
+	srv := counting(&hits)
+	defer srv.Close()
+
+	rig := newEmitterRig(t, srv.URL, []string{"routine.paused"})
+	// Enqueue past maxPausedQueue before Start so queue remains bounded at 256.
+	for range maxPausedQueue + 10 {
+		rig.em.RoutinePaused(rig.ctx, "Smana/ai-native-ref", "dead-code", "consecutive_closed")
+	}
+	rig.em.mu.Lock()
+	queued := len(rig.em.subs[0].paused)
+	rig.em.mu.Unlock()
+	if queued != maxPausedQueue {
+		t.Fatalf("queued = %d, want %d", queued, maxPausedQueue)
+	}
+	rig.start()
+	waitFor(t, "capped paused queue drained via Start", func() bool { return hits.Load() == maxPausedQueue })
+
+	// Disabled subscriber rejects new RoutinePaused enqueues.
+	rig.em.subs[0].disabled.Store(true)
+	if rig.em.RoutinePaused(rig.ctx, "Smana/ai-native-ref", "dead-code", "consecutive_failures") {
+		t.Fatal("disabled subscriber must not enqueue routine.paused")
 	}
 }

@@ -26,7 +26,18 @@ import (
 
 // factsOf is what the room's summary shows of a task: phase, current run, budget, issue, PR.
 func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
-	f := envelope.TaskFacts{Phase: t.Status.Phase, Reason: t.Status.Reason, Origin: t.Spec.Origin, Outcome: t.Spec.Outcome}
+	f := envelope.TaskFacts{
+		Phase:   t.Status.Phase,
+		Reason:  t.Status.Reason,
+		Origin:  t.Spec.Origin,
+		Outcome: t.Spec.Outcome,
+		Source:  t.Spec.Source.Kind,
+	}
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine {
+		if name := routineName(t); envelope.ValidRoutineName(name) {
+			f.Routine = name
+		}
+	}
 	if m := t.Status.Monitor; t.Spec.Origin != "" && m != nil {
 		f.Monitor = m.Verdict
 	}
@@ -213,6 +224,7 @@ func factsKey(f envelope.TaskFacts) string {
 	ended := v1alpha1.TerminalPhase(f.Phase) || f.Phase == v1alpha1.PhaseEscalated
 	if ended {
 		f.Plan, f.Parent, f.Policy = nil, nil, nil
+		f.Source, f.Routine = "", ""
 		if f.Profile != nil {
 			p := *f.Profile
 			p.Description = ""

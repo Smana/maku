@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	fconfig "github.com/Smana/maku/internal/factory/config"
@@ -38,6 +39,43 @@ func validRoutineRepoString(repo string) bool {
 
 func validRoutineTarget(owner, name, routine string) bool {
 	return validRoutineRepo(owner, name) && fconfig.ValidRoutineName(routine)
+}
+
+func validDigestWindow(window string) bool {
+	if !strings.HasSuffix(window, "d") {
+		return false
+	}
+	numStr := strings.TrimSuffix(window, "d")
+	n, err := strconv.Atoi(numStr)
+	return err == nil && n >= 1 && n <= 30 && strconv.Itoa(n)+"d" == window
+}
+
+// RoutineDigest forwards GET /v1/routines/digest with optional repositories and window filters.
+func (f Factory) RoutineDigest(ctx context.Context, accessToken string, repos []string, window string) (json.RawMessage, error) {
+	if accessToken == "" {
+		return nil, ErrForbidden
+	}
+	q := url.Values{}
+	if window != "" {
+		if !validDigestWindow(window) {
+			return nil, fmt.Errorf("runrequest: invalid window %q", window)
+		}
+		q.Set("window", window)
+	}
+	if len(repos) > 0 {
+		for _, repo := range repos {
+			if !validRoutineRepoString(repo) {
+				return nil, fmt.Errorf("runrequest: invalid repository %q", repo)
+			}
+		}
+		q.Set("repositories", strings.Join(repos, ","))
+	}
+	path := "/v1/routines/digest"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	_, raw, err := f.callRoutines(ctx, http.MethodGet, accessToken, path, "", nil)
+	return raw, err
 }
 
 // ListRoutines forwards GET /v1/routines[?repository=owner/name] with the caller's token.

@@ -872,6 +872,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log})
 	}
 	sched := newRoutineSchedulerWithState(conns.schedule, mgr.GetClient(), mgr.GetAPIReader(), ledgers, routineState, ns, live, startable, stopped, m, log)
+	onRoutinePaused := func(ctx context.Context, repository, routine, reason string) {
+		if err := broker.RoutinePaused(ctx, repository, routine, reason); err != nil {
+			log.Warn("routine paused webhook failed", "repository", repository, "routine", routine, "reason", reason, "err", err)
+		}
+	}
+	rec.OnRoutinePaused = onRoutinePaused
+	sched.OnRoutinePaused = onRoutinePaused
 	apiSrv.RoutineState = routineState
 	apiSrv.RoutineTrigger = routineTrigger{s: sched}
 	apiSrv.Tasks = mgr.GetClient()

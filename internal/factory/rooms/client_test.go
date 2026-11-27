@@ -253,6 +253,17 @@ func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
 			`"branch":"agent/t-1","digest":"`+strings.Repeat("e", 64)+`","output":"0123456789abcdef","decidedBy":"human:maint",`+
 			`"expiresAt":"2026-11-14T12:00:00Z"}`)
 	})
+	mux.HandleFunc("POST /v1/events/routine-paused", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		b.mu.Lock()
+		b.bodies = append(b.bodies, string(raw))
+		b.mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"enqueued":true}`)
+	})
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
 	return b, srv
@@ -1011,5 +1022,33 @@ func TestGitHubLink(t *testing.T) {
 	r.b.fail["/v1/links/github"], r.b.reason = http.StatusServiceUnavailable, wire.ReasonLogUnavailable
 	if _, _, err := r.c.GitHubLink(ctx, "zsub1"); err == nil {
 		t.Fatal("a broker 503 is not an error")
+	}
+}
+
+func TestRoutinePaused(t *testing.T) {
+	r := newRig(t, 0)
+	ctx := t.Context()
+	if err := r.c.RoutinePaused(ctx, "Smana/maku", "dead-code", "consecutive_closed"); err != nil {
+		t.Fatalf("RoutinePaused: %v", err)
+	}
+	if got, want := r.b.bodies[len(r.b.bodies)-1], `{"repository":"Smana/maku","routine":"dead-code","reason":"consecutive_closed"}`; got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	sent := len(r.b.auth)
+	for name, err := range map[string]error{
+		"bad repo":       r.c.RoutinePaused(ctx, "not-a-repo", "dead-code", "consecutive_closed"),
+		"bad routine":    r.c.RoutinePaused(ctx, "Smana/maku", "Bad_Routine", "consecutive_closed"),
+		"unknown reason": r.c.RoutinePaused(ctx, "Smana/maku", "dead-code", "prompt text"),
+	} {
+		if err == nil {
+			t.Errorf("%s: accepted client-side", name)
+		}
+	}
+	if len(r.b.auth) != sent {
+		t.Fatalf("%d invalid requests reached broker", len(r.b.auth)-sent)
+	}
+	r.b.fail["/v1/events/routine-paused"], r.b.reason = http.StatusBadRequest, wire.ReasonBadMessage
+	if err := r.c.RoutinePaused(ctx, "Smana/maku", "dead-code", "low_merge_rate"); !errors.Is(err, ErrBadMessage) {
+		t.Fatalf("400 bad_message = %v, want ErrBadMessage", err)
 	}
 }

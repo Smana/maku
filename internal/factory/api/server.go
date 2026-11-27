@@ -259,6 +259,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(InstallRoute, s.install)
 	// Upkeep routines Phase 1: overview, detail, manual trigger, pause and resume.
 	mux.HandleFunc("GET /v1/routines", s.listRoutines)
+	mux.HandleFunc("GET /v1/routines/digest", s.routineDigest)
 	mux.HandleFunc("GET /v1/routines/{owner}/{name}/{routine}", s.getRoutine)
 	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/runs", s.runRoutine)
 	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/pause", s.pauseRoutine)

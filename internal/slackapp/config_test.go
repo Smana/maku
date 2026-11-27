@@ -301,3 +301,149 @@ func TestLoadConfigEscalatedHours(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadUpkeepChannel(t *testing.T) {
+	baseHeader := `
+teamID: T01ABC
+botUserIDFile: /s/uid
+botTokenFile: /s/tok
+signingSecretFile: /s/sig
+webhookKeyFile: /s/key
+brokerURL: https://room-broker.agents.svc.cluster.local
+roomsURL: https://rooms.example
+namespace: agents
+channels:
+`
+	for _, tc := range []struct {
+		name     string
+		channels string
+		errHas   []string
+		check    func(*testing.T, Config)
+	}{
+		{
+			name: "upkeep-only channel without interactive repositories or maxCostUSD",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+      routines: [dead-links]
+      digest:
+        cron: "0 9 * * 1"
+`,
+			check: func(t *testing.T, c Config) {
+				ch := c.Channels["C03UP"]
+				if ch.Upkeep == nil || len(ch.Repositories) != 0 || ch.MaxCostUSD != 0 {
+					t.Fatalf("unexpected channel: %+v", ch)
+				}
+				if !ch.Upkeep.notifies("room.pr_opened") || !ch.Upkeep.notifies("routine.paused") || ch.Upkeep.notifies("room.task_triaged") {
+					t.Fatalf("default upkeep notify mismatch")
+				}
+			},
+		},
+		{
+			name: "explicit upkeep notify subset",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+      notify: [room.pr_opened, routine.paused, room.merged]
+`,
+			check: func(t *testing.T, c Config) {
+				u := c.Channels["C03UP"].Upkeep
+				if !u.notifies("room.merged") || u.notifies("room.ended") {
+					t.Fatalf("explicit upkeep notify mismatch: %+v", u.Notify)
+				}
+			},
+		},
+		{
+			name: "empty upkeep repositories refused",
+			channels: `  C03UP:
+    upkeep:
+      repositories: []
+`,
+			errHas: []string{"C03UP", "upkeep", "repositories is empty"},
+		},
+		{
+			name: "bad upkeep repository refused",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [not-a-repo]
+`,
+			errHas: []string{"C03UP", "upkeep", "not-a-repo"},
+		},
+		{
+			name: "bad routine name refused",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+      routines: [BAD_ROUTINE]
+`,
+			errHas: []string{"C03UP", "upkeep", "BAD_ROUTINE"},
+		},
+		{
+			name: "duplicate routine refused",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+      routines: [dead-links, dead-links]
+`,
+			errHas: []string{"C03UP", "upkeep", "dead-links", "more than once"},
+		},
+		{
+			name: "disallowed upkeep notify room.task_triaged refused",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+      notify: [room.task_triaged]
+`,
+			errHas: []string{"C03UP", "upkeep", "room.task_triaged"},
+		},
+		{
+			name: "duplicate upkeep notify refused",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+      notify: [routine.paused, routine.paused]
+`,
+			errHas: []string{"C03UP", "upkeep", "routine.paused", "more than once"},
+		},
+		{
+			name: "invalid digest cron refused",
+			channels: `  C03UP:
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+      digest:
+        cron: "not a cron"
+`,
+			errHas: []string{"C03UP", "upkeep", "cron"},
+		},
+		{
+			name: "sub-cent positive maxCostUSD on upkeep channel refused",
+			channels: `  C03UP:
+    maxCostUSD: 0.005
+    upkeep:
+      repositories: [Smana/ai-native-ref]
+`,
+			errHas: []string{"C03UP", "maxCostUSD"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := loadConfigText(t, baseHeader+tc.channels)
+			if len(tc.errHas) > 0 {
+				if err == nil {
+					t.Fatalf("accepted, want error naming %v", tc.errHas)
+				}
+				for _, want := range tc.errHas {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("error %q does not name %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.check != nil {
+				tc.check(t, c)
+			}
+		})
+	}
+}

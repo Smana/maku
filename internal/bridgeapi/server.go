@@ -151,6 +151,9 @@ type Server struct {
 	// Screenshots stores the images a run's bridge relays from its browser gate (harness
 	// screenshots phase B); unset answers the upload route 501.
 	Screenshots Screenshots
+	// RoutinePaused enqueues routine.paused webhooks when POST /v1/events/routine-paused is called;
+	// nil when no webhook subscribers are configured.
+	RoutinePaused RoutinePausedEmitter
 	// Now is the limits' clock; nil means time.Now. Deadlines handed to the
 	// runtime (a context's, a connection's) stay on its own clock: a fake one
 	// there would expire a request before it starts, or never.
@@ -194,6 +197,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/grants/lookup", s.bounded(maxGrantBody, s.grantLookup))
 	mux.HandleFunc("POST /v1/grants/{id}/use", s.bounded(maxGrantBody, s.grantUse))
 	mux.HandleFunc("POST /v1/grants/{id}/disable", s.bounded(maxGrantBody, s.grantDisable))
+	mux.HandleFunc("POST /v1/events/routine-paused", s.bounded(maxRoutinePausedBody, s.routinePaused))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Every response, the mux's own 404 and 405 included, has a write deadline;
 		// the stream replaces it with one per write.

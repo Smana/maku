@@ -27,6 +27,7 @@ var notify = map[string]bool{
 	"room.run_ended":         false,
 	"room.monitor_verdict":   false,
 	"room.approval_closed":   true,
+	"routine.paused":         true,
 }
 
 // Meaningful reports whether a person is told about a transition (CD11: notifications are

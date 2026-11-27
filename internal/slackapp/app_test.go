@@ -480,6 +480,17 @@ type stubBroker struct {
 	answeredActs []Answer
 	actAnswer    string
 	actErr       error
+	digest       RoutineDigest
+	digestErr    error
+}
+
+func (b *stubBroker) RoutineDigest(_ context.Context, _ []string, _ string) (RoutineDigest, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.digestErr != nil {
+		return RoutineDigest{}, b.digestErr
+	}
+	return b.digest, nil
 }
 
 func (b *stubBroker) Stop(_ context.Context, a Act) (ActResult, error) {

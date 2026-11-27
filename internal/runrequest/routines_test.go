@@ -142,3 +142,60 @@ func TestRoutinesClientForwardsAndValidates(t *testing.T) {
 		t.Fatalf("ResumeRoutine 204 = %s err=%v", got, err)
 	}
 }
+
+func TestRoutineDigestClient(t *testing.T) {
+	type recordedReq struct {
+		method string
+		path   string
+		query  string
+		auth   string
+	}
+	var seen []recordedReq
+	nextStatus := http.StatusOK
+	nextBody := `{"window":"7d","repositories":[]}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, recordedReq{
+			method: r.Method,
+			path:   r.URL.Path,
+			query:  r.URL.RawQuery,
+			auth:   r.Header.Get("Authorization"),
+		})
+		w.WriteHeader(nextStatus)
+		_, _ = w.Write([]byte(nextBody))
+	}))
+	defer srv.Close()
+
+	f := Factory{URL: srv.URL, HC: srv.Client()}
+
+	if _, err := f.RoutineDigest(t.Context(), "", nil, ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("empty token: got %v, want ErrForbidden", err)
+	}
+	if _, err := f.RoutineDigest(t.Context(), "tok", []string{"../evil"}, "7d"); err == nil {
+		t.Fatal("expected error for invalid repo")
+	}
+	if _, err := f.RoutineDigest(t.Context(), "tok", nil, "31d"); err == nil {
+		t.Fatal("expected error for invalid window")
+	}
+	if len(seen) != 0 {
+		t.Fatalf("invalid inputs hit HTTP: %+v", seen)
+	}
+
+	got, err := f.RoutineDigest(t.Context(), "tok-d", []string{"Smana/maku", "acme/api"}, "14d")
+	if err != nil || string(got) != nextBody {
+		t.Fatalf("RoutineDigest = %s err=%v", got, err)
+	}
+	if seen[0].method != http.MethodGet || seen[0].path != "/v1/routines/digest" || seen[0].auth != "Bearer tok-d" {
+		t.Fatalf("req = %+v", seen[0])
+	}
+	if !strings.Contains(seen[0].query, "window=14d") || !strings.Contains(seen[0].query, "repositories=Smana%2Fmaku%2Cacme%2Fapi") {
+		t.Fatalf("query = %q", seen[0].query)
+	}
+
+	nextStatus = http.StatusBadRequest
+	nextBody = `{"error":"bad_window"}`
+	var ref ErrRefused
+	if _, err := f.RoutineDigest(t.Context(), "tok-d", nil, ""); !errors.As(err, &ref) || ref.Status != http.StatusBadRequest || ref.Reason != "bad_window" {
+		t.Fatalf("ErrRefused = %v", err)
+	}
+}
