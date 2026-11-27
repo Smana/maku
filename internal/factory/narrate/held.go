@@ -57,5 +57,13 @@ func NotActedOn(t *v1alpha1.Task, id int64, what string) Event {
 			"the factory. A maintainer can post it.", t.Name, what)}
 }
 
+// CommentReviewIgnored answers a maintainer's Comment review, or inline thread, once per task
+// (developer review gap 7): only Request changes starts a revision, and only Approve merges.
+func CommentReviewIgnored(t *v1alpha1.Task) Event {
+	return Event{Key: "comment-review", Class: ClassChanged, Body: fmt.Sprintf(
+		"Maku task `%s`: a **Comment** review does not start a revision. To have the agent act on your comments, "+
+			"submit your review as **Request changes**; to merge, **Approve**.", t.Name)}
+}
+
 // HeldFor is how long a held command waits for its phase before it expires.
 const HeldFor = "24 hours"

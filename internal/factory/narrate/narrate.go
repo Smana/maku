@@ -987,7 +987,7 @@ func headlines() map[string]string {
 
 func hints() map[string]string {
 	return map[string]string{
-		v1alpha1.PhaseEscalated: "Comment `/factory retry` on this issue to run it again (a maintainer only), or push to the branch yourself. Without either, it stops when its escalation expires.",
+		v1alpha1.PhaseEscalated: "Comment `/factory retry` on this issue to run it again (a maintainer only). Without it, it stops when its escalation expires.",
 		v1alpha1.PhaseNoOp:      "If there is work to do, add detail to the issue and re-apply `factory/ready`.",
 		v1alpha1.PhaseRejected:  "Fix what is described above and re-apply `factory/ready`.",
 	}

@@ -1182,3 +1182,46 @@ func TestARetryAtAHeldTaskCapIsRefusedEverywhere(t *testing.T) {
 		t.Fatal("an unenforced cap holds no retry")
 	}
 }
+
+// Developer review gap 7: a maintainer's Comment review, or an inline thread reply, starts nothing.
+// The factory says so once, naming Request changes, instead of leaving it unanswered.
+func TestACommentReviewIsAnsweredOnce(t *testing.T) {
+	g := newRig(t, awaiting(), roomOf("3buqdlot"))
+	inline := forge.Review{ID: 971, Author: "Smana", State: "COMMENTED", At: now.Add(-4 * time.Minute),
+		Comments: []forge.ReviewComment{{Path: "docs/a.md", Line: 3, Body: "rename this"}}}
+	g.f.SetPR(pr12(forge.Review{ID: 970, Author: "Smana", State: "COMMENTED", Body: "use the relative link", At: now.Add(-5 * time.Minute)},
+		inline, forge.Review{ID: 972, Author: "someone", State: "COMMENTED", Body: "drive-by", At: now.Add(-3 * time.Minute)}))
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || len(g.runs.specs) != 0 {
+		t.Fatalf("a comment review starts nothing: %s, %d runs", tk.Status.Phase, len(g.runs.specs))
+	}
+	c := g.f.Comments(12)
+	if len(c) != 1 || !strings.Contains(c[0], "**Request changes**") || !strings.Contains(c[0], "does not start a revision") {
+		t.Fatalf("%q", c)
+	}
+	g.reconcile(t, "3buqdlot", 1)
+	if c := g.f.Comments(12); len(c) != 1 {
+		t.Fatalf("answered once per task: %q", c)
+	}
+}
+
+// A comment review older than the last run, a non-maintainer's alone, or one the maintainer followed
+// with an approval gets no answer.
+func TestACommentReviewThatNeedsNoAnswer(t *testing.T) {
+	for name, rvs := range map[string][]forge.Review{
+		"before the run":   {{ID: 980, Author: "Smana", State: "COMMENTED", Body: "x", At: now.Add(-2 * time.Hour)}},
+		"not a maintainer": {{ID: 981, Author: "someone", State: "COMMENTED", Body: "x", At: now.Add(-5 * time.Minute)}},
+		"approved after": {{ID: 982, Author: "Smana", State: "COMMENTED", Body: "x", At: now.Add(-5 * time.Minute)},
+			{ID: 983, Author: "Smana", State: "APPROVED", At: now.Add(-4 * time.Minute)}},
+		"empty": {{ID: 984, Author: "Smana", State: "COMMENTED", At: now.Add(-5 * time.Minute)}},
+	} {
+		g := newRig(t, awaiting(), roomOf("3buqdlot"))
+		g.f.SetPR(pr12(rvs...))
+		g.reconcile(t, "3buqdlot", 1)
+		for _, c := range g.f.Comments(12) {
+			if strings.Contains(c, "does not start a revision") {
+				t.Errorf("%s: %q", name, c)
+			}
+		}
+	}
+}

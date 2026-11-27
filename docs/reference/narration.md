@@ -55,6 +55,7 @@ Input that arrives while it cannot apply, or from someone the factory takes no i
 | Held command applied (`held-applied-<comment>`) | `changed` | The task reached the phase and the command was acted on |
 | Held command expired (`held-expired-<comment>`) | `needs_you` | It was not applied: the task moved on without it, ended, or 24 hours passed. Mentions its author |
 | Command not applicable (`not-applicable-<comment>`) | `changed` | A maintainer's command this task can never act on, and why |
+| Comment review (`comment-review`) | `changed` | A maintainer's newest review since the last run is a **Comment** with text or inline comments: it starts nothing, and the reply names **Request changes** and **Approve**. Once per task |
 | Not acted on (`not-acted-<comment or review>`) | `changed` | A command or **Request changes** review from someone without the standing to steer the factory; at most one per person per task per hour, on the issue or pull request it was posted on |
 
 None quotes the comment or the review. Each comment carries a hidden marker and is posted at least once and never twice, from an outbox written with the transition that caused it. The outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged `narration_dropped`. A comment GitHub refuses for good (its issue deleted, issues turned off, or the issue locked) is dropped and logged the same way, and the comments after it still post. Comments hold the factory's own words and ids, never text a user wrote.
