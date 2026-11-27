@@ -60,20 +60,34 @@ func TestPolicyReadsForwardTheCallersToken(t *testing.T) {
 	}
 }
 
-// v4 D3: the factory's banner codes, read with the caller's own token, never without one.
+// v4 D3: the factory's banner codes and environment metadata, read with the caller's own token,
+// never without one. An older factory sending only unsafe still decodes cleanly.
 func TestInstallReadsTheFactorysCodes(t *testing.T) {
 	var seen string
+	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = r.Method + " " + r.URL.RequestURI() + " " + r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{"unsafe":["private_code_unacknowledged"]}`))
+		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()
 	f := Factory{URL: srv.URL, HC: srv.Client()}
 	if _, err := f.Install(t.Context(), ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("no token: %v", err)
 	}
+	body = `{"unsafe":["private_code_unacknowledged"],"version":"v0.58.0","factory":"gcp-0","namespace":"agent-system","defaultHarness":"opencode","policyStage":"manage","hardening":"enforce","routinesUIWrite":true,"demo":false}`
 	got, err := f.Install(t.Context(), "tok")
-	if err != nil || len(got) != 1 || got[0] != "private_code_unacknowledged" || seen != "GET /v1/install Bearer tok" {
-		t.Fatalf("%q %v %q", got, err, seen)
+	if err != nil || len(got.Unsafe) != 1 || got.Unsafe[0] != "private_code_unacknowledged" ||
+		got.Version != "v0.58.0" || got.Factory != "gcp-0" || got.Namespace != "agent-system" ||
+		got.DefaultHarness != "opencode" || got.PolicyStage != "manage" || got.Hardening != "enforce" ||
+		got.RoutinesUIWrite == nil || !*got.RoutinesUIWrite || got.Demo ||
+		seen != "GET /v1/install Bearer tok" {
+		t.Fatalf("%+v %v %q", got, err, seen)
+	}
+	// Backward compatibility: an older factory only sends {"unsafe":[...]}.
+	body = `{"unsafe":["private_code_unacknowledged"]}`
+	legacy, err := f.Install(t.Context(), "tok")
+	if err != nil || len(legacy.Unsafe) != 1 || legacy.Unsafe[0] != "private_code_unacknowledged" ||
+		legacy.Version != "" || legacy.Factory != "" || legacy.RoutinesUIWrite != nil {
+		t.Fatalf("legacy: %+v %v", legacy, err)
 	}
 }

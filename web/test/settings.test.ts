@@ -213,6 +213,86 @@ describe("the index and evidence pages", () => {
     expect(cards[1].textContent).not.toContain("unavailable");
   });
 
+  it("shows broker and factory version and environment details on settings home", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings", fakeFetch({
+      "/api/policy/repositories": { repositories: [] },
+      "/api/approval-memory/grants": { grants: [] },
+      "/api/install": {
+        unsafe: [],
+        version: "v0.58.0",
+        environment: {
+          broker: { version: "v0.58.0", namespace: "agent-system", authMode: "oidc" },
+          factory: {
+            reachable: true, version: "v0.58.0", name: "gcp-0", namespace: "agent-system",
+            defaultHarness: "opencode", policyStage: "manage", hardening: "enforce", routinesUIWrite: true,
+          },
+        },
+      },
+    }));
+    const env = app.querySelector("section.settings-env")!;
+    expect(env).not.toBeNull();
+    expect(env.querySelector("h2")?.textContent).toBe("Environment");
+    expect(env.querySelector('[data-tone="warn"]')).toBeNull();
+    const pairs = [...env.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
+    expect(pairs).toEqual([
+      ["Broker version", "v0.58.0"],
+      ["Factory version", "v0.58.0"],
+      ["Factory", "gcp-0"],
+      ["Namespace", "agent-system"],
+      ["Sign-in mode", "OIDC"],
+      ["Default harness", "opencode"],
+      ["Merge policy stage", "manage"],
+      ["Hardening", "enforce"],
+      ["Routines UI write", "Enabled (ConfigMap)"],
+      ["Install notices", "None"],
+    ]);
+    expect(app.querySelector("main ul")).toBeNull();
+  });
+
+  it("flags version skew, unreachable factory, and skips the panel on an older broker", async () => {
+    const skewed = document.createElement("div");
+    await mountSettings(skewed, "/settings", fakeFetch({
+      "/api/policy/repositories": { repositories: [] },
+      "/api/install": {
+        unsafe: ["db_single_replica"],
+        version: "v0.58.0",
+        environment: {
+          broker: { version: "v0.58.0", namespace: "rooms", authMode: "local" },
+          factory: { reachable: true, version: "v0.57.0", name: "gcp-0", namespace: "factory", routinesUIWrite: false, demo: true },
+        },
+      },
+    }));
+    expect(skewed.querySelector('.settings-env [data-tone="warn"]')?.textContent).toBe("Version mismatch");
+    expect(skewed.querySelector(".settings-env")?.textContent).toContain("v0.57.0 (differs from broker)");
+    expect(skewed.querySelector(".settings-env")?.textContent).toContain("gcp-0 · demo");
+    expect(skewed.querySelector(".settings-env")?.textContent).toContain("broker: rooms · factory: factory");
+    expect(skewed.querySelector(".settings-env")?.textContent).toContain("Local (no sign-in)");
+    expect(skewed.querySelector(".settings-env")?.textContent).toContain("Disabled (YAML export only)");
+    expect(skewed.querySelector(".settings-env")?.textContent).toContain("1 notice: db_single_replica");
+
+    const unreachable = document.createElement("div");
+    await mountSettings(unreachable, "/settings", fakeFetch({
+      "/api/policy/repositories": { repositories: [] },
+      "/api/install": {
+        unsafe: [],
+        version: "v0.58.0",
+        environment: {
+          broker: { version: "v0.58.0", authMode: "oidc" },
+          factory: { reachable: false },
+        },
+      },
+    }));
+    expect(unreachable.querySelector(".settings-env")?.textContent).toContain("Unreachable");
+
+    const legacy = document.createElement("div");
+    await mountSettings(legacy, "/settings", fakeFetch({
+      "/api/policy/repositories": { repositories: [] },
+      "/api/install": { unsafe: [] },
+    }));
+    expect(legacy.querySelector("section.settings-env")).toBeNull();
+  });
+
   it("lists each repository's decisions and closest policy to going live", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", two());

@@ -18,6 +18,7 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/store"
 )
 
@@ -57,7 +58,7 @@ func TestEventsAndGitHubCallbackRateLimited(t *testing.T) {
 	}
 }
 
-// REL-M14: factoryCodes does not hold installCache.mu across I/O and does not negative-cache context.Canceled.
+// REL-M14: factoryInstallInfo does not hold installCache.mu across I/O and does not negative-cache context.Canceled.
 func TestFactoryCodesDoesNotHoldLockOrCacheCancel(t *testing.T) {
 	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 	started := make(chan struct{})
@@ -65,18 +66,18 @@ func TestFactoryCodesDoesNotHoldLockOrCacheCancel(t *testing.T) {
 	var calls atomic.Int32
 	s := &Server{
 		Now: func() time.Time { return now },
-		FactoryInstall: func(ctx context.Context, _ string) ([]string, error) {
+		FactoryInstall: func(ctx context.Context, _ string) (runrequest.InstallInfo, error) {
 			n := calls.Add(1)
 			if n == 1 {
 				close(started)
 				select {
 				case <-ctx.Done():
-					return nil, ctx.Err()
+					return runrequest.InstallInfo{}, ctx.Err()
 				case <-release:
-					return []string{"ok"}, nil
+					return runrequest.InstallInfo{Unsafe: []string{"ok"}}, nil
 				}
 			}
-			return []string{"unsandboxed"}, nil
+			return runrequest.InstallInfo{Unsafe: []string{"unsandboxed"}}, nil
 		},
 	}
 
@@ -86,48 +87,49 @@ func TestFactoryCodesDoesNotHoldLockOrCacheCancel(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_ = s.factoryCodes(cctx, "tok")
+		_, _ = s.factoryInstallInfo(cctx, "tok")
 	}()
 	<-started
 
 	// Second concurrent caller must NOT block on installCache.mu while the first call is in flight.
-	gotCh := make(chan []string, 1)
+	gotCh := make(chan runrequest.InstallInfo, 1)
 	go func() {
-		gotCh <- s.factoryCodes(t.Context(), "tok")
+		info, _ := s.factoryInstallInfo(t.Context(), "tok")
+		gotCh <- info
 	}()
 	select {
 	case got := <-gotCh:
-		if len(got) != 1 || got[0] != "unsandboxed" {
-			t.Fatalf("concurrent caller got %v, want [unsandboxed]", got)
+		if len(got.Unsafe) != 1 || got.Unsafe[0] != "unsandboxed" {
+			t.Fatalf("concurrent caller got %+v, want [unsandboxed]", got)
 		}
 	case <-time.After(2 * time.Second):
 		close(release)
-		t.Fatal("concurrent factoryCodes blocked while another call was in flight")
+		t.Fatal("concurrent factoryInstallInfo blocked while another call was in flight")
 	}
 
 	// Now cancel the first caller and verify it does not overwrite or poison the cache.
 	cancel()
 	wg.Wait()
-	if got := s.factoryCodes(t.Context(), "tok"); len(got) != 1 || got[0] != "unsandboxed" {
-		t.Fatalf("after canceled call, cache = %v, want [unsandboxed]", got)
+	if got, ok := s.factoryInstallInfo(t.Context(), "tok"); !ok || len(got.Unsafe) != 1 || got.Unsafe[0] != "unsandboxed" {
+		t.Fatalf("after canceled call, cache = %+v ok=%v, want [unsandboxed]", got, ok)
 	}
 
 	// Separate server: a canceled first call must not negative-cache nil for installTTL.
 	var n2 atomic.Int32
 	s2 := &Server{
 		Now: func() time.Time { return now },
-		FactoryInstall: func(_ context.Context, _ string) ([]string, error) {
+		FactoryInstall: func(_ context.Context, _ string) (runrequest.InstallInfo, error) {
 			if n2.Add(1) == 1 {
-				return nil, context.Canceled
+				return runrequest.InstallInfo{}, context.Canceled
 			}
-			return []string{"fresh"}, nil
+			return runrequest.InstallInfo{Unsafe: []string{"fresh"}}, nil
 		},
 	}
-	if got := s2.factoryCodes(t.Context(), "tok"); got != nil {
-		t.Fatalf("canceled call returned %v, want nil", got)
+	if got, ok := s2.factoryInstallInfo(t.Context(), "tok"); ok || got.Unsafe != nil {
+		t.Fatalf("canceled call returned %+v ok=%v, want zero", got, ok)
 	}
-	if got := s2.factoryCodes(t.Context(), "tok"); len(got) != 1 || got[0] != "fresh" {
-		t.Fatalf("subsequent call after cancel got %v, want [fresh]", got)
+	if got, ok := s2.factoryInstallInfo(t.Context(), "tok"); !ok || len(got.Unsafe) != 1 || got.Unsafe[0] != "fresh" {
+		t.Fatalf("subsequent call after cancel got %+v ok=%v, want [fresh]", got, ok)
 	}
 }
 

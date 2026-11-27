@@ -35,6 +35,7 @@ import (
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/repoaccess"
+	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
 )
@@ -216,9 +217,9 @@ type Server struct {
 	// Unsafe is the install's unsafe settings (config install.unsafe, v4 D18), which GET /api/install
 	// shows every signed-in human and the web UI turns into a banner on every page.
 	Unsafe []string
-	// FactoryInstall is the factory's banner codes (GET /v1/install, v4 D3), read with the caller's
-	// own token; nil, or a caller without one, reads none.
-	FactoryInstall func(ctx context.Context, accessToken string) ([]string, error)
+	// FactoryInstall is the factory's banner codes and environment metadata (GET /v1/install, v4 D3),
+	// read with the caller's own token; nil, or a caller without one, reads none.
+	FactoryInstall func(ctx context.Context, accessToken string) (runrequest.InstallInfo, error)
 	// installCodes caches FactoryInstall's answer for installTTL.
 	installCodes installCache
 	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the

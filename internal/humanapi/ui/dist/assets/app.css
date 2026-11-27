@@ -1254,6 +1254,20 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .settings-card p { margin: 0 0 8px; color: var(--muted-foreground); max-width: 60ch; }
 .settings-card .settings-card-counts { margin: 0; color: var(--card-foreground); font-variant-numeric: tabular-nums; }
 
+/* Settings environment summary: mirrors .policy-header's key-value rhythm below the section cards. */
+.settings-env { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); margin: 0 0 24px; }
+.settings-env-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; }
+.settings .settings-env-head h2 { margin: 0; font-size: var(--text-heading); line-height: var(--leading-heading); }
+.settings-env-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; }
+.settings-env-list dt { color: var(--muted-foreground); line-height: var(--leading-body); }
+.settings-env-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+@media (min-width: 721px) {
+  .settings-env-list { grid-template-columns: max-content minmax(0, 20em) max-content minmax(0, 1fr); column-gap: 16px; }
+}
+.settings-env-mono { font-family: var(--font-mono); }
+.settings-env-muted { color: var(--muted-foreground); }
+.settings-env-warn { color: var(--warning-foreground); }
+
 /* Prose on settings pages stays readable: no line past 72 characters. */
 .settings > p, .settings .guardrails, .settings .class-card p { max-width: 64ch; }
 .settings h2 { font-size: var(--text-heading); line-height: var(--leading-heading); margin: 28px 0 8px; }

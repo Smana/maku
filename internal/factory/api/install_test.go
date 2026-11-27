@@ -5,20 +5,32 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/hardening"
+	"github.com/Smana/maku/internal/version"
 )
 
-// v4 D3, step 7 R1: GET /v1/install is the factory's part of the install banner, for any
-// signed-in human: private_code_unacknowledged while a served repository is private code without
-// an acknowledgement. It names no repository: the code is the whole answer.
+// v4 D3, step 7 R1: GET /v1/install is the factory's part of the install banner and bounded
+// environment metadata, for any signed-in human: private_code_unacknowledged while a served
+// repository is private code without an acknowledgement. It names no repository.
 func TestInstallRoute(t *testing.T) {
 	unack := false
-	s := &Server{Cfg: sponsoredCfg(), InstallUnsafe: func() []string {
+	cfg := sponsoredCfg()
+	cfg.Factory = "gcp-0"
+	cfg.Defaults.Harness = config.HarnessOpenCode
+	cfg.PolicyManagement.Stage = config.StageSimulate
+	cfg.Hardening.Mode = hardening.ModeEnforce
+	cfg.Routines.UIWrite = true
+	s := &Server{Cfg: cfg, Namespace: "agent-system", InstallUnsafe: func() []string {
 		if unack {
 			return []string{InstallPrivateCodeUnacknowledged}
 		}
@@ -36,13 +48,39 @@ func TestInstallRoute(t *testing.T) {
 		s.Handler().ServeHTTP(w, r)
 		return w
 	}
-	if w := get("dev"); w.Code != http.StatusOK || w.Body.String() != "{\"unsafe\":[]}\n" {
+	decode := func(t *testing.T, body string) installResponse {
+		t.Helper()
+		var out installResponse
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatalf("decode %s: %v", body, err)
+		}
+		return out
+	}
+
+	w := get("dev")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"unsafe":[]`) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
+	if strings.Contains(w.Body.String(), "cloud-native-ref") {
+		t.Fatalf("install must never name a repository: %s", w.Body)
+	}
+	got := decode(t, w.Body.String())
+	if len(got.Unsafe) != 0 || got.Version != version.Version || got.Factory != "gcp-0" ||
+		got.Namespace != "agent-system" || got.DefaultHarness != "opencode" ||
+		got.PolicyStage != "simulate" || got.Hardening != "enforce" ||
+		got.RoutinesUIWrite == nil || !*got.RoutinesUIWrite || got.Demo {
+		t.Fatalf("unexpected install payload: %+v (%s)", got, w.Body)
+	}
+
 	unack = true
-	if w := get("dev"); w.Code != http.StatusOK || w.Body.String() != "{\"unsafe\":[\"private_code_unacknowledged\"]}\n" {
+	w = get("dev")
+	if w.Code != http.StatusOK {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
+	if got := decode(t, w.Body.String()); !slices.Equal(got.Unsafe, []string{InstallPrivateCodeUnacknowledged}) {
+		t.Fatalf("unsafe %v, want [%s]", got.Unsafe, InstallPrivateCodeUnacknowledged)
+	}
+
 	for token, code := range map[string]int{
 		"sys":    http.StatusForbidden,
 		"syssub": http.StatusForbidden,
@@ -53,8 +91,14 @@ func TestInstallRoute(t *testing.T) {
 			t.Errorf("%s: %d, want %d", token, w.Code, code)
 		}
 	}
+
 	s.InstallUnsafe = nil
-	if w := get("dev"); w.Code != http.StatusOK || w.Body.String() != "{\"unsafe\":[]}\n" {
+	s.Cfg = nil
+	w = get("dev")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"unsafe":[]`) {
 		t.Fatalf("nil lists none: %d %s", w.Code, w.Body)
+	}
+	if got := decode(t, w.Body.String()); got.Version != version.Version || got.Factory != "" || got.RoutinesUIWrite != nil {
+		t.Fatalf("nil cfg: %+v", got)
 	}
 }

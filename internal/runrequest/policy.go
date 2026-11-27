@@ -164,11 +164,24 @@ func (f Factory) PolicyDrill(ctx context.Context, accessToken, repository string
 	return out, err
 }
 
-// Install is GET /v1/install with the caller's own token: the factory's banner codes (v4 D3).
-func (f Factory) Install(ctx context.Context, accessToken string) ([]string, error) {
-	var out struct {
-		Unsafe []string `json:"unsafe"`
-	}
+// InstallInfo is the factory's GET /v1/install answer: its banner codes and bounded non-sensitive
+// environment metadata (never a repository name).
+type InstallInfo struct {
+	Unsafe          []string `json:"unsafe"`
+	Version         string   `json:"version,omitempty"`
+	Factory         string   `json:"factory,omitempty"`
+	Namespace       string   `json:"namespace,omitempty"`
+	DefaultHarness  string   `json:"defaultHarness,omitempty"`
+	PolicyStage     string   `json:"policyStage,omitempty"`
+	Hardening       string   `json:"hardening,omitempty"`
+	RoutinesUIWrite *bool    `json:"routinesUIWrite,omitempty"`
+	Demo            bool     `json:"demo,omitempty"`
+}
+
+// Install is GET /v1/install with the caller's own token: the factory's banner codes and bounded
+// environment metadata (v4 D3).
+func (f Factory) Install(ctx context.Context, accessToken string) (InstallInfo, error) {
+	var out InstallInfo
 	err := f.call(ctx, http.MethodGet, accessToken, "/v1/install", http.NoBody, &out)
-	return out.Unsafe, err
+	return out, err
 }
