@@ -52,25 +52,28 @@ menu:
     - name: Get started
       pageRef: /docs/get-started
       weight: 1
+    - name: User guide
+      pageRef: /docs/guide
+      weight: 2
     - name: Docs
       pageRef: /docs
-      weight: 2
+      weight: 3
     - name: Demo
       url: "/demo/"
-      weight: 3
-    - name: Roadmap
-      pageRef: /docs/roadmap
       weight: 4
-    - name: Search
+    - name: Status
+      pageRef: /docs/status
       weight: 5
+    - name: Search
+      weight: 6
       params:
         type: search
     - name: Theme
-      weight: 6
+      weight: 7
       params:
         type: theme-toggle
     - name: GitHub
-      weight: 7
+      weight: 8
       url: "https://github.com/Smana/maku"
       params:
         icon: github

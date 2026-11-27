@@ -53,7 +53,7 @@ A coordination plan files nothing: no issue, no task, no run, no label. Both rep
 
 A plan becomes work only when a maintainer of the primary confirms the parent, and each child's maintainer authorizes their part. The parent's room shows these as needs, with **Confirm**, **Authorize**, and **Decide** in its coordination panel ([chapter 6]({{< relref "when-the-factory-needs-you.md#coordination" >}})).
 
-In *plan mode*, the factory accepts drafts and confirmations but starts no child: it records the family and stops there. *Execute mode*, which files the children and runs them, requires repository authority and hardening ([Multi-repository coordination]({{< relref "/docs/concepts/multi-repository.md#execution-prerequisites" >}}), [Roadmap]({{< relref "/docs/roadmap.md" >}})).
+In *plan mode*, the factory accepts drafts and confirmations but starts no child: it records the family and stops there. *Execute mode*, which files the children and runs them, requires repository authority and hardening ([Multi-repository coordination]({{< relref "/docs/concepts/multi-repository.md#execution-prerequisites" >}}), [Status]({{< relref "/docs/status.md#in-progress" >}})).
 
 To read every child's branch at the exact commit the parent names:
 

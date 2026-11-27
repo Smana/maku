@@ -9,7 +9,7 @@ lastVerified: 2026-10-16
 **Status**: Accepted, amended (see [Amendment](#amendment-a-kimi-reviewer-on-the-self-merging-classes))
 **Date**: 2026-10-16
 **Deciders**: Smana (Platform Owner)
-**Related**: [status, v2 gate "A reviewer on another model"]({{< relref "/docs/roadmap.md" >}}), [ADR-0054](https://airef.ogenki.io/docs/decisions/0054-agent-model-providers-anthropic-direct/), [hard-task cohort results](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-12-v2-hard-task-cohort-design.md#results)
+**Related**: [status, v2 gate "A reviewer on another model"]({{< relref "/docs/status.md#v2-roadmap" >}}), [ADR-0054](https://airef.ogenki.io/docs/decisions/0054-agent-model-providers-anthropic-direct/), [hard-task cohort results](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-12-v2-hard-task-cohort-design.md#results)
 
 ---
 

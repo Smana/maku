@@ -135,9 +135,9 @@ real private repositories, read the [Tier-1 Pilot guide](https://maku.ogenki.io/
 
 ## Status and reference deployment
 
-Maku runs daily on live clusters; CRDs are currently `v1alpha1`. See [Roadmap](https://maku.ogenki.io/docs/roadmap/), the
-[latest release](https://github.com/Smana/maku/releases/latest) and the
-[status page](https://airef.ogenki.io/docs/status/) for what is proven live and what is next.
+Maku runs daily on live clusters; CRDs are currently `v1alpha1`. See [Status & roadmap](https://maku.ogenki.io/docs/status/), the
+[latest release](https://github.com/Smana/maku/releases/latest), and the
+[reference deployment status](https://airef.ogenki.io/docs/status/) for what is proven live and what is next.
 
 Looking for a full GitOps reference deployment alongside optional self-hosted GPU serving? See
 [ai-native-ref](https://github.com/Smana/ai-native-ref) ([airef.ogenki.io](https://airef.ogenki.io/)).
