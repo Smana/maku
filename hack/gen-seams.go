@@ -27,7 +27,7 @@ func main() {
 			fail(err)
 		}
 	}
-	const doc = "docs/install-secrets.md"
+	const doc = "website/content/docs/install/install-secrets.md"
 	raw, err := os.ReadFile(doc)
 	if err != nil {
 		fail(err)

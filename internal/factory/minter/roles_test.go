@@ -150,7 +150,7 @@ func TestRolesIsAVariant(t *testing.T) {
 }
 
 const (
-	docsPath   = "../../../docs/reference/config.md"
+	docsPath   = "../../../website/content/docs/reference/config.md"
 	rolesBegin = "<!-- roles:begin -->\n"
 	rolesEnd   = "<!-- roles:end -->"
 )

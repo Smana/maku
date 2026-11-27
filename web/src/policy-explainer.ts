@@ -7,7 +7,7 @@
 import { HOW_POLICIES_DECIDE } from "./generated/how-policies-decide";
 import { markdown } from "./render";
 
-export const DOCS_PAGE = "https://github.com/Smana/maku/blob/main/docs/merge-policies.md";
+export const DOCS_PAGE = "https://maku.ogenki.io/docs/use/merge-policies/";
 export const DOCS_SECTION = `${DOCS_PAGE}#holds-agreed-signal-checked`;
 
 // explainerSource is the section ready for the page: the diagram, which the page does not draw,
@@ -16,7 +16,10 @@ export function explainerSource(src = HOW_POLICIES_DECIDE): string {
   return src
     .replace(/```mermaid[\s\S]*?```/g, `The diagram of the flow is on [the docs page](${DOCS_SECTION}).`)
     .replace(/\]\(#([^)]+)\)/g, `](${DOCS_PAGE}#$1)`)
-    .replace(/\]\((?!https?:)([^)#]+?)(#[^)]*)?\)/g, (_, path: string, anchor = "") => `](https://github.com/Smana/maku/blob/main/docs/${path}${anchor})`);
+    .replace(/\]\((?!https?:)([^)#]+?)(#[^)]*)?\)/g, (_, path: string, anchor = "") => {
+      const slug = path.replace(/\.md$/, "/");
+      return `](https://maku.ogenki.io/docs/${slug}${anchor})`;
+    });
 }
 
 // policyExplainer is the folded explainer, with a link to the docs section it renders.

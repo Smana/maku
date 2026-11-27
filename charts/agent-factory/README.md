@@ -7,15 +7,15 @@ The umbrella chart: `maku` and `maku-factory` (`file://`), plus what a plain kin
 | Part | What it means |
 |---|---|
 | Production defaults | `values.yaml` is a skeleton that renders nothing on its own. The defaults are production: `profile` was removed in v0.49.0, and the schema refuses it |
-| Production | Every render without `demoValues` checks the seams of each enabled component and fails once, naming every missing one with its key and its doc. It refuses the demo-only values, naming `values-demo.yaml`: `postgres.enabled`, `maku.demoValues`, `maku-factory.demo`, `maku.sandbox.unsafeAllowRunc` and `runController.model.mode: secret`. [Install on your cluster](../../docs/install.md) walks it, from `maku install --print` to the preflight; or start from [`values-production.example.yaml`](values-production.example.yaml). [docs/upgrading.md](../../docs/upgrading.md#from-the-demo-to-production) lists the seams |
+| Production | Every render without `demoValues` checks the seams of each enabled component and fails once, naming every missing one with its key and its doc. It refuses the demo-only values, naming `values-demo.yaml`: `postgres.enabled`, `maku.demoValues`, `maku-factory.demo`, `maku.sandbox.unsafeAllowRunc` and `runController.model.mode: secret`. [Install on your cluster](https://maku.ogenki.io/docs/install/) walks it, from `maku install --print` to the preflight; or start from [`values-production.example.yaml`](values-production.example.yaml). [docs/upgrading.md](https://maku.ogenki.io/docs/operate/upgrading/#from-the-demo-to-production) lists the seams |
 | The demo | `-f values-demo.yaml` carries every demo default and `demoValues: true`, the one switch that admits the demo-only values |
-| Secrets by name | Every Secret the charts read is listed, with its keys, in [install Secrets](../../docs/install-secrets.md). `externalSecrets.enabled` (off) renders an `ExternalSecret` for each one listed under `externalSecrets.secrets`, against the `storeRef` you name, and never a store |
+| Secrets by name | Every Secret the charts read is listed, with its keys, in [install Secrets](https://maku.ogenki.io/docs/install/install-secrets/). `externalSecrets.enabled` (off) renders an `ExternalSecret` for each one listed under `externalSecrets.secrets`, against the `storeRef` you name, and never a store |
 | The schema | `values.schema.json` rejects unknown top-level keys (a typo like `postgress:`) and malformed values: a removed key (`profile`, `networkPolicies.plain`) with a message naming its replacement, `tls.days` below 1, a Postgres image without a digest, a storage size that is not `<n>Mi`, `Gi` or `Ti` |
-| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first, and alone carries them: it upgrades the CRDs with every tool and keeps them on uninstall. The subcharts have no `crds/` since v0.49.0. An existing cluster adopts its CRDs first: [docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds) |
-| The merge policy catalog | With the factory, three `MergePolicy` objects labelled `maku.ogenki.io/catalog`: `docs-links`, `deps-patch` and `docs` (`mergePolicies.catalog.enabled`, on). Every Repository evaluates each one it does not bind, in shadow; a binding with `mode: disabled` switches one off. `mergePolicies.catalog.exclude` lists the ones the platform keeps as its own objects: an unlabelled `MergePolicy` of a catalog name fails the install, naming it, until it is listed there or deleted ([merge policies](../../docs/merge-policies.md#start-here)) |
+| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first, and alone carries them: it upgrades the CRDs with every tool and keeps them on uninstall. The subcharts have no `crds/` since v0.49.0. An existing cluster adopts its CRDs first: [docs/upgrading.md](https://maku.ogenki.io/docs/operate/upgrading/#adopting-the-crds) |
+| The merge policy catalog | With the factory, three `MergePolicy` objects labelled `maku.ogenki.io/catalog`: `docs-links`, `deps-patch` and `docs` (`mergePolicies.catalog.enabled`, on). Every Repository evaluates each one it does not bind, in shadow; a binding with `mode: disabled` switches one off. `mergePolicies.catalog.exclude` lists the ones the platform keeps as its own objects: an unlabelled `MergePolicy` of a catalog name fails the install, naming it, until it is listed there or deleted ([merge policies](https://maku.ogenki.io/docs/use/merge-policies/#start-here)) |
 | The routine catalog | With the factory, six starter `Routine` objects labelled `maku.ogenki.io/catalog`: `dead-links`, `renovate-red`, `doc-drift`, `dead-code`, `flaky-tests` and `dup-unifier` (`routines.catalog.enabled`, on). Unlike merge policies, unbound catalog routines stay inert until explicitly bound under a Repository's `spec.routines[]`. `routines.catalog.exclude` lists the ones the platform keeps as its own objects: an unlabelled `Routine` of a catalog name fails the install, naming it, until it is listed there or deleted |
 | The support floor | `kubeVersion: ">=1.30.0-0"` in this chart and both subcharts. Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template` needs `--kube-version` |
-| Stability | Values may still change in a 0.x minor until v4.0.0, each change with a section in [docs/upgrading.md](../../docs/upgrading.md). From v4.0.0, a breaking value change happens only in a major version |
+| Stability | Values may still change in a 0.x minor until v4.0.0, each change with a section in [docs/upgrading.md](https://maku.ogenki.io/docs/operate/upgrading/). From v4.0.0, a breaking value change happens only in a major version |
 
 ```bash
 helm install af-crds charts/agent-factory-crds -n maku --create-namespace
@@ -25,7 +25,7 @@ helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo
 A production install brings its own Postgres, issuer, sandbox and Secrets, and installs only the
 components it turns on. `maku.enabled: false` with `maku-factory.enabled: true` is a valid production
 render: an existing `maku-factory` release adopts the umbrella that way, keeping its name
-([docs/upgrading.md](../../docs/upgrading.md#adopting-the-umbrella-from-maku-factory)).
+([docs/upgrading.md](https://maku.ogenki.io/docs/operate/upgrading/#adopting-the-umbrella-from-maku-factory)).
 
 ```bash
 helm install af charts/agent-factory -n maku -f values-production.yaml   # from values-production.example.yaml
@@ -48,7 +48,7 @@ The demo adds what a plain kind or k3d cluster lacks:
 The bundled Postgres is demo-only, behind `postgres.enabled`: `values.yaml` turns it off,
 `values-demo.yaml` on, and without its `demoValues` on fails the render. To bring your own
 Postgres 16 or later, even under the demo, set `postgres.enabled: false`, create the three roles and
-their DSN Secrets as [the database](../../docs/database.md) says, and keep the Secret names under
+their DSN Secrets as [the database](https://maku.ogenki.io/docs/install/database/) says, and keep the Secret names under
 `maku.broker.database`. `task chart:install:k3d:external-db` proves it on k3d against a plain
 `postgres:16` outside the chart.
 
@@ -61,7 +61,7 @@ policy, `networkPolicies.plain`, was removed in v0.49.0: the factory's own defau
 
 `--set maku.networkPolicies.mode=kubernetes` confines the runs too, on a CNI that enforces
 NetworkPolicy: default-deny in `agents`, one NetworkPolicy per run, and the egress proxy holding each
-run's HTTPS to its own hosts ([the network modes](../../docs/reference/security-controls.md#the-run-paths-network-modes)).
+run's HTTPS to its own hosts ([the network modes](https://maku.ogenki.io/docs/reference/security-controls/#the-run-paths-network-modes)).
 The run controller's preflight then refuses runs until it proves the CNI enforces them. The demo's
 `maku.broker.database.podLabels` lets the broker's policy reach `rooms-db`. `task chart:install:k3d:netpol`
 proves both outcomes on k3d: kube-router enforcing (the preflight passes) and a k3s started with
@@ -71,7 +71,7 @@ proves both outcomes on k3d: kube-router enforcing (the preflight passes) and a 
 in local human mode with the apiserver vouching for runs and for the factory (`system:factory`), runc
 (`maku.sandbox.unsafeAllowRunc`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
 mode on one GitHub App (`maku-factory.apps.merger.mode: factory` folds the merger into it; a
-production install runs two Apps, see [GitHub Apps](../../docs/github-apps.md)). The two Secrets come
+production install runs two Apps, see [GitHub Apps](https://maku.ogenki.io/docs/install/github-apps/)). The two Secrets come
 from `demo.model` (`agent-model`, in the runs namespace) and `demo.githubApp` (`agent-factory-github`,
 or the name in `maku-factory.apps.factory.existingSecret`), or exist already (`existingSecret`, which
 must carry the name the subchart reads). Each run's git token, `<run>-git`, is the factory's to write. To point it at your repository, copy
@@ -88,7 +88,7 @@ shows the approval (`maintainer_approved`) and a maintainer merges on GitHub.
 ## The model gateway
 
 Two optional subcharts, both off by default, put agentgateway in front of the models
-([docs/gateway.md](../../docs/gateway.md)):
+([docs/gateway.md](https://maku.ogenki.io/docs/install/gateway/)):
 
 - `maku-gateway.enabled: true` renders the Gateway `model-gateway`, its identity policies, one backend
   and one route per model alias, the price catalog and the proxy's NetworkPolicy. Its `runs` must equal
@@ -100,7 +100,7 @@ The CRDs come first. agentgateway's are applied apart from any Helm release: the
 2.3 MB of schema, and Helm stores a release's chart and manifest in one Secret capped at 1 MiB, which
 they would nearly fill. They outlive an uninstall only while nothing prunes them. The Flux and Argo CD
 forms, and the upstream `agentgateway-crds` chart as an alternative, are in
-[docs/gateway.md](../../docs/gateway.md#agentgateways-crds). Gateway API's standard CRDs (v1.2 or
+[docs/gateway.md](https://maku.ogenki.io/docs/install/gateway/#agentgateways-crds). Gateway API's standard CRDs (v1.2 or
 later) are a cluster prerequisite:
 
 ```bash

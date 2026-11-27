@@ -53,10 +53,10 @@ while IFS= read -r f; do
   case "$f" in
     charts/* | hack/values-contract.sh) charts=true ;;
   esac
-  # Documentation is docs/, LICENSE and the root's *.md only: markdown deeper down can be code
+  # Documentation is docs/, website/, LICENSE and the root's *.md only: markdown deeper down can be code
   # (internal/maku/skill/ embeds its files in the binary) or ship in a chart.
   case "$f" in
-    docs/* | LICENSE) ;;
+    docs/* | website/* | LICENSE) ;;
     */*) deployable=true ;;
     *.md) ;;
     *) deployable=true ;;

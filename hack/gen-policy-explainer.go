@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	doc     = "docs/merge-policies.md"
+	doc     = "website/content/docs/use/merge-policies.md"
 	out     = "web/src/generated/how-policies-decide.ts"
 	heading = "## Holds, agreed, signal-checked\n"
 )

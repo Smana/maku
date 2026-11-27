@@ -94,7 +94,7 @@ func TestNoAppHoldsWorkflowsOrAdministration(t *testing.T) {
 	}
 }
 
-const docsPath = "../../docs/github-apps.md"
+const docsPath = "../../website/content/docs/install/github-apps.md"
 
 // TestDocs: the permission tables in docs/github-apps.md are Render of the data.
 func TestDocs(t *testing.T) {

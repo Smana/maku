@@ -17,7 +17,7 @@ go run ./hack/gen-policy-explainer.go
 go run ./cmd/maku config validate --config examples/merge-policies/factory.yaml examples/merge-policies/docs-scoped.yaml
 if [ $# -eq 0 ]; then
   files=()
-  while IFS= read -r f; do files+=("$f"); done < <(find README.md CONTRIBUTING.md AGENTS.md docs charts images -name '*.md' -not -path 'docs/superpowers/*' 2>/dev/null | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find README.md CONTRIBUTING.md AGENTS.md docs website/content/docs charts images -name '*.md' -not -path 'docs/superpowers/*' 2>/dev/null | sort)
 else
   files=("$@")
 fi
@@ -72,7 +72,8 @@ links() {
         t = substr(s, RSTART + 2, RLENGTH - 2)
         s = substr(s, RSTART + RLENGTH)
         sub(/^</, "", t); sub(/>$/, "", t)
-        if (t ~ /^[A-Za-z][A-Za-z0-9+.-]*:/ || t ~ /^\/\//) continue
+        if (t ~ /^[A-Za-z][A-Za-z0-9+.-]*:/ || t ~ /^\/\// || t ~ /^\{\{/) continue
+        if (t ~ /^\//) continue
         print NR "\t" t
       }
     }' "$1"
@@ -96,16 +97,26 @@ ids() {
   ' "$1"
 }
 
-# ceiling FILE: checks the word ceiling declared by <!-- page-type: T --> within the first 5 lines.
-# Untyped files are ignored until every reader page carries a marker.
+# ceiling FILE: checks the word ceiling declared by <!-- page-type: T --> (first 5 lines)
+# or YAML front-matter `diataxis: T`. Untyped files are ignored until every reader page declares one.
 ceiling() {
   local f=$1 t w limit
-  t=$(awk 'NR<=5 && match($0, /<!--[[:space:]]*page-type:[[:space:]]*[^[:space:]]+[[:space:]]*-->/) {
-    s = substr($0, RSTART, RLENGTH)
-    sub(/^<!--[[:space:]]*page-type:[[:space:]]*/, "", s)
-    sub(/[[:space:]]*-->$/, "", s)
-    print s; exit
-  }' "$f")
+  t=$(awk '
+    NR<=5 && match($0, /<!--[[:space:]]*page-type:[[:space:]]*[^[:space:]]+[[:space:]]*-->/) {
+      s = substr($0, RSTART, RLENGTH)
+      sub(/^<!--[[:space:]]*page-type:[[:space:]]*/, "", s)
+      sub(/[[:space:]]*-->$/, "", s)
+      print s; exit
+    }
+    NR==1 && /^---[[:space:]]*$/ { fm=1; next }
+    fm && /^---[[:space:]]*$/ { exit }
+    fm && /^diataxis:[[:space:]]*/ {
+      s = $0
+      sub(/^diataxis:[[:space:]]*/, "", s)
+      gsub(/["'\'']/, "", s)
+      sub(/[[:space:]].*$/, "", s)
+      print s; exit
+    }' "$f")
   [ -z "$t" ] && return 0
   case "$t" in
     tutorial|how-to) limit=1500 ;;
@@ -115,10 +126,20 @@ ceiling() {
     *) echo "$f: unknown page-type: $t"; return 1 ;;
   esac
   [ "$limit" -eq 0 ] && return 0
-  w=$(wc -w < "$f" | tr -d '[:space:]')
+  # Exclude YAML front matter from word count, and collapse Hugo relref shortcodes to a single
+  # token so `[text]({{< relref "..." >}})` counts the same as `[text](file.md)`.
+  w=$(awk '
+    NR==1 && /^---[[:space:]]*$/ { fm=1; next }
+    fm && /^---[[:space:]]*$/ { fm=0; next }
+    !fm {
+      s = $0
+      gsub(/\{\{[<%][[:space:]]*relref[[:space:]]+[^}>]+[%>]\}\}/, "x", s)
+      n += split(s, _)
+    }
+    END { print n+0 }' "$f")
   if [ "$w" -gt "$limit" ]; then
     if [ "$t" = moved ]; then
-      echo "$f: moved stub over 40 words"
+      echo "$f: moved stub over $limit words"
     else
       echo "$f: over ceiling: $w words, $t allows $limit"
     fi
@@ -134,7 +155,7 @@ for f in "${files[@]}"; do
     echo "$f:$n: status vocabulary: $word"; rc=1
   done < <(status "$f" | awk '!seen[$0]++')
   case "$f" in
-    *docs/contributing/*) ;;
+    *docs/contributing/*|*website/content/docs/contributing/*) ;;
     *) while IFS=$'\t' read -r n rule m; do
          echo "$f:$n: $rule: $m"; rc=1
        done < <(ids "$f" | awk '!seen[$0]++');;

@@ -14,7 +14,7 @@ import (
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 )
 
-const guide = "../../docs/merge-policies.md"
+const guide = "../../website/content/docs/use/merge-policies.md"
 
 // A YAML block the guide marks with <!-- check: central|repository --> on the line before its fence.
 var guideBlock = regexp.MustCompile("(?s)<!-- check: (central|repository) -->\n```yaml\n(.*?)```")

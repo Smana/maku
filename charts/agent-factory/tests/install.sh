@@ -424,7 +424,7 @@ spec:
 EOF
     kubectl -n external-db rollout status deploy/pg --timeout=180s
     # The page's first sql block, as written: the five statements and the \connect between them.
-    awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' docs/database.md >"$work/bootstrap.sql"
+    awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' website/content/docs/install/database.md >"$work/bootstrap.sql"
     [[ $(grep -c '^CREATE ROLE' "$work/bootstrap.sql") == 3 ]] || die "docs/database.md's first sql block is not the bootstrap"
     kubectl -n external-db exec -i deploy/pg -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres <"$work/bootstrap.sql"
     for r in owner broker retention; do
@@ -928,7 +928,7 @@ spec:
   ports: [{name: postgres, port: 5432, targetPort: postgres}]
 EOF
   kubectl -n restore-db rollout status deploy/pg-restore --timeout=180s >/dev/null
-  awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' docs/database.md >"$work/restore-bootstrap.sql"
+  awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' website/content/docs/install/database.md >"$work/restore-bootstrap.sql"
   kubectl -n restore-db exec -i deploy/pg-restore -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres <"$work/restore-bootstrap.sql" >/dev/null
   owner_pw=$(sed -nE "s/^CREATE ROLE rooms_owner LOGIN PASSWORD '([^']+)';$/\1/p" "$work/restore-bootstrap.sql")
   [[ -n $owner_pw ]] || die "no password for rooms_owner in docs/database.md"

@@ -25,7 +25,7 @@ want() {
   g reset -q --hard HEAD^1 && g branch -qD pr
 }
 
-want docs/a.md README.md LICENSE -- deployable=false harness=false
+want docs/a.md website/content/docs/a.md README.md LICENSE -- deployable=false harness=false
 # Embedded markdown is code: the skill files ship in the maku binary (ANR pins per-PR images).
 want internal/maku/skill/factory-handoff/SKILL.md -- deployable=true harness=false
 want charts/maku/README.md -- deployable=true
