@@ -6,9 +6,9 @@ description: Accepted. Natural language replaces the command and field grammars,
 lastVerified: 2026-11-05
 ---
 
-**Status**: Accepted
-**Date**: 2026-11-05
-**Deciders**: Smana (Platform Owner)
+**Status**: Accepted\
+**Date**: 2026-11-05\
+**Deciders**: Smana (Platform Owner)\
 **Related**: [design, decisions CD1 to CD18](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-05-v3x-conversational-devex-design.md#decisions), [the planner's model call](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-05-v3x-conversational-devex-design.md#model-call), [ADR-0049]({{< relref "/docs/decisions/0049-room-client-and-human-auth.md" >}}), [ADR-0059]({{< relref "/docs/decisions/0059-factory-from-your-coding-agent.md" >}})
 
 ---

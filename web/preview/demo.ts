@@ -81,11 +81,14 @@ async function run() {
     const about = Object.assign(document.createElement("a"), {
       href: "https://maku.ogenki.io/",
       textContent: "What is Maku?",
+      // Framed on maku.ogenki.io/#replay: open the site in the whole window, not inside the frame.
+      target: "_top",
       rel: "noopener noreferrer",
     });
     const pilot = Object.assign(document.createElement("a"), {
       href: "https://maku.ogenki.io/docs/get-started/pilot/",
       textContent: "Tier-1 Pilot",
+      target: "_top",
       rel: "noopener noreferrer",
     });
     lead.append("Room Replay: recorded runs, replayed locally. Nothing reaches a cluster. ", about, " · ", pilot);

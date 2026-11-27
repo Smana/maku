@@ -6,9 +6,9 @@ description: Accepted. The broker renders the views once, as the MCP tools' text
 lastVerified: 2026-10-27
 ---
 
-**Status**: Accepted
-**Date**: 2026-10-25
-**Deciders**: Smana (Platform Owner)
+**Status**: Accepted\
+**Date**: 2026-10-25\
+**Deciders**: Smana (Platform Owner)\
 **Related**: [design, feature 13](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-25-factory-from-your-agent-design.md), [roadmap D7](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-19-v3-roadmap-design.md#owner-decisions-2026-10-25), [ADR-0049]({{< relref "/docs/decisions/0049-room-client-and-human-auth.md" >}}), [ADR-0056]({{< relref "/docs/decisions/0056-local-first-factory-ux.md" >}})
 
 ---

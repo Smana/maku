@@ -6,9 +6,9 @@ description: A room is one append-only log per session whose seq the broker assi
 lastVerified: 2026-09-29
 ---
 
-**Status**: Accepted
-**Date**: 2026-09-27
-**Deciders**: Smana (Platform Owner)
+**Status**: Accepted\
+**Date**: 2026-09-27\
+**Deciders**: Smana (Platform Owner)\
 **Related Spec**: [SP2 — Collaboration rooms](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-collaboration-rooms-design.md)
 
 ---
