@@ -1638,7 +1638,7 @@ func models() []string {
 // providerModel is a provider alias's one tier (v3 F15, F2: the run caps stay the tier's, and the
 // gateway's local limit holds only at that tier) and the model its gateway backend pins
 // (ai-native-ref's agent-gateway moonshot.yaml and mistral.yaml), which a by-model meter prices.
-type providerModel struct{ tier, served string }
+type providerModel struct{ tier, served, provider string }
 
 // providerModels are the provider aliases (v3 F15, D9). Moonshot processes in China, Mistral in
 // the EU and Gemini on Google's terms: each serves public data only, so loops models, workflows
@@ -1647,11 +1647,11 @@ func providerModels() map[string]providerModel {
 	// The served ids are ai-native-ref's agent-gateway model aliases (moonshot, mistral, and gcp-0's
 	// vertex), copied: when a backend pins another model, change both together.
 	return map[string]providerModel{
-		"kimi-frontier":    {"frontier", "k3.1-pro"},
-		"mistral-standard": {"standard", "mistral-medium-2604"},
-		"mistral-light":    {"light", "mistral-small-2603"},
-		"gemini-standard":  {"standard", "gemini-4-neon"},
-		"gemini-light":     {"light", "gemini-4-hydrogen"},
+		"kimi-frontier":    {"frontier", "k3.1-pro", "moonshot"},
+		"mistral-standard": {"standard", "mistral-medium-2604", "mistral"},
+		"mistral-light":    {"light", "mistral-small-2603", "mistral"},
+		"gemini-standard":  {"standard", "gemini-4-neon", "vertex"},
+		"gemini-light":     {"light", "gemini-4-hydrogen", "vertex"},
 	}
 }
 
@@ -1659,6 +1659,15 @@ func providerModels() map[string]providerModel {
 func IsAlias(model string) bool {
 	return slices.Contains(models(), model) || PublicOnly(model)
 }
+
+// ProviderOf is the gateway provider preset a provider alias's backend uses (ai-native-ref's
+// agent-gateway: moonshot, mistral, vertex); "" for a C5 name or an unknown alias.
+func ProviderOf(model string) string { return providerModels()[model].provider }
+
+// OpenCodeCannot reports whether the OpenCode harness cannot run model: a Vertex alias, whose
+// tool schemas Vertex refuses through the gateway with a 400 on exclusiveMinimum
+// (agentgateway#4242, maku#798). A task resolved to OpenCode on one runs on OpenHands.
+func OpenCodeCannot(model string) bool { return ProviderOf(model) == "vertex" }
 
 // PublicOnly reports whether model is a provider alias, which only a public run may name.
 func PublicOnly(model string) bool {

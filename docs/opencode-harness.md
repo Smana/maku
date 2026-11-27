@@ -55,6 +55,8 @@ Selection follows a strict precedence and is frozen onto `Task.status.profile` a
 
 Integration-only (no-model) verification tasks are always pinned to `openhands`.
 
+A run whose model is a Vertex alias (`gemini-standard`, `gemini-light`) never runs on OpenCode: Vertex refuses OpenCode's tool schemas through the gateway ([#798](https://github.com/Smana/maku/issues/798)). Whatever chose OpenCode (the default, `evaluation.treatmentHarness` or a `harness:opencode` label), the task runs on OpenHands from that run on. `Task.status.profile` records `harness: openhands, harnessSource: model`, and the issue gets one comment: "OpenCode can't use `<alias>` yet (#798); this task runs on OpenHands."
+
 ## Rescuing an escalated OpenCode task onto OpenHands
 
 If an OpenCode task escalates, a repository maintainer with write access can rescue it explicitly by commenting alone on a line on the issue or pull request:

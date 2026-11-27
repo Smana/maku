@@ -32,6 +32,7 @@ import (
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
+	"github.com/Smana/maku/internal/factory/triage"
 	"github.com/Smana/maku/internal/hardening"
 )
 
@@ -414,6 +415,15 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 		s.Effort = cfg.EffortFor(wf, s.Role)
 	}
 	s.Harness = harnessFor(t, s)
+	if s.Harness == config.HarnessOpenCode && config.OpenCodeCannot(s.Model) {
+		// #798 (interim): OpenCode cannot run a Vertex alias, whichever choice made it OpenCode. The
+		// whole task moves to OpenHands, recorded and said once.
+		s.Harness = config.HarnessOpenHands
+		if p := t.Status.Profile; p != nil {
+			p.Harness, p.HarnessSource = config.HarnessOpenHands, triage.HarnessSourceModel
+		}
+		narrateLater(t, narrate.HarnessForModel(s.Model))
+	}
 	stampScreenshots(t, &s)
 	r.attachRequestImages(ctx, t, &s) // v5 Q16 B3: screenshots runs of an issue task only
 	r.plantCanary(cfg, t, &s)         // hardening audit or enforce only (HR7)
