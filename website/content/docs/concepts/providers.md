@@ -28,7 +28,7 @@ Field note from live runs: Mistral is **not recommended as an implementer** beca
 
 ## Selecting a second provider per role {#switch-a-workflow-on}
 
-A workflow can run its reviewer (or judge) on a second model family so correlated mistakes do not slip past review. Configure `models.<role>` on a workflow in your `Factory` resource:
+A workflow can run its reviewer (or judge) on a second model family so correlated mistakes do not slip past review ([ADR-0058]({{< relref "/docs/decisions/0058-reviewer-on-another-model.md" >}})). Configure `models.<role>` on a workflow in your `Factory` resource:
 
 ```yaml
 workflows:
