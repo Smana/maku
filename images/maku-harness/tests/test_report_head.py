@@ -71,8 +71,8 @@ class PushedHeadTest(unittest.TestCase):
 
 
 class FakeSteps:
-    def __init__(self, handed_off=False):
-        self.handed_off = handed_off
+    def __init__(self, handed_off=False, handoff=None):
+        self.handed_off, self.handoff = handed_off, handoff
 
 
 class FakeNotes:
@@ -102,8 +102,33 @@ class ReportHeadTest(unittest.TestCase):
 
     def test_the_agents_own_handoff_stands(self):
         notes = FakeNotes()
+        own = {"toRole": "reviewer", "summary": "Fixed the link.", "commit": SHA}
+        self.assertIsNone(self.report(notes, steps=FakeSteps(handed_off=True, handoff=own)))
+        self.assertEqual(notes.calls, [])
+
+    def test_a_handoff_whose_arguments_were_not_read_stands(self):
+        notes = FakeNotes()
         self.assertIsNone(self.report(notes, steps=FakeSteps(handed_off=True)))
         self.assertEqual(notes.calls, [])
+
+    # mhln4xkd: the agent typed the pushed head's first seven digits and made up the rest.
+    def test_a_made_up_commit_is_handed_off_again_with_the_pushed_head(self):
+        pushed = "56b8ffb7f93dda8664332df7c9678296b9daeec7"
+        for named in ("56b8ffb3bf4a1c44d5f74cd9a51b456390b8c7d4", "56b8ffb"):
+            notes = FakeNotes()
+            own = {"toRole": "tester", "summary": "Fixed the hero button in dark mode.", "commit": named}
+            got = self.report(notes, steps=FakeSteps(handed_off=True, handoff=own), remote=lambda env, start: pushed)
+            self.assertEqual(got, pushed, named)
+            tool, args = notes.calls[0]
+            self.assertEqual((tool, args["toRole"], args["commit"]), ("room_handoff", "tester", pushed))
+            self.assertTrue(args["summary"].startswith("Fixed the hero button in dark mode.\n\n"), args["summary"])
+            self.assertIn("named commit %s, which is not the head this run pushed" % named, args["summary"])
+
+    def test_a_corrected_summary_stays_within_the_tools_bound(self):
+        notes = FakeNotes()
+        own = {"toRole": "reviewer", "summary": "é" * 8000, "commit": "b" * 40}
+        self.report(notes, steps=FakeSteps(handed_off=True, handoff=own))
+        self.assertLessEqual(len(notes.calls[0][1]["summary"].encode()), agent_run.HANDOFF_SUMMARY_MAX)
 
     def test_only_an_implementer_reports(self):
         for role in ("reviewer", "tester", "triager"):
@@ -125,6 +150,31 @@ class ReportHeadTest(unittest.TestCase):
         notes = FakeNotes(errors=["policy: denied", "policy: denied"])
         self.assertIsNone(self.report(notes))
         self.assertEqual(len(notes.calls), 1)
+
+
+class HandoffArgumentsTest(unittest.TestCase):
+    """Both harnesses' ActionEvents carry the handoff's arguments, in two shapes."""
+
+    def test_opencode_tool_input(self):
+        args = {"toRole": "reviewer", "summary": "s", "commit": SHA}
+        self.assertEqual(agent_run.handoff_arguments(args), args)
+
+    def test_openhands_mcp_tool_action(self):
+        args = {"toRole": "reviewer", "summary": "s", "commit": SHA}
+        self.assertEqual(agent_run.handoff_arguments({"kind": "MCPToolAction", "data": args}), args)
+
+    def test_not_a_dict(self):
+        self.assertEqual(agent_run.handoff_arguments(None), {})
+
+    def test_the_step_log_keeps_the_handoff_the_broker_took(self):
+        log = agent_run.StepLog("cid")
+        good = {"toRole": "reviewer", "summary": "s", "commit": "c" * 40}
+        for i, (args, error) in enumerate([({"commit": "bad"}, True), (good, False)]):
+            log.describe({"kind": "ActionEvent", "tool_name": "platform_room_handoff", "tool_call_id": "t%d" % i,
+                          "action": {"kind": "MCPToolAction", "data": args}})
+            log.describe({"kind": "ObservationEvent", "tool_call_id": "t%d" % i, "observation": {"is_error": error}})
+        self.assertTrue(log.handed_off)
+        self.assertEqual(log.handoff, good)
 
 
 if __name__ == "__main__":
