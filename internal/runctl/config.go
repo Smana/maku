@@ -425,6 +425,11 @@ var defaultProfiles = map[string][]string{
 	"npm":    {"registry.npmjs.org"},
 	"golang": {"proxy.golang.org", "sum.golang.org", "dl.google.com"},
 	"crates": {"index.crates.io", "static.crates.io"},
+	// Developer review gap 2 (owner decision D2): Maven Central, and Gradle's plugin portal and
+	// distributions, which the Maven and Gradle wrappers download; Node's release host, where mise
+	// installs Node from. Reviewed by the platform; none is a GitHub host (Maku #742).
+	"maven": {"repo.maven.apache.org", "repo1.maven.org", "plugins.gradle.org", "plugins-artifacts.gradle.org", "services.gradle.org", "downloads.gradle.org"},
+	"node":  {"nodejs.org"},
 }
 
 // The broker host must be the fully qualified service name: the pod's ndots:1 resolver

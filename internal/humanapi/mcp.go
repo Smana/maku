@@ -112,7 +112,7 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 			schema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["room"],"properties":{"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"cursor":{"type":"string","pattern":"^(seq:)?[0-9]+$"},"kinds":{"type":"array","maxItems":10,"items":{"type":"string","enum":["message","turn","tool_call","tool_result","approval_requested","approval_decided","participant","driver","handoff","state_changed"]}}}}`)},
 		{name: "room_fork", call: s.roomFork,
 			description: "Fork a room at a seq into a room you own, with a first run when role is set, as maku fork does.",
-			schema:      json.RawMessage(`{"type":"object","additionalProperties":false,"required":["room","at"],"properties":{"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"at":{"type":"integer","minimum":1},"role":{"type":"string","enum":["implementer","reviewer","triager"]},"prUrl":{"type":"string"},"egress":{"type":"array","maxItems":8,"items":{"type":"string","enum":["pypi","npm","golang","crates"]}},"note":{"type":"string","maxLength":900}}}`)},
+			schema:      json.RawMessage(`{"type":"object","additionalProperties":false,"required":["room","at"],"properties":{"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"at":{"type":"integer","minimum":1},"role":{"type":"string","enum":["implementer","reviewer","triager"]},"prUrl":{"type":"string"},"egress":{"type":"array","maxItems":8,"items":{"type":"string","enum":["pypi","npm","golang","crates","maven","node"]}},"note":{"type":"string","maxLength":900}}}`)},
 	}
 	if s.Intake != nil && s.Coordination.on() {
 		all = append(all, s.coordinationTool())

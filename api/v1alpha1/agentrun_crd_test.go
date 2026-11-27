@@ -114,7 +114,7 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 	if got := enum(spec.Properties["effort"]); !slices.Equal(got, []string{`"low"`, `"medium"`, `"high"`}) {
 		t.Errorf("effort enum %v, want low, medium, high", got)
 	}
-	if got := enum(*spec.Properties["egress"].Properties["profiles"].Items.Schema); !slices.Equal(got, []string{`"pypi"`, `"npm"`, `"golang"`, `"crates"`}) {
+	if got := enum(*spec.Properties["egress"].Properties["profiles"].Items.Schema); !slices.Equal(got, []string{`"pypi"`, `"npm"`, `"golang"`, `"crates"`, `"maven"`, `"node"`}) {
 		t.Errorf("egress.profiles enum %v", got)
 	}
 	if got := enum(v.Schema.OpenAPIV3Schema.Properties["status"].Properties["phase"]); len(got) != 7 {

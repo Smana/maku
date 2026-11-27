@@ -454,7 +454,7 @@ func (r *Repository) Class(name string) (Class, bool) {
 
 // EgressProfiles are the registry profiles a run may request on top of github: the AgentRun
 // XRD's enum, which the composition turns into FQDNs.
-var EgressProfiles = []string{"pypi", "npm", "golang", "crates"}
+var EgressProfiles = []string{"pypi", "npm", "golang", "crates", "maven", "node"}
 
 // Checks is what a check-enabled run of the repository requests beyond github (v3 feature 3,
 // RC7): the platform names the egress, never the repository's own file.

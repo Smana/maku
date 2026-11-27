@@ -205,7 +205,7 @@ type AgentRunEgress struct {
 }
 
 // AgentRunEgressProfile is one registry profile; github is not one, it is always on.
-// +kubebuilder:validation:Enum=pypi;npm;golang;crates
+// +kubebuilder:validation:Enum=pypi;npm;golang;crates;maven;node
 type AgentRunEgressProfile string
 
 // AgentRunStatus is what runwatch and the factory read (C3), as the composition writes it.

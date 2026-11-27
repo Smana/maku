@@ -122,6 +122,8 @@ spec:
                       - npm
                       - golang
                       - crates
+                      - maven
+                      - node
                       type: string
                     maxItems: 4
                     type: array

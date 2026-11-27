@@ -35,8 +35,9 @@ func set(s ...string) map[string]bool {
 }
 
 var (
-	installers = map[string]string{"pip": "pypi", "pip3": "pypi", "uv": "pypi", "npm": "npm", "yarn": "npm", "pnpm": "npm", "go": "golang", "cargo": "crates"}
-	installs   = map[string][]string{"pip": {"install"}, "pip3": {"install"}, "uv": {"add", "pip"}, "npm": {"install", "i", "add", "ci"},
+	installers = map[string]string{"pip": "pypi", "pip3": "pypi", "uv": "pypi", "npm": "npm", "yarn": "npm", "pnpm": "npm", "go": "golang", "cargo": "crates",
+		"mvn": "maven", "mvnw": "maven", "gradle": "maven", "gradlew": "maven"}
+	installs = map[string][]string{"pip": {"install"}, "pip3": {"install"}, "uv": {"add", "pip"}, "npm": {"install", "i", "add", "ci"},
 		"yarn": {"add", "install"}, "pnpm": {"add", "install"}, "go": {"get", "install"}, "cargo": {"add", "install", "fetch"}}
 	goMod = []string{"download", "tidy", "vendor"}
 

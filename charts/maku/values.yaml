@@ -342,8 +342,9 @@ runController:
   # naming sandbox.runtimeClassName and sandbox.unsafeAllowRunc.
   runtimeHandler: runsc
   createRuntimeClass: false # a cluster-scoped name: opt in where no such RuntimeClass exists (the quickstart does)
-  # Replaces the built-in profiles (github, pypi, npm, golang, crates) when set. The built-in github
-  # profile is github.com and api.github.com: GitHub's release and raw hosts are the install set below.
+  # Replaces the built-in profiles (github, pypi, npm, golang, crates, maven, node) when set. The
+  # built-in github profile is github.com and api.github.com: GitHub's release and raw hosts are the
+  # install set below.
   egressProfiles: {}
   # A check-enabled run's install set: hosts it reaches only while its toolchain installs, before the
   # agent starts. In networkPolicies.mode kubernetes the egress proxy closes them when the harness asks,

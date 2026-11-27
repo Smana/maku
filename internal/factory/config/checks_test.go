@@ -23,6 +23,9 @@ func TestChecksEgressIsTheProfileEnumAtMostFourOnce(t *testing.T) {
 			t.Fatalf("egress %s: %v, want %q", tc.egress, err, tc.want)
 		}
 	}
+	if _, err := Parse([]byte(withChecks(t, "[maven, node, npm]"))); err != nil {
+		t.Fatalf("maven and node are profiles: %v", err)
+	}
 	if _, err := Parse([]byte(strings.Replace(withChecks(t, "[pypi]"), "checks: {egress:", "checks: {hosts: [x], egress:", 1))); err == nil {
 		t.Fatal("an unknown checks key parsed: the decoder must refuse it")
 	}
