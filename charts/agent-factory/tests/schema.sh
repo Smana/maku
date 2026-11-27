@@ -42,6 +42,8 @@ rejects 'a parentRef without a name' "missing property 'name'" "${demo[@]}" --se
 rejects 'an unknown expose.web key' "additional properties 'hostname' not allowed" "${demo[@]}" --set expose.web.hostname=x
 rejects 'a catalog exclude naming no catalog policy' 'value must be one of' "${demo[@]}" --set-json 'mergePolicies.catalog.exclude=["dependencies"]'
 rejects 'an unknown mergePolicies.catalog key' "additional properties 'enable' not allowed" "${demo[@]}" --set mergePolicies.catalog.enable=true
+rejects 'a routine catalog exclude naming no catalog routine' 'value must be one of' "${demo[@]}" --set-json 'routines.catalog.exclude=["bogus"]'
+rejects 'an unknown routines.catalog key' "additional properties 'enable' not allowed" "${demo[@]}" --set routines.catalog.enable=true
 rejects 'an unknown webProxy key' "additional properties 'enable' not allowed" "${demo[@]}" --set webProxy.enable=true
 rejects 'an unknown maku.broker.human.mcp.start key' "additional properties 'repos' not allowed" "${demo[@]}" --set-json 'maku.broker.human.mcp.start={"repos":["o/r"]}'
 rejects 'a malformed maku.broker.human.mcp.start.except entry' 'does not match pattern' "${demo[@]}" --set-json 'maku.broker.human.mcp.start={"except":["not-a-repo"]}'

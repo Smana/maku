@@ -90,10 +90,11 @@ type Status struct {
 	Factories     map[string]v1alpha1.FactoryStatus
 	Repositories  map[string]v1alpha1.RepositoryStatus
 	MergePolicies map[string]v1alpha1.MergePolicyStatus
+	Routines      map[string]v1alpha1.RoutineStatus
 }
 
 // Desired returns the status each object should have, conditions stamped with now.
-func Desired(in Inputs, factories []v1alpha1.Factory, repos []v1alpha1.Repository, policies []v1alpha1.MergePolicy, now metav1.Time) Status {
+func Desired(in Inputs, factories []v1alpha1.Factory, repos []v1alpha1.Repository, policies []v1alpha1.MergePolicy, routines []v1alpha1.Routine, now metav1.Time) Status {
 	d := desirer{in: in, now: now, served: map[string]config.Repository{}}
 	if in.Config != nil {
 		for _, r := range in.Config.Repos() {
@@ -104,6 +105,7 @@ func Desired(in Inputs, factories []v1alpha1.Factory, repos []v1alpha1.Repositor
 		Factories:     map[string]v1alpha1.FactoryStatus{},
 		Repositories:  map[string]v1alpha1.RepositoryStatus{},
 		MergePolicies: map[string]v1alpha1.MergePolicyStatus{},
+		Routines:      map[string]v1alpha1.RoutineStatus{},
 	}
 	for i := range factories {
 		out.Factories[factories[i].Name] = d.factory(&factories[i])
@@ -113,6 +115,9 @@ func Desired(in Inputs, factories []v1alpha1.Factory, repos []v1alpha1.Repositor
 	}
 	for i := range policies {
 		out.MergePolicies[policies[i].Name] = d.mergePolicy(&policies[i])
+	}
+	for i := range routines {
+		out.Routines[routines[i].Name] = d.routine(&routines[i])
 	}
 	return out
 }
@@ -224,7 +229,7 @@ func (d *desirer) repository(r *v1alpha1.Repository) v1alpha1.RepositoryStatus {
 		}
 	}
 	if rc, ok := d.served[strings.ToLower(name)]; ok {
-		d.servedRepository(&st, &rc, o, g)
+		d.servedRepository(&st, r, &rc, o, g)
 		d.privateCode(&st.Conditions, g, &rc)
 	} else {
 		d.fileConditions(&st.Conditions, g, "", false)
@@ -249,12 +254,19 @@ func (d *desirer) repositoryReady(cs *[]metav1.Condition, gen int64, o *configso
 			return
 		}
 	}
+	for _, rb := range o.RoutineBindings {
+		if !rb.Accepted {
+			d.set(cs, gen, ConditionReady, metav1.ConditionFalse, "RoutinesRefused", rb.Name+": "+rb.Message)
+			return
+		}
+	}
 	d.set(cs, gen, ConditionReady, metav1.ConditionTrue, "Ready", "")
 }
 
 // servedRepository fills what a served repository's status says (B10, plan PR14): its classes,
-// each binding's outcome, BindingsValid, the counts, authority, file conditions and resolved merge.
-func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Repository, o *configsource.Outcome, g int64) {
+// each binding's outcome, BindingsValid, routines, RoutinesValid, the counts, authority, file
+// conditions and resolved merge.
+func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, r *v1alpha1.Repository, rc *config.Repository, o *configsource.Outcome, g int64) {
 	st.Authority = config.ClassAuthorityCentral
 	if d.in.Config.RepositoryAuthoritative(rc) {
 		st.Authority = config.ClassAuthorityRepository
@@ -300,14 +312,44 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Rep
 			st.Classes = append(st.Classes, bs)
 		}
 	}
+	var refusedRoutines []string
+	if o != nil {
+		for _, rb := range o.RoutineBindings {
+			bs := v1alpha1.RoutineBindingStatus{
+				Name:     rb.Name,
+				Mode:     rb.Mode,
+				Accepted: rb.Accepted,
+				Reason:   rb.Reason,
+				Message:  truncate(rb.Message, maxBindingMessage),
+			}
+			if rb.Served {
+				bs.RoutineGeneration = rb.RoutineGeneration
+			}
+			if !rb.Accepted {
+				refusedRoutines = append(refusedRoutines, fmt.Sprintf("%s (%s)", rb.Name, rb.Reason))
+			}
+			st.Routines = append(st.Routines, bs)
+		}
+	}
+	var deprecated []string
 	if o != nil && slices.ContainsFunc(o.Bindings, func(b resources.BindingOutcome) bool { return b.Name == "revert" }) {
-		d.set(&st.Conditions, g, ConditionDeprecated, metav1.ConditionTrue, "Deprecated",
-			"the revert binding is deprecated: set spec.merge.autoRevert and remove the binding")
+		deprecated = append(deprecated, "the revert binding is deprecated: set spec.merge.autoRevert and remove the binding")
+	}
+	if len(rc.Schedules) > 0 || (o != nil && o.Accepted && r != nil && len(r.Spec.Schedules) > 0) {
+		deprecated = append(deprecated, "spec.schedules is deprecated: run maku config migrate to convert schedules to Routine bindings")
+	}
+	if len(deprecated) > 0 {
+		d.set(&st.Conditions, g, ConditionDeprecated, metav1.ConditionTrue, "Deprecated", strings.Join(deprecated, "; "))
 	}
 	if len(refused) > 0 {
 		d.set(&st.Conditions, g, v1alpha1.ConditionBindingsValid, metav1.ConditionFalse, "BindingsRefused", truncate("refused: "+strings.Join(refused, ", "), maxBindingMessage))
 	} else {
 		d.set(&st.Conditions, g, v1alpha1.ConditionBindingsValid, metav1.ConditionTrue, "BindingsValid", "")
+	}
+	if len(refusedRoutines) > 0 {
+		d.set(&st.Conditions, g, v1alpha1.ConditionRoutinesValid, metav1.ConditionFalse, "RoutinesRefused", truncate("refused: "+strings.Join(refusedRoutines, ", "), maxBindingMessage))
+	} else {
+		d.set(&st.Conditions, g, v1alpha1.ConditionRoutinesValid, metav1.ConditionTrue, "RoutinesValid", "")
 	}
 	for _, c := range rc.Classes { // what is served, whatever the bindings say
 		if c.Live {
@@ -374,6 +416,46 @@ func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatu
 	slices.SortFunc(st.Consumers, func(a, b v1alpha1.ConsumerStatus) int { return cmp.Compare(a.Repository, b.Repository) })
 	// The counts are over every consumer; the list is cut to the schema's bound, or the status
 	// update would be refused and the status freeze.
+	st.ConsumerCount = len(st.Consumers)
+	st.Consumers = st.Consumers[:min(len(st.Consumers), maxConsumers)]
+	return st
+}
+
+// routine computes a Routine's status: Accepted and its consumers. A refused generation whose
+// last good still serves says so; the consumers show which generation each one serves.
+func (d *desirer) routine(rt *v1alpha1.Routine) v1alpha1.RoutineStatus {
+	o := d.outcome(resources.KindRoutine, rt.Name)
+	g := observed(o, rt.Generation)
+	st := v1alpha1.RoutineStatus{ObservedGeneration: g}
+	if o != nil && !o.Accepted && o.ServedGeneration > 0 {
+		d.set(&st.Conditions, g, v1alpha1.ConditionAccepted, metav1.ConditionFalse, o.Reason,
+			fmt.Sprintf("serving generation %d; generation %d refused: %s", o.ServedGeneration, o.ObservedGeneration, o.Message))
+	} else {
+		d.accepted(&st.Conditions, g, o)
+	}
+	if o == nil {
+		return st
+	}
+	for _, rb := range o.RoutineConsumers {
+		cs := v1alpha1.RoutineConsumerStatus{
+			Repository: rb.Repository,
+			Mode:       rb.Mode,
+			Accepted:   rb.Accepted,
+			Reason:     rb.Reason,
+			Paused:     rb.Paused,
+		}
+		if rb.Served {
+			cs.ServedGeneration = rb.RoutineGeneration
+		}
+		if cs.Paused {
+			st.PausedCount++
+		}
+		if rb.Served && rb.Mode != config.RoutineModeDisabled && !cs.Paused {
+			st.ActiveCount++
+		}
+		st.Consumers = append(st.Consumers, cs)
+	}
+	slices.SortFunc(st.Consumers, func(a, b v1alpha1.RoutineConsumerStatus) int { return cmp.Compare(a.Repository, b.Repository) })
 	st.ConsumerCount = len(st.Consumers)
 	st.Consumers = st.Consumers[:min(len(st.Consumers), maxConsumers)]
 	return st

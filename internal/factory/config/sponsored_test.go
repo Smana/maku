@@ -44,6 +44,7 @@ func TestSponsoredConfig(t *testing.T) {
 	}
 	for name, c := range map[string]struct{ from, to, want string }{
 		"a reserved name":                 {"name: slack-app", "name: runlore", `"runlore" is reserved`},
+		"the upkeep name":                 {"name: slack-app", "name: upkeep", `"upkeep" is reserved`},
 		"the broker's name":               {"name: slack-app", "name: room-broker", `"room-broker" is reserved`},
 		"not a DNS label":                 {"name: slack-app", "name: Slack_App", "is not a DNS label"},
 		"no client id file":               {"      clientIDFile: /etc/agent-factory-sponsored/slack-app-client-id\n", "", "clientIDFile is required"},

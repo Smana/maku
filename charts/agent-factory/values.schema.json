@@ -122,6 +122,26 @@
         }
       }
     },
+    "routines": {
+      "description": "The starter routine catalog the chart ships with the factory.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "catalog": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"description": "Render the catalog's Routine objects, with maku-factory.", "type": "boolean"},
+            "exclude": {
+              "description": "Catalog routines left out: the platform keeps its own objects of these names.",
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string", "enum": ["dead-links", "renovate-red", "doc-drift", "dead-code", "flaky-tests", "dup-unifier"]}
+            }
+          }
+        }
+      }
+    },
     "postgres": {
       "description": "The single-replica bundled rooms database (v5 DB1-DB4): demo (values-demo.yaml) or Tier-1 Pilot (acknowledgeSingleReplica + TLS).",
       "type": "object",

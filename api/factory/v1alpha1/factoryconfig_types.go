@@ -24,9 +24,12 @@ const (
 	ReasonOverPolicy        = config.ReasonOverPolicy
 	ReasonGuardrailMismatch = config.ReasonGuardrailMismatch
 	ReasonAmbiguousAdoption = config.ReasonAmbiguousAdoption
+	ReasonOverRoutine       = config.ReasonOverRoutine
 
 	// ConditionBindingsValid is false on a Repository while any of its bindings is refused (B10).
 	ConditionBindingsValid = "BindingsValid"
+	// ConditionRoutinesValid is false on a Repository while any of its routine bindings is refused.
+	ConditionRoutinesValid = "RoutinesValid"
 
 	// ConditionPrivateCode is false on a served Repository whose code is private, internal or of
 	// unread visibility while spec.privateCode.acknowledged is unset (v4 D3): a warning in this
@@ -171,6 +174,12 @@ type RepositorySpec struct {
 	Checks       config.Checks `json:"checks,omitzero"`
 	// +kubebuilder:validation:MaxItems=16
 	Schedules []config.Schedule `json:"schedules,omitempty"`
+	// Routines binds reusable Routine objects this repository runs on a schedule.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Routines []config.RoutineBinding `json:"routines,omitempty"`
 	// Workflow is the workflow a task of the repository runs when no label and no source names one,
 	// standard by default, and whether its careful tasks start with the tester (WF3, WF7).
 	Workflow config.RepositoryWorkflow `json:"workflow,omitzero"`
@@ -216,6 +225,12 @@ type RepositoryStatus struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=32
 	Classes []BindingStatus `json:"classes,omitempty"`
+	// Routines is one entry per routine binding.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Routines []RoutineBindingStatus `json:"routines,omitempty"`
 	// Merge is the repository's merge settings as resolved, the Factory's defaults applied (Q8).
 	Merge *config.Merge `json:"merge,omitempty"`
 	// MergeDefaulted names the merge keys taken from the Factory's mergeDefaults.

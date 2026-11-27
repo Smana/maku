@@ -1,0 +1,186 @@
+# Source: agent-factory/templates/routines-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Routine
+metadata:
+  name: dead-links
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  breaker:
+    maxConsecutiveClosed: 3
+    maxConsecutiveFailures: 3
+    minMergeRate: 0.25
+    minSamples: 5
+    window: 10
+  cooldown: 24h
+  dataClass: public
+  defaultPrompt: Fix the dead external links listed below, updating or removing broken URLs while keeping documentation accurate. If no links can be verified or fixed cleanly, make no changes.
+  description: Fix dead links reported by the link-check oracle.
+  maxCostUSD: 1
+  maxOpenPRs: 1
+  probe:
+    kind: dead-links
+    maxFindings: 10
+    requireConsecutive: 2
+  protectedPaths:
+    - ^\.github/agent-factory/
+  requires:
+    - oracleClass
+  workflow: quick
+---
+# Source: agent-factory/templates/routines-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Routine
+metadata:
+  name: renovate-red
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  breaker:
+    maxConsecutiveClosed: 3
+    maxConsecutiveFailures: 3
+    minMergeRate: 0.25
+    minSamples: 5
+    window: 10
+  cooldown: 24h
+  dataClass: public
+  defaultPrompt: Inspect the failing Renovate pull requests listed below, diagnose the build or test breakage introduced by the dependency update, and commit the minimal fix. If the failure is unrelated or unclear, leave the pull request untouched.
+  description: Fix failing CI checks on open Renovate dependency pull requests.
+  maxCostUSD: 2
+  maxOpenPRs: 1
+  probe:
+    kind: renovate-red
+    maxFindings: 5
+  protectedPaths:
+    - ^\.github/agent-factory/
+  workflow: standard
+---
+# Source: agent-factory/templates/routines-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Routine
+metadata:
+  name: doc-drift
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  breaker:
+    maxConsecutiveClosed: 3
+    maxConsecutiveFailures: 3
+    minMergeRate: 0.25
+    minSamples: 5
+    window: 10
+  cooldown: 24h
+  dataClass: public
+  defaultPrompt: Audit recent changes against the repository documentation and update stale references, flags, examples, or instructions in small, focused edits. If documentation is already accurate, make no changes and finish without opening a pull request.
+  description: Keep documentation aligned with recent code and configuration changes.
+  maxCostUSD: 2
+  maxOpenPRs: 1
+  probe:
+    kind: none
+  protectedPaths:
+    - ^\.github/agent-factory/
+  workflow: standard
+---
+# Source: agent-factory/templates/routines-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Routine
+metadata:
+  name: dead-code
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  breaker:
+    maxConsecutiveClosed: 3
+    maxConsecutiveFailures: 3
+    minMergeRate: 0.25
+    minSamples: 5
+    window: 10
+  cooldown: 24h
+  dataClass: public
+  defaultPrompt: Remove the unreachable code reported in the findings below and verify the full test suite passes. If a reported symbol is still used dynamically or removal is unsafe, make no changes and finish without opening a pull request.
+  description: Remove statically unreachable code verified by CI findings.
+  maxCostUSD: 2
+  maxOpenPRs: 1
+  probe:
+    kind: actions-findings
+    maxFindings: 1
+    requireConsecutive: 2
+  protectedPaths:
+    - ^\.github/agent-factory/
+  requires:
+    - probeWorkflow
+  workflow: standard
+---
+# Source: agent-factory/templates/routines-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Routine
+metadata:
+  name: flaky-tests
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  breaker:
+    maxConsecutiveClosed: 3
+    maxConsecutiveFailures: 3
+    minMergeRate: 0.25
+    minSamples: 5
+    window: 10
+  cooldown: 24h
+  dataClass: public
+  defaultPrompt: Diagnose and fix the flaky test reported in the findings below (races, timing assumptions, shared state, or non-determinism) without weakening assertions. If the root cause cannot be reproduced or fixed cleanly, make no changes.
+  description: Stabilize flaky tests reported repeatedly by CI findings.
+  maxCostUSD: 2
+  maxOpenPRs: 1
+  probe:
+    kind: actions-findings
+    maxFindings: 1
+    requireConsecutive: 2
+  protectedPaths:
+    - ^\.github/agent-factory/
+  requires:
+    - probeWorkflow
+  workflow: standard
+---
+# Source: agent-factory/templates/routines-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Routine
+metadata:
+  name: dup-unifier
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  breaker:
+    maxConsecutiveClosed: 3
+    maxConsecutiveFailures: 3
+    minMergeRate: 0.25
+    minSamples: 5
+    window: 10
+  cooldown: 24h
+  dataClass: public
+  defaultPrompt: Find one small, high-confidence cluster of duplicated non-trivial logic where consolidation clearly improves maintainability without coupling unrelated packages, unify it, and verify tests pass. If no clear candidate exists, make no changes.
+  description: Consolidate small, high-confidence duplicated helpers across packages.
+  maxCostUSD: 2
+  maxOpenPRs: 1
+  probe:
+    kind: none
+  protectedPaths:
+    - ^\.github/agent-factory/
+  workflow: standard

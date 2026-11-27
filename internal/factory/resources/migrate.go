@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/robfig/cron/v3"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 )
 
@@ -565,4 +569,95 @@ func upgradeWorkflows(base map[string]any) bool {
 		}
 	}
 	return changed
+}
+
+// MigrateSchedules converts each repository's deprecated spec.schedules[] into reusable Routine
+// manifests and per-repository RoutineBindings (P1-R2). Schedules sharing a name across
+// repositories produce one Routine when their meaning matches, and an error when they differ.
+func MigrateSchedules(repos []config.Repository) ([]v1alpha1.Routine, map[string][]config.RoutineBinding, error) {
+	type seenRoutine struct {
+		spec config.RoutineSpec
+		repo string
+	}
+	byName := map[string]seenRoutine{}
+	bindings := map[string][]config.RoutineBinding{}
+
+	for _, r := range repos {
+		if len(r.Schedules) == 0 {
+			continue
+		}
+		var repoBindings []config.RoutineBinding
+		for _, s := range r.Schedules {
+			if !config.ValidRoutineName(s.Name) {
+				return nil, nil, fmt.Errorf("migrate schedules: %s: schedule name %q is not a valid Routine name", r.Name, s.Name)
+			}
+			if s.Cron == "" {
+				return nil, nil, fmt.Errorf("migrate schedules: %s: schedule %q has empty cron", r.Name, s.Name)
+			}
+			if _, err := cron.ParseStandard(s.Cron); err != nil {
+				return nil, nil, fmt.Errorf("migrate schedules: %s: schedule %q cron %q does not parse: %w", r.Name, s.Name, s.Cron, err)
+			}
+			if s.Text == "" {
+				return nil, nil, fmt.Errorf("migrate schedules: %s: schedule %q has empty text", r.Name, s.Name)
+			}
+
+			spec := config.RoutineSpec{
+				Workflow:      s.WorkflowOr(),
+				DataClass:     s.DataClass,
+				DefaultPrompt: s.Text,
+				MaxOpenPRs:    1,
+			}
+			b := config.RoutineBinding{
+				Name: s.Name,
+				Mode: config.RoutineModePR,
+				Cron: s.Cron,
+			}
+
+			switch s.Probe {
+			case "", config.ProbeNone:
+				spec.Probe = config.ProbeSpec{Kind: config.ProbeNone}
+			case config.ProbeDeadLinks:
+				if s.Class == "" {
+					return nil, nil, fmt.Errorf("migrate schedules: %s: schedule %q with probe dead-links requires class", r.Name, s.Name)
+				}
+				spec.Probe = config.ProbeSpec{
+					Kind:               config.ProbeDeadLinks,
+					RequireConsecutive: 2,
+					MaxFindings:        10,
+				}
+				spec.Requires = []string{"oracleClass"}
+				b.OracleClass = s.Class
+			case config.ProbeRenovateRed:
+				spec.Probe = config.ProbeSpec{Kind: config.ProbeRenovateRed}
+				if s.ProbeAuthor != "" && s.ProbeAuthor != "renovate[bot]" {
+					b.ProbeAuthor = s.ProbeAuthor
+				}
+			default:
+				return nil, nil, fmt.Errorf("migrate schedules: %s: schedule %q has unsupported probe %q", r.Name, s.Name, s.Probe)
+			}
+
+			if prev, ok := byName[s.Name]; ok {
+				if !reflect.DeepEqual(prev.spec, spec) {
+					return nil, nil, fmt.Errorf("migrate schedules: schedule %q differs between %s and %s", s.Name, prev.repo, r.Name)
+				}
+			} else {
+				byName[s.Name] = seenRoutine{spec: spec, repo: r.Name}
+			}
+			repoBindings = append(repoBindings, b)
+		}
+		bindings[r.Name] = repoBindings
+	}
+
+	routines := make([]v1alpha1.Routine, 0, len(byName))
+	for _, name := range slices.Sorted(maps.Keys(byName)) {
+		routines = append(routines, v1alpha1.Routine{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: v1alpha1.GroupVersion.String(),
+				Kind:       string(KindRoutine),
+			},
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec:       v1alpha1.RoutineSpec{RoutineSpec: byName[name].spec},
+		})
+	}
+	return routines, bindings, nil
 }

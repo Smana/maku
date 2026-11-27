@@ -23,7 +23,7 @@ func TestValidRef(t *testing.T) {
 }
 
 func TestReserved(t *testing.T) {
-	if !IsReserved("policy") || IsReserved("ci-bot") {
+	if !IsReserved("policy") || !IsReserved("upkeep") || IsReserved("ci-bot") {
 		t.Fatal("IsReserved wrong")
 	}
 }

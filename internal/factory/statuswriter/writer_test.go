@@ -107,16 +107,16 @@ func TestNoCRDsNoInputsAndBackOff(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- w.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond) // a hundred ticks at Every
-	if n := r.lists.Load(); n != 3 {
-		t.Errorf("%d lists in 100 ticks, want one pass (3): no backoff", n)
+	if n := r.lists.Load(); n != 4 {
+		t.Errorf("%d lists in 100 ticks, want one pass (4): no backoff", n)
 	}
 	w.Kick()
 	deadline := time.Now().Add(5 * time.Second)
-	for r.lists.Load() < 6 && time.Now().Before(deadline) {
+	for r.lists.Load() < 8 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if n := r.lists.Load(); n != 6 {
-		t.Errorf("%d lists after a kick, want 6", n)
+	if n := r.lists.Load(); n != 8 {
+		t.Errorf("%d lists after a kick, want 8", n)
 	}
 	cancel()
 	if err := <-done; err != nil {

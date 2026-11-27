@@ -409,6 +409,7 @@ type Repository struct {
 	Classes      map[string]Class `json:"classes"`
 	Merge        Merge            `json:"merge"`
 	Schedules    []Schedule       `json:"schedules,omitempty"`
+	Routines     []RoutineBinding `json:"routines,omitempty"`
 	Checks       Checks           `json:"checks,omitzero"`
 	// ClassAuthority is central (the default) or repository: its classes are then its
 	// .github/agent-factory.yaml's, with policyManagement.repositoryAuthority on (stage 4, MP15).
@@ -425,6 +426,8 @@ type Repository struct {
 	// read Bound, and a dropped binding never refuses its repository (plan PR7).
 	Bound    []string  `json:"bound,omitempty"`
 	Bindings []Binding `json:"bindings,omitempty"`
+	// ResolvedRoutines holds the repository's resolved Routine bindings, populated by resources.Assemble.
+	ResolvedRoutines map[string]ResolvedRoutine `json:"-"`
 	// MergeDefaulted are the merge keys taken from mergeDefaults (Q8), sorted.
 	MergeDefaulted []string `json:"-"`
 }
@@ -859,11 +862,27 @@ type Caps struct {
 	// more of the review-class work that produces them (§6.2's back-pressure on reviewers).
 	// Required, never defaulted: a config that omits it fails its rollout (§4).
 	AwaitingHumanWIP int `json:"awaitingHumanWIP"`
+	// UpkeepAwaitingHumanWIP bounds routine tasks waiting on a human review; defaults to
+	// max(1, AwaitingHumanWIP/2).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	UpkeepAwaitingHumanWIP int `json:"upkeepAwaitingHumanWIP,omitempty"`
 	// PreferRevisions is CD22: while any task in the factory waits for a slot to run a revision
 	// (a run that continues a task which already has one), a task whose next run is its first
 	// waits with the reason waiting_revision_first. Caps still bind: this priority never overrides
 	// a limit, and nothing is reserved — a first run gives up one slot-time. Off by default.
 	PreferRevisions bool `json:"preferRevisions,omitempty"`
+}
+
+// UpkeepWIP returns the configured upkeep awaiting-human WIP cap, or max(1, AwaitingHumanWIP/2).
+func (c Caps) UpkeepWIP() int {
+	if c.UpkeepAwaitingHumanWIP > 0 {
+		return c.UpkeepAwaitingHumanWIP
+	}
+	if c.AwaitingHumanWIP <= 0 {
+		return 0
+	}
+	return max(1, c.AwaitingHumanWIP/2)
 }
 
 // Facts are what a terminal task tells its room about its dollars (CD23). A switch here lands with
@@ -902,6 +921,11 @@ type Budgets struct {
 	EnforcePrincipal bool    `json:"enforcePrincipal"`
 	FactoryDailyUSD  float64 `json:"factoryDailyUSD"`
 	HumanDailyUSD    float64 `json:"humanDailyUSD"`
+	// UpkeepDailyUSD bounds cron routine spend under system:upkeep (Q15). Omitted:
+	// min(10.00, 0.25*FactoryDailyUSD). Explicit 0 disables cron routine spend.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	UpkeepDailyUSD *float64 `json:"upkeepDailyUSD,omitempty"`
 	// PerPerson is v2's per-person caps: off, every run is admitted as before.
 	PerPerson PerPerson `json:"perPerson"`
 	// The token days the USD days replaced (#155), accepted for one release so that a file
@@ -939,17 +963,32 @@ func (b *Budgets) addSponsoredDay(s Sponsored) {
 // never a shadow (F4, R7).
 func (b Budgets) Sponsored(key string) bool { _, ok := b.sponsoredDays[key]; return ok }
 
+// UpkeepDaily returns the cron upkeep daily budget in USD: the explicit value when set, else
+// min(10.00, 0.25*FactoryDailyUSD).
+func (b Budgets) UpkeepDaily() float64 {
+	if b.UpkeepDailyUSD != nil {
+		return *b.UpkeepDailyUSD
+	}
+	if b.FactoryDailyUSD <= 0 {
+		return 0
+	}
+	return min(DefaultUpkeepDailyMaxUSD, 0.25*b.FactoryDailyUSD)
+}
+
 // DailyMicroUSD is the day of a ledger key, in the ledger's micro-USD: the fleet's for
-// PrincipalFactory, the person day for any other key while per-person caps are on, else
-// humanDailyUSD.
+// PrincipalFactory, the upkeep slice for PrincipalUpkeep, the person day for any other key while
+// per-person caps are on, else humanDailyUSD.
 func (b Budgets) DailyMicroUSD(principal string) int64 {
+	switch principal {
+	case PrincipalFactory:
+		return MicroUSD(b.FactoryDailyUSD)
+	case PrincipalUpkeep:
+		return MicroUSD(b.UpkeepDaily())
+	}
 	if d, ok := b.sponsoredDays[principal]; ok {
 		return d
 	}
-	switch {
-	case principal == PrincipalFactory:
-		return MicroUSD(b.FactoryDailyUSD)
-	case b.PerPerson.Enabled:
+	if b.PerPerson.Enabled {
 		return MicroUSD(b.PerPerson.DailyUSD)
 	}
 	return MicroUSD(b.HumanDailyUSD)
@@ -1826,9 +1865,16 @@ func parse(raw []byte, assembled bool, configDir string) (*Config, error) {
 	if c.Caps.EscalatedHours == nil {
 		c.Caps.EscalatedHours = new(defaultEscalatedHours)
 	}
+	if c.Caps.UpkeepAwaitingHumanWIP == 0 && c.Caps.AwaitingHumanWIP > 0 {
+		c.Caps.UpkeepAwaitingHumanWIP = max(1, c.Caps.AwaitingHumanWIP/2)
+	}
 	c.Ignored = c.Budgets.dropTokenDays()
 	if c.Budgets.FactoryDailyUSD == 0 {
 		c.Budgets.FactoryDailyUSD = defaultFactoryDailyUSD // OD-10
+	}
+	if c.Budgets.UpkeepDailyUSD == nil {
+		v := c.Budgets.UpkeepDaily()
+		c.Budgets.UpkeepDailyUSD = &v
 	}
 	if c.Budgets.HumanDailyUSD == 0 {
 		c.Budgets.HumanDailyUSD = defaultHumanDailyUSD
@@ -2217,6 +2263,12 @@ func (c *Config) Validate() error {
 	if c.Caps.AwaitingHumanWIP < 1 {
 		bad("caps.awaitingHumanWIP must be positive")
 	}
+	if c.Caps.UpkeepAwaitingHumanWIP < 0 || (c.Caps.AwaitingHumanWIP > 0 && c.Caps.UpkeepAwaitingHumanWIP > c.Caps.AwaitingHumanWIP) {
+		bad("caps.upkeepAwaitingHumanWIP must be 0..caps.awaitingHumanWIP")
+	}
+	if c.Budgets.UpkeepDailyUSD != nil && (!finite(*c.Budgets.UpkeepDailyUSD) || *c.Budgets.UpkeepDailyUSD < 0 || *c.Budgets.UpkeepDailyUSD > c.Budgets.FactoryDailyUSD) {
+		bad("budgets.upkeepDailyUSD must be 0..budgets.factoryDailyUSD")
+	}
 	for _, d := range []struct {
 		key string
 		usd float64
@@ -2389,6 +2441,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	// §1 schedules. The name keys every task it starts, so names are unique across every
 	// repository and C2-shaped;
 	// the cron must parse to have slots at all.
+	schedNames := map[string]bool{}
 	for _, e := range r.Schedules {
 		switch {
 		case !schedNameRE.MatchString(e.Name):
@@ -2397,6 +2450,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 			bad("schedule name %q is used twice", e.Name)
 		}
 		seenSchedule[e.Name] = true
+		schedNames[e.Name] = true
 		if _, err := cron.ParseStandard(e.Cron); err != nil {
 			bad("schedule %s: cron %q does not parse", e.Name, e.Cron)
 		}
@@ -2426,6 +2480,28 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		}
 		if e.DataClass != "" && e.DataClass != "public" && e.DataClass != "internal" {
 			bad("schedule %s: dataClass %q is public or internal", e.Name, e.DataClass)
+		}
+	}
+	seenRoutine := map[string]bool{}
+	for _, b := range r.Routines {
+		switch {
+		case !routineNameRE.MatchString(b.Name):
+			bad("routine name %q must match ^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$", b.Name)
+		case seenRoutine[b.Name]:
+			bad("routine %q is defined twice (%s)", b.Name, ReasonDefinedTwice)
+		case schedNames[b.Name]:
+			bad("routine %q is also a schedule (%s)", b.Name, ReasonDefinedTwice)
+		}
+		seenRoutine[b.Name] = true
+		if b.Workflow != "" && !c.IsWorkflow(b.Workflow) {
+			bad("routine %s: workflow %q is not a workflow", b.Name, b.Workflow)
+		}
+		for i, p := range b.Egress {
+			if !slices.Contains(EgressProfiles, p) || slices.Index(b.Egress, p) != i {
+				bad("routine %s: egress %q is not one of %v, or is listed twice", b.Name, p, EgressProfiles)
+			} else if !slices.Contains(r.Checks.Egress, p) {
+				bad("routine %s: egress %q is not in repository checks.egress", b.Name, p)
+			}
 		}
 	}
 	// §5.1's arming and §6.4's rollback. The merge gate is as required as the rest of the

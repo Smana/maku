@@ -113,16 +113,19 @@ ynone 'select(.kind == "Certificate")' "no Certificate unless api.tls.issuerRef.
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "api-tls")' "no API pair unless api.tls.secretName"
 ynone 'select(.kind == "ConfigMap") | .data."config.yaml" | from_yaml | .api.tls | select(. != null)' "plaintext by default: no config.api.tls"
 # api.tls on: the pair mounted, config.api.tls pointed at it, the Certificate, the port named https
-# Factory resources D7: the factory reads the three kinds and writes their status, nothing more.
-ykind Role '.rules[] | select((.resources | join(",")) == "factories,repositories,mergepolicies") | (.verbs | join(",")) == "get,list,watch"' "the factory reads its resources"
-ykind Role '.rules[] | select((.resources | join(",")) == "factories/status,repositories/status,mergepolicies/status") | (.verbs | join(",")) == "get,update,patch"' "the factory writes their status"
+# Factory resources: the factory reads the four kinds and writes their status, nothing more.
+ykind Role '.rules[] | select((.resources | join(",")) == "factories,repositories,mergepolicies,routines") | (.verbs | join(",")) == "get,list,watch"' "the factory reads its resources"
+ykind Role '.rules[] | select((.resources | join(",")) == "factories/status,repositories/status,mergepolicies/status,routines/status") | (.verbs | join(",")) == "get,update,patch"' "the factory writes their status"
+ynone 'select(.kind == "Role" and .metadata.name == "agent-factory") | .rules[] | select(.resources[] == "repositories" or .resources[] == "routines") | .verbs[] | select(. == "create" or . == "update" or . == "patch" or . == "delete")' "the factory holds zero write verbs on repositories or routines specs"
 ykind ClusterRole 'select(.metadata.name == "maku-viewer") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-view" == "true"' "maku-viewer aggregates into view"
 ykind ClusterRole 'select(.metadata.name == "maku-mergepolicy-editor") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-edit" == "true"' "maku-mergepolicy-editor aggregates into edit"
+ykind ClusterRole 'select(.metadata.name == "maku-routine-editor") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-edit" == "true"' "maku-routine-editor aggregates into edit"
 ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-admin" == "true"' "maku-factory-admin aggregates into admin"
-# Each role's exact rules: viewer reads, the editor writes only merge policies, admin writes all three.
-ykind ClusterRole 'select(.metadata.name == "maku-viewer") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch")' "maku-viewer is read-only on the three kinds"
+# Each role's exact rules: viewer reads, the editors write only their kinds, admin writes all four.
+ykind ClusterRole 'select(.metadata.name == "maku-viewer") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies,routines" and (.rules[0].verbs | join(",")) == "get,list,watch")' "maku-viewer is read-only on the four kinds"
 ykind ClusterRole 'select(.metadata.name == "maku-mergepolicy-editor") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-mergepolicy-editor covers only mergepolicies"
-ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-factory-admin covers the three kinds"
+ykind ClusterRole 'select(.metadata.name == "maku-routine-editor") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "routines" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-routine-editor covers only routines"
+ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies,routines" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-factory-admin covers the four kinds"
 # v4 step 8: the chart ships no CRD, in templates or crds/: agent-factory-crds alone carries them.
 crds="$(helm template agent-factory . --set image.tag='v0.0.0@sha256:0000' --include-crds | yq ea 'select(.kind == "CustomResourceDefinition") | .metadata.name' -)"
 [[ -z $crds && ! -e crds ]] || { echo "FAIL: the chart ships CRDs ($crds): agent-factory-crds alone carries them" >&2; fail=1; }

@@ -1,5 +1,5 @@
 {{- /* The cluster's shared roles (D2, step 7 R10): one set for every install, so they live here, beside
-the CRDs whose types they describe. The three aggregate into the built-in admin, edit and view roles;
+the CRDs whose types they describe. The four aggregate into the built-in admin, edit and view roles;
 agent-factory-flux-reader is what each install's factory binds (its ClusterRoleBinding is the install's,
 <namespace>-prefixed) for a class's monitor.flux. Kept on uninstall with keep, as the CRDs: a binding
 to them would otherwise dangle. The names are the ones maku-factory rendered, so bindings keep working. */}}
@@ -19,7 +19,7 @@ metadata:
   {{- end }}
 rules:
   - apiGroups: [maku.ogenki.io]
-    resources: [factories, repositories, mergepolicies]
+    resources: [factories, repositories, mergepolicies, routines]
     verbs: [get, list, watch, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -41,6 +41,22 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  name: maku-routine-editor
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+  {{- with $annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [routines]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
   name: maku-viewer
   labels:
     app.kubernetes.io/part-of: agent-factory
@@ -51,7 +67,7 @@ metadata:
   {{- end }}
 rules:
   - apiGroups: [maku.ogenki.io]
-    resources: [factories, repositories, mergepolicies]
+    resources: [factories, repositories, mergepolicies, routines]
     verbs: [get, list, watch]
 ---
 # The post-merge monitor's Flux signal (merge gate classes MC7, R34): read-only, uncached, three

@@ -59,6 +59,10 @@ type Outcome struct {
 	Bindings []resources.BindingOutcome
 	// Consumers are the bindings of a MergePolicy, by Repository (B10).
 	Consumers []resources.BindingOutcome
+	// RoutineBindings are a Repository's routine bindings, in list order.
+	RoutineBindings []resources.RoutineOutcome
+	// RoutineConsumers are the bindings of a Routine, by Repository.
+	RoutineConsumers []resources.RoutineOutcome
 }
 
 // Synced is the last Sync's completion: when, and its error (nil on success). The error is a list
@@ -98,14 +102,16 @@ type Source struct {
 	lastGood map[key]resources.Object
 	// lastResolved is each binding's last resolved class (B9, D5): in memory only, so none after
 	// a restart (D14).
-	lastResolved map[resources.BindingKey]resources.ResolvedClass
-	outcomes     []Outcome
-	synced       Synced
-	warnings     []string                        // the last set logged
-	crdsAbsent   bool                            // the last Sync found the CRDs absent
-	crdsLogged   bool                            // the absence was logged once
-	refusedLog   map[key]int64                   // the generation of each refusal already logged
-	bindingLog   map[resources.BindingKey]string // each binding refusal already logged
+	lastResolved         map[resources.BindingKey]resources.ResolvedClass
+	lastResolvedRoutines map[resources.BindingKey]config.ResolvedRoutine
+	outcomes             []Outcome
+	synced               Synced
+	warnings             []string                        // the last set logged
+	crdsAbsent           bool                            // the last Sync found the CRDs absent
+	crdsLogged           bool                            // the absence was logged once
+	refusedLog           map[key]int64                   // the generation of each refusal already logged
+	bindingLog           map[resources.BindingKey]string // each binding refusal already logged
+	routineBindingLog    map[resources.BindingKey]string // each routine binding refusal already logged
 
 	kickOnce sync.Once
 	kick     chan struct{}
@@ -175,9 +181,9 @@ func (s *Source) Start(ctx context.Context) error {
 	}
 }
 
-// Kinds are the three kinds the config is built from, in the order Sync lists them.
+// Kinds are the four kinds the config is built from, in the order Sync lists them.
 func Kinds() []client.Object {
-	return []client.Object{&v1alpha1.Factory{}, &v1alpha1.Repository{}, &v1alpha1.MergePolicy{}}
+	return []client.Object{&v1alpha1.Factory{}, &v1alpha1.Repository{}, &v1alpha1.MergePolicy{}, &v1alpha1.Routine{}}
 }
 
 // handler kicks on an add, a delete, and an update that changed the spec: a status write leaves
@@ -239,7 +245,11 @@ func (s *Source) sync(ctx context.Context) error {
 	}
 	listed := slices.Clone(objs)
 
-	opts := resources.Options{LastResolved: s.lastResolved, ConfigDir: s.ConfigDir}
+	opts := resources.Options{
+		LastResolved:         s.lastResolved,
+		LastResolvedRoutines: s.lastResolvedRoutines,
+		ConfigDir:            s.ConfigDir,
+	}
 	r, aerr := resources.Assemble(s.File, objs, opts)
 
 	// D5: put each refused object's last good version back and assemble again.
@@ -279,7 +289,7 @@ func (s *Source) sync(ctx context.Context) error {
 		return nil
 	}
 
-	r.Config.Generations = generations(r.Accepted, r.Bindings)
+	r.Config.Generations = generations(r.Accepted, r.Bindings, r.RoutineBindings)
 	if s.Live == nil {
 		s.Live = config.NewLive(r.Config)
 	} else {
@@ -317,9 +327,21 @@ func (s *Source) sync(ctx context.Context) error {
 		}
 	}
 	s.lastResolved = resolved
+	resolvedRoutines := maps.Clone(r.ResolvedRoutines)
+	for _, rb := range r.RoutineBindings {
+		k := resources.BindingKey{Repository: rb.Repository, Name: rb.Name}
+		if last, ok := s.lastResolvedRoutines[k]; ok && !rb.Accepted && rb.Served {
+			if resolvedRoutines == nil {
+				resolvedRoutines = map[resources.BindingKey]config.ResolvedRoutine{}
+			}
+			resolvedRoutines[k] = last
+		}
+	}
+	s.lastResolvedRoutines = resolvedRoutines
 	s.outcomes = outcomes(listed, r, first, nil)
 	s.logRefusals()
 	s.logBindingRefusals(listed, r.Bindings)
+	s.logRoutineBindingRefusals(listed, r.RoutineBindings)
 	s.synced = Synced{At: s.now()}
 	return nil
 }
@@ -370,6 +392,31 @@ func (s *Source) logBindingRefusals(listed []resources.Object, bindings []resour
 	s.bindingLog = next
 }
 
+// logRoutineBindingRefusals logs each refused routine binding once per Repository and Routine
+// generation, at WARN.
+func (s *Source) logRoutineBindingRefusals(listed []resources.Object, bindings []resources.RoutineOutcome) {
+	gen := map[key]int64{}
+	for _, o := range listed {
+		gen[key{o.Kind, o.Name}] = o.Generation
+	}
+	next := map[resources.BindingKey]string{}
+	for _, b := range bindings {
+		if b.Accepted {
+			continue
+		}
+		k := resources.BindingKey{Repository: b.Repository, Name: b.Name}
+		sig := fmt.Sprintf("%d/%d/%s", gen[key{resources.KindRepository, b.Repository}], gen[key{resources.KindRoutine, b.Name}], b.Reason)
+		next[k] = sig
+		if s.routineBindingLog[k] == sig {
+			continue
+		}
+		first, _, _ := strings.Cut(b.Message, "\n")
+		s.log().Warn("routine binding refused", "repository", b.Repository, "routine", b.Name,
+			"served", b.Served, "servedGeneration", b.RoutineGeneration, "reason", b.Reason, "error", first)
+	}
+	s.routineBindingLog = next
+}
+
 // outcomes reports every listed object; first holds the first-pass refusals of replaced objects.
 func outcomes(listed []resources.Object, r resources.Result, first map[key]resources.Refusal, aerr error) []Outcome {
 	served := map[key]int64{}
@@ -400,6 +447,14 @@ func outcomes(listed []resources.Object, r resources.Result, first map[key]resou
 				oc.Bindings = append(oc.Bindings, b)
 			case o.Kind == resources.KindMergePolicy && b.Name == o.Name:
 				oc.Consumers = append(oc.Consumers, b)
+			}
+		}
+		for _, rb := range r.RoutineBindings {
+			switch {
+			case o.Kind == resources.KindRepository && rb.Repository == o.Name:
+				oc.RoutineBindings = append(oc.RoutineBindings, rb)
+			case o.Kind == resources.KindRoutine && rb.Name == o.Name:
+				oc.RoutineConsumers = append(oc.RoutineConsumers, rb)
 			}
 		}
 		switch f, ok := first[k]; {
@@ -434,9 +489,9 @@ func hasAccepted(r resources.Result, k key) bool {
 }
 
 // generations are the generations the accepted objects were served at, and each served binding's
-// policy generation (B12). Repos stays nil when no repository object is served: Live.Publish
-// compares with reflect.DeepEqual.
-func generations(accepted []resources.Object, bindings []resources.BindingOutcome) config.Generations {
+// policy and routine generation (B12). Repos stays nil when no repository object is served:
+// Live.Publish compares with reflect.DeepEqual.
+func generations(accepted []resources.Object, bindings []resources.BindingOutcome, routineBindings []resources.RoutineOutcome) config.Generations {
 	var g config.Generations
 	repoOf := map[string]string{} // Repository object name -> lowercased owner/name
 	for _, o := range accepted {
@@ -471,17 +526,28 @@ func generations(accepted []resources.Object, bindings []resources.BindingOutcom
 		e.Classes[b.Name] = config.ClassGeneration{Policy: b.PolicyGeneration, PolicyName: b.Name}
 		g.Repos[repoOf[b.Repository]] = e
 	}
+	for _, rb := range routineBindings {
+		if !rb.Served || repoOf[rb.Repository] == "" {
+			continue
+		}
+		e := g.Repos[repoOf[rb.Repository]]
+		if e.Routines == nil {
+			e.Routines = map[string]config.RoutineGeneration{}
+		}
+		e.Routines[rb.Name] = config.RoutineGeneration{Routine: rb.RoutineGeneration, RoutineName: rb.Name}
+		g.Repos[repoOf[rb.Repository]] = e
+	}
 	return g
 }
 
-// list reads the three kinds, as the API server stores them: unstructured, so a field the author
+// list reads the four kinds, as the API server stores them: unstructured, so a field the author
 // omitted stays omitted (resources.Object's contract; plan PR5). A typed list would write every
 // field without omitempty as present, and mergeDefaults could never fill a key (Q8). A kind with no
 // CRD is zero objects, logged once.
 func (s *Source) list(ctx context.Context) ([]resources.Object, error) {
 	var objs []resources.Object
 	var absent bool
-	for _, kind := range []resources.Kind{resources.KindFactory, resources.KindRepository, resources.KindMergePolicy} {
+	for _, kind := range []resources.Kind{resources.KindFactory, resources.KindRepository, resources.KindMergePolicy, resources.KindRoutine} {
 		var l unstructured.UnstructuredList
 		l.SetGroupVersionKind(v1alpha1.GroupVersion.WithKind(string(kind) + "List"))
 		if err := s.Reader.List(ctx, &l, client.InNamespace(s.Namespace)); err != nil {
@@ -497,7 +563,7 @@ func (s *Source) list(ctx context.Context) ([]resources.Object, error) {
 				spec = map[string]any{}
 			}
 			objs = append(objs, resources.Object{Kind: kind, Name: u.GetName(), Namespace: s.Namespace, Generation: u.GetGeneration(), Spec: spec,
-				Catalog: kind == resources.KindMergePolicy && u.GetLabels()[v1alpha1.LabelCatalog] == "true"})
+				Catalog: (kind == resources.KindMergePolicy || kind == resources.KindRoutine) && u.GetLabels()[v1alpha1.LabelCatalog] == "true"})
 		}
 	}
 	s.crdsAbsent = absent

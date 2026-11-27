@@ -21,7 +21,7 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 )
 
-// defaultEvery is the pass interval; absentEvery the interval while none of the three CRDs is
+// defaultEvery is the pass interval; absentEvery the interval while none of the four CRDs is
 // installed, a kick still running a pass at once.
 const (
 	defaultEvery = 30 * time.Second
@@ -43,7 +43,7 @@ type Writer struct {
 
 	kick chan struct{}
 	once sync.Once
-	// absent is true when the last pass found none of the three CRDs installed.
+	// absent is true when the last pass found none of the four CRDs installed.
 	absent atomic.Bool
 }
 
@@ -88,13 +88,14 @@ func (w *Writer) Start(ctx context.Context) error {
 	}
 }
 
-// WriteOnce lists the three kinds, computes Desired and updates each object whose status differs.
+// WriteOnce lists the four kinds, computes Desired and updates each object whose status differs.
 // With no object of any kind it reads none of the factory's inputs.
 func (w *Writer) WriteOnce(ctx context.Context) error {
 	var (
 		factories v1alpha1.FactoryList
 		repos     v1alpha1.RepositoryList
 		policies  v1alpha1.MergePolicyList
+		routines  v1alpha1.RoutineList
 	)
 	reader := w.Reader
 	if reader == nil {
@@ -102,7 +103,7 @@ func (w *Writer) WriteOnce(ctx context.Context) error {
 	}
 	var errs []error
 	missing := 0
-	for _, l := range []client.ObjectList{&factories, &repos, &policies} {
+	for _, l := range []client.ObjectList{&factories, &repos, &policies, &routines} {
 		absent, err := list(ctx, reader, l, w.Namespace)
 		if err != nil {
 			errs = append(errs, err)
@@ -111,14 +112,14 @@ func (w *Writer) WriteOnce(ctx context.Context) error {
 			missing++
 		}
 	}
-	w.absent.Store(missing == 3)
+	w.absent.Store(missing == 4)
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
-	if len(factories.Items)+len(repos.Items)+len(policies.Items) == 0 {
+	if len(factories.Items)+len(repos.Items)+len(policies.Items)+len(routines.Items) == 0 {
 		return nil
 	}
-	d := Desired(w.Inputs(ctx), factories.Items, repos.Items, policies.Items, metav1.Now())
+	d := Desired(w.Inputs(ctx), factories.Items, repos.Items, policies.Items, routines.Items, metav1.Now())
 	for i := range factories.Items {
 		o := &factories.Items[i]
 		errs = append(errs, update(ctx, w.Client, reader, o, func() bool {
@@ -147,6 +148,18 @@ func (w *Writer) WriteOnce(ctx context.Context) error {
 		o := &policies.Items[i]
 		errs = append(errs, update(ctx, w.Client, reader, o, func() bool {
 			want := d.MergePolicies[o.Name]
+			want.Conditions = keepTimes(o.Status.Conditions, want.Conditions)
+			if apiequality.Semantic.DeepEqual(o.Status, want) {
+				return false
+			}
+			o.Status = want
+			return true
+		}))
+	}
+	for i := range routines.Items {
+		o := &routines.Items[i]
+		errs = append(errs, update(ctx, w.Client, reader, o, func() bool {
+			want := d.Routines[o.Name]
 			want.Conditions = keepTimes(o.Status.Conditions, want.Conditions)
 			if apiequality.Semantic.DeepEqual(o.Status, want) {
 				return false

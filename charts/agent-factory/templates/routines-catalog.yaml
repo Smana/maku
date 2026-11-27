@@ -1,0 +1,100 @@
+{{- /*
+The starter Routine catalog: six Routine objects in the factory's namespace, labelled
+maku.ogenki.io/catalog. Unlike MergePolicy catalog entries, unbound catalog Routines remain inert
+and never run on a Repository until explicitly bound under Repository.spec.routines[].
+routines.catalog.exclude leaves out the ones a platform keeps as its own objects. An object of a
+catalog name that is not the catalog's fails the render (afumbrella.catalogOwner) rather than the apply.
+*/ -}}
+{{- $mf := index .Values "maku-factory" -}}
+{{- $cat := .Values.routines.catalog -}}
+{{- if and $mf.enabled $cat.enabled -}}
+{{- $breaker := dict "window" 10 "minSamples" 5 "minMergeRate" 0.25 "maxConsecutiveClosed" 3 "maxConsecutiveFailures" 3 -}}
+{{- $protected := list "^\\.github/agent-factory/" -}}
+{{- $specs := dict
+  "dead-links" (dict
+    "description" "Fix dead links reported by the link-check oracle."
+    "workflow" "quick"
+    "dataClass" "public"
+    "defaultPrompt" "Fix the dead external links listed below, updating or removing broken URLs while keeping documentation accurate. If no links can be verified or fixed cleanly, make no changes."
+    "probe" (dict "kind" "dead-links" "requireConsecutive" 2 "maxFindings" 10)
+    "requires" (list "oracleClass")
+    "maxOpenPRs" 1
+    "maxCostUSD" 1
+    "cooldown" "24h"
+    "breaker" $breaker
+    "protectedPaths" $protected)
+  "renovate-red" (dict
+    "description" "Fix failing CI checks on open Renovate dependency pull requests."
+    "workflow" "standard"
+    "dataClass" "public"
+    "defaultPrompt" "Inspect the failing Renovate pull requests listed below, diagnose the build or test breakage introduced by the dependency update, and commit the minimal fix. If the failure is unrelated or unclear, leave the pull request untouched."
+    "probe" (dict "kind" "renovate-red" "maxFindings" 5)
+    "maxOpenPRs" 1
+    "maxCostUSD" 2
+    "cooldown" "24h"
+    "breaker" $breaker
+    "protectedPaths" $protected)
+  "doc-drift" (dict
+    "description" "Keep documentation aligned with recent code and configuration changes."
+    "workflow" "standard"
+    "dataClass" "public"
+    "defaultPrompt" "Audit recent changes against the repository documentation and update stale references, flags, examples, or instructions in small, focused edits. If documentation is already accurate, make no changes and finish without opening a pull request."
+    "probe" (dict "kind" "none")
+    "maxOpenPRs" 1
+    "maxCostUSD" 2
+    "cooldown" "24h"
+    "breaker" $breaker
+    "protectedPaths" $protected)
+  "dead-code" (dict
+    "description" "Remove statically unreachable code verified by CI findings."
+    "workflow" "standard"
+    "dataClass" "public"
+    "defaultPrompt" "Remove the unreachable code reported in the findings below and verify the full test suite passes. If a reported symbol is still used dynamically or removal is unsafe, make no changes and finish without opening a pull request."
+    "probe" (dict "kind" "actions-findings" "requireConsecutive" 2 "maxFindings" 1)
+    "requires" (list "probeWorkflow")
+    "maxOpenPRs" 1
+    "maxCostUSD" 2
+    "cooldown" "24h"
+    "breaker" $breaker
+    "protectedPaths" $protected)
+  "flaky-tests" (dict
+    "description" "Stabilize flaky tests reported repeatedly by CI findings."
+    "workflow" "standard"
+    "dataClass" "public"
+    "defaultPrompt" "Diagnose and fix the flaky test reported in the findings below (races, timing assumptions, shared state, or non-determinism) without weakening assertions. If the root cause cannot be reproduced or fixed cleanly, make no changes."
+    "probe" (dict "kind" "actions-findings" "requireConsecutive" 2 "maxFindings" 1)
+    "requires" (list "probeWorkflow")
+    "maxOpenPRs" 1
+    "maxCostUSD" 2
+    "cooldown" "24h"
+    "breaker" $breaker
+    "protectedPaths" $protected)
+  "dup-unifier" (dict
+    "description" "Consolidate small, high-confidence duplicated helpers across packages."
+    "workflow" "standard"
+    "dataClass" "public"
+    "defaultPrompt" "Find one small, high-confidence cluster of duplicated non-trivial logic where consolidation clearly improves maintainability without coupling unrelated packages, unify it, and verify tests pass. If no clear candidate exists, make no changes."
+    "probe" (dict "kind" "none")
+    "maxOpenPRs" 1
+    "maxCostUSD" 2
+    "cooldown" "24h"
+    "breaker" $breaker
+    "protectedPaths" $protected)
+-}}
+{{- range $name := list "dead-links" "renovate-red" "doc-drift" "dead-code" "flaky-tests" "dup-unifier" }}
+{{- if not (has $name ($cat.exclude | default list)) }}
+{{- include "afumbrella.catalogOwner" (dict "namespace" $.Release.Namespace "name" $name "kind" "Routine" "excludeKey" "routines.catalog.exclude") }}
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Routine
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "afumbrella.labels" $ | nindent 4 }}
+    maku.ogenki.io/catalog: "true"
+spec:
+  {{- toYaml (index $specs $name) | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}

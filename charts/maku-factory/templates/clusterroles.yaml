@@ -11,7 +11,7 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-admin: "true"
 rules:
   - apiGroups: [maku.ogenki.io]
-    resources: [factories, repositories, mergepolicies]
+    resources: [factories, repositories, mergepolicies, routines]
     verbs: [get, list, watch, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -29,12 +29,24 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  name: maku-routine-editor
+  labels:
+    {{- include "agent-factory.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [routines]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
   name: maku-viewer
   labels:
     {{- include "agent-factory.labels" . | nindent 4 }}
     rbac.authorization.k8s.io/aggregate-to-view: "true"
 rules:
   - apiGroups: [maku.ogenki.io]
-    resources: [factories, repositories, mergepolicies]
+    resources: [factories, repositories, mergepolicies, routines]
     verbs: [get, list, watch]
 {{- end }}

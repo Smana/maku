@@ -411,6 +411,76 @@ func Equal(before, after *config.Config) []string {
 				}
 			}
 		}
+		out = append(out, compareSchedulesAndRoutines(n, before.Defaults.DataClass, rb, ra)...)
+	}
+	return out
+}
+
+func compareSchedulesAndRoutines(repoName, defaultDataClass string, rb, ra config.Repository) []string {
+	var out []string
+	switch {
+	case len(rb.Schedules) > 0 && len(ra.Schedules) == 0:
+		for _, s := range rb.Schedules {
+			rr, ok := ra.ResolvedRoutines[s.Name]
+			if !ok {
+				out = append(out, fmt.Sprintf("%s schedule %s: missing migrated routine", repoName, s.Name))
+				continue
+			}
+			if rr.Mode != config.RoutineModePR {
+				out = append(out, fmt.Sprintf("%s schedule %s: mode %q -> %q", repoName, s.Name, config.RoutineModePR, rr.Mode))
+			}
+			if rr.Cron != s.Cron {
+				out = append(out, fmt.Sprintf("%s schedule %s: cron %q -> %q", repoName, s.Name, s.Cron, rr.Cron))
+			}
+			if rr.DefaultPrompt != s.Text {
+				out = append(out, fmt.Sprintf("%s schedule %s: text changed", repoName, s.Name))
+			}
+			if rr.Workflow != s.WorkflowOr() {
+				out = append(out, fmt.Sprintf("%s schedule %s: workflow %q -> %q", repoName, s.Name, s.WorkflowOr(), rr.Workflow))
+			}
+			wantDC := cmp.Or(s.DataClass, defaultDataClass)
+			if rr.DataClass != wantDC {
+				out = append(out, fmt.Sprintf("%s schedule %s: dataClass %q -> %q", repoName, s.Name, wantDC, rr.DataClass))
+			}
+			wantProbe := cmp.Or(s.Probe, config.ProbeNone)
+			if rr.Probe.Kind != wantProbe {
+				out = append(out, fmt.Sprintf("%s schedule %s: probe %q -> %q", repoName, s.Name, wantProbe, rr.Probe.Kind))
+			}
+			if s.Probe == config.ProbeDeadLinks && rr.OracleClass != s.Class {
+				out = append(out, fmt.Sprintf("%s schedule %s: oracleClass %q -> %q", repoName, s.Name, s.Class, rr.OracleClass))
+			}
+			if s.Probe == config.ProbeRenovateRed {
+				wantAuthor := cmp.Or(s.ProbeAuthor, "renovate[bot]")
+				if rr.ProbeAuthor != wantAuthor {
+					out = append(out, fmt.Sprintf("%s schedule %s: probeAuthor %q -> %q", repoName, s.Name, wantAuthor, rr.ProbeAuthor))
+				}
+			}
+			if rr.MaxOpenPRs != 1 {
+				out = append(out, fmt.Sprintf("%s schedule %s: maxOpenPRs 1 -> %d", repoName, s.Name, rr.MaxOpenPRs))
+			}
+		}
+	case len(rb.ResolvedRoutines) > 0 || len(ra.ResolvedRoutines) > 0:
+		keys := map[string]bool{}
+		for k := range rb.ResolvedRoutines {
+			keys[k] = true
+		}
+		for k := range ra.ResolvedRoutines {
+			keys[k] = true
+		}
+		for _, k := range slices.Sorted(maps.Keys(keys)) {
+			rrb, inB := rb.ResolvedRoutines[k]
+			rra, inA := ra.ResolvedRoutines[k]
+			switch {
+			case !inA:
+				out = append(out, fmt.Sprintf("%s routine %s: served before only", repoName, k))
+			case !inB:
+				out = append(out, fmt.Sprintf("%s routine %s: served after only", repoName, k))
+			default:
+				for _, f := range fieldDiff(rrb, rra) {
+					out = append(out, fmt.Sprintf("%s routine %s: %s %s -> %s", repoName, k, f, jsonOf(jsonMap(rrb)[f]), jsonOf(jsonMap(rra)[f])))
+				}
+			}
+		}
 	}
 	return out
 }

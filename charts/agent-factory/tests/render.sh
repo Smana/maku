@@ -952,6 +952,27 @@ ykind MergePolicy '((.metadata.labels."maku.ogenki.io/catalog" == "true") and (.
 [[ -z $(catalog "${args[@]}" --set mergePolicies.catalog.enabled=false) ]] || { echo "FAIL: mergePolicies.catalog.enabled=false still renders a catalog policy" >&2; fail=1; }
 [[ -z $(catalog "${img[@]}") ]] || { echo "FAIL: the skeleton, with no factory, renders a catalog policy" >&2; fail=1; }
 
+# The routine catalog: six Routine objects in the factory's namespace, labelled maku.ogenki.io/catalog,
+# each spec matching tests/golden/routines-catalog.yaml. exclude leaves out the ones a platform keeps
+# as its own; routines.catalog.enabled=false and the skeleton render none.
+routine_catalog() { helm template af . -n maku "$@" | yq ea '[select(.kind == "Routine") | .metadata.name] | sort | join(" ")' -; }
+routine_specs() { yq ea -o=json -I0 'select(.kind == "Routine") | {"name": .metadata.name, "spec": .spec}' - | jq -S -s 'sort_by(.name)'; }
+out="$(helm template af . -n maku "${args[@]}")"
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then
+  yq ea 'select(.kind == "Routine")' - <<<"$out" >tests/golden/routines-catalog.yaml
+fi
+[[ $(routine_catalog "${args[@]}") == "dead-code dead-links doc-drift dup-unifier flaky-tests renovate-red" ]] ||
+  { echo "FAIL: the demo does not render the six catalog routines (got '$(routine_catalog "${args[@]}")')" >&2; fail=1; }
+ykind Routine '((.metadata.labels."maku.ogenki.io/catalog" == "true") and (.metadata.namespace == "maku"))' "each catalog routine is labelled maku.ogenki.io/catalog and in the factory's namespace"
+[[ $(routine_specs <<<"$out") == "$(routine_specs <tests/golden/routines-catalog.yaml)" ]] ||
+  { echo "FAIL: the routine catalog's specs differ from tests/golden/routines-catalog.yaml" >&2; diff <(routine_specs <tests/golden/routines-catalog.yaml | jq .) <(routine_specs <<<"$out" | jq .) >&2; fail=1; }
+[[ $(routine_catalog "${args[@]}" --set-json 'routines.catalog.exclude=["doc-drift"]') == "dead-code dead-links dup-unifier flaky-tests renovate-red" ]] ||
+  { echo "FAIL: routines.catalog.exclude [doc-drift] does not leave five" >&2; fail=1; }
+[[ -z $(routine_catalog "${args[@]}" --set routines.catalog.enabled=false) ]] ||
+  { echo "FAIL: routines.catalog.enabled=false still renders a catalog routine" >&2; fail=1; }
+[[ -z $(routine_catalog "${img[@]}") ]] ||
+  { echo "FAIL: the skeleton, with no factory, renders a catalog routine" >&2; fail=1; }
+
 # Tier-1 Pilot hardened bundled Postgres (v5 DB1-DB4): requires acknowledgeSingleReplica, TLS, matching
 # DSN/CA/podLabels, and singleReplica/backupsOff install-banner notices.
 pilot=("${prod[@]}" -f values-pilot.example.yaml)

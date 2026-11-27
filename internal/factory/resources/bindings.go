@@ -28,6 +28,9 @@ type Options struct {
 	// longer resolves, so its class keeps serving while the factory runs (B9). None after a
 	// restart (D14).
 	LastResolved map[BindingKey]ResolvedClass
+	// LastResolvedRoutines is each routine binding's last resolved routine: put back when a
+	// mode: pr binding stops resolving so it keeps serving while the factory runs.
+	LastResolvedRoutines map[BindingKey]config.ResolvedRoutine
 	// ConfigDir is the directory containing the factory's config file, used to load custom role
 	// briefs (WR11). Empty skips reading brief files from disk.
 	ConfigDir string
@@ -44,14 +47,19 @@ type BindingOutcome struct {
 	Served           bool   // a class is served for it, this one's or the last resolved
 }
 
-// resolution is what one assembly made of the class-shape policies and the bindings.
+// resolution is what one assembly made of the class-shape policies, routines and bindings.
 type resolution struct {
-	policies map[string]config.ServedPolicy
-	catalog  []string  // the catalog's policies, accepted or refused, by name (MR2)
-	accepted []Object  // the class policies accepted
-	refused  []Refusal // the class policies refused alone
-	bindings []BindingOutcome
-	resolved map[BindingKey]ResolvedClass
+	policies         map[string]config.ServedPolicy
+	routines         map[string]servedRoutine
+	refusedRoutines  map[string]bool
+	catalog          []string  // the catalog's policies, accepted or refused, by name (MR2)
+	accepted         []Object  // the class policies and routines accepted
+	refused          []Refusal // the class policies and routines refused alone
+	bindings         []BindingOutcome
+	resolved         map[BindingKey]ResolvedClass
+	routineBindings  []RoutineOutcome
+	resolvedRoutines map[BindingKey]config.ResolvedRoutine
+	repoRoutines     map[string]map[string]config.ResolvedRoutine
 }
 
 // policyContext reads what resolving reads from the merged catalogue, strictly: a key that does not

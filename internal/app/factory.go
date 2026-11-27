@@ -1004,7 +1004,7 @@ func forbiddenHint(err error, ns string) error {
 	if !apierrors.IsForbidden(err) {
 		return err
 	}
-	return fmt.Errorf("%w: the factory's Role in %s must grant get, list and watch on factories, repositories and mergepolicies (maku.ogenki.io)", err, ns)
+	return fmt.Errorf("%w: the factory's Role in %s must grant get, list and watch on factories, repositories, mergepolicies and routines (maku.ogenki.io)", err, ns)
 }
 
 // servedKinds are the factory's resource kinds the API server serves: the manager caches only

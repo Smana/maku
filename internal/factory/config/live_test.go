@@ -38,6 +38,12 @@ func TestLivePublishSkipsAnUnchangedConfig(t *testing.T) {
 	if calls != 1 {
 		t.Fatal("a new generation with the same content is still a publish (tasks record it)")
 	}
+	l.Publish(&Config{Hash: "a", Generations: Generations{Factory: 2, Repos: map[string]RepoGenerations{
+		"smana/maku": {Repository: 1, Routines: map[string]RoutineGeneration{"dead-links": {Routine: 2, RoutineName: "dead-links"}}},
+	}}})
+	if calls != 2 {
+		t.Fatal("a new Routine generation with the same content must still publish")
+	}
 }
 
 func TestLiveIsRaceFree(_ *testing.T) {
@@ -60,11 +66,22 @@ func TestConfigIsItsOwnSource(t *testing.T) {
 }
 
 func TestGenerationsFor(t *testing.T) {
-	c := &Config{Generations: Generations{Factory: 3, Repos: map[string]RepoGenerations{"smana/maku": {Repository: 2}}}}
+	c := &Config{Generations: Generations{Factory: 3, Repos: map[string]RepoGenerations{
+		"smana/maku": {
+			Repository: 2,
+			Routines:   map[string]RoutineGeneration{"dead-links": {Routine: 4, RoutineName: "dead-links"}},
+		},
+	}}}
 	if f, r := c.GenerationsFor("Smana/maku"); f != 3 || r != 2 {
 		t.Fatalf("got %d %d", f, r)
 	}
 	if f, r := c.GenerationsFor("Smana/other"); f != 3 || r != 0 {
 		t.Fatalf("a file repository has zero object generations: %d %d", f, r)
+	}
+	if rt, r, bound := c.RoutineGenerations("Smana/maku", "dead-links"); rt != 4 || r != 2 || !bound {
+		t.Fatalf("RoutineGenerations bound = (%d, %d, %v), want (4, 2, true)", rt, r, bound)
+	}
+	if rt, r, bound := c.RoutineGenerations("Smana/maku", "other"); rt != 0 || r != 2 || bound {
+		t.Fatalf("RoutineGenerations unbound = (%d, %d, %v), want (0, 2, false)", rt, r, bound)
 	}
 }
