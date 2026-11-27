@@ -17,19 +17,19 @@ import (
 // root is the repository's root, from this package's directory.
 const root = "../.."
 
-// The docs' table is the data: docs/install-secrets.md is generated from Seams, never edited apart.
+// The docs' table is the data: website/content/docs/install/install-secrets.md is generated from Seams, never edited apart.
 func TestDocs(t *testing.T) {
-	doc, err := os.ReadFile(filepath.Join(root, "docs/install-secrets.md"))
+	doc, err := os.ReadFile(filepath.Join(root, "website/content/docs/install/install-secrets.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	start, end := bytes.Index(doc, []byte(TableStart)), bytes.Index(doc, []byte(TableEnd))
 	if start < 0 || end < start {
-		t.Fatalf("docs/install-secrets.md lacks the %s … %s markers", TableStart, TableEnd)
+		t.Fatalf("website/content/docs/install/install-secrets.md lacks the %s … %s markers", TableStart, TableEnd)
 	}
 	got := string(doc[start+len(TableStart) : end])
 	if want := "\n" + Table() + "\n"; got != want {
-		t.Fatalf("docs/install-secrets.md's table differs from Seams: run task chart:seams\n--- got\n%s\n--- want\n%s", got, want)
+		t.Fatalf("website/content/docs/install/install-secrets.md's table differs from Seams: run task chart:seams\n--- got\n%s\n--- want\n%s", got, want)
 	}
 }
 
