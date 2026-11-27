@@ -1751,7 +1751,7 @@ a.mode-badge:hover { text-decoration: underline; }
 .routine-prompt-pane-actions button { min-height: var(--hit); font-size: var(--text-small); }
 .routine-github-prompt-link { display: inline-flex; align-items: center; gap: 4px; min-height: var(--hit); font-size: var(--text-small); color: var(--link); }
 .routine-prompt-pane textarea {
-  font-family: var(--font-mono); font-size: var(--text-small); padding: 8px 10px;
+  box-sizing: border-box; font-family: var(--font-mono); font-size: var(--text-small); padding: 8px 10px;
   border: 1px solid var(--input); border-radius: var(--radius-control); background: var(--background); color: var(--foreground);
 }
 .routine-prompt-status { margin: 0; font-size: var(--text-small); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }

@@ -4,6 +4,16 @@
 
 Feature-level direction only. Shipped milestones are recorded per release on the [releases page](https://github.com/Smana/maku/releases) and in [Upgrading](upgrading.md); what is proven live on the reference deployment is on the [status page](https://airef.ogenki.io/docs/status/).
 
+## Recently shipped (v0.55–v0.58)
+
+| Feature | Reference |
+|---|---|
+| Upkeep routines: `Routine` CRD, 6-routine starter catalog, deterministic probes (`dead-links`, `renovate-red`, `actions-findings`), isolated `upkeepDailyUSD` budget, yield breaker, `propose`/`draft`/`pr` modes, repo prompts & skills, `/routines` overview/catalog/configurator UI, optional `routines.uiWrite`, `maku routine` CLI, and Slack upkeep channel & weekly digest | [Upkeep routines](upkeep-routines.md) |
+| Settings environment and version info: broker and factory versions (with skew indicator) and bounded cluster posture on `/settings` via `GET /api/install` | [Web UI](web-ui.md#settings-and-environment) |
+| Harness visual verification: opt-in loopback `maku-browser` Playwright sidecar, vision aliases, and room screenshot strip | [Browser verification](browser-verification.md) |
+| Opt-in loopback service sidecars: per-repository PostgreSQL and Redis sidecars inside sandboxed run pods | [The factory](factory.md) |
+| Gemini and Vertex AI gateway presets, GitHub install egress window, and built-in `maven`/`node` egress allowlists | [Model gateway](gateway.md) |
+
 ## In progress
 
 | Feature | What remains |
@@ -25,9 +35,8 @@ spec](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/20
 | Pre-pitch readiness and Tier-1 database adoption | Private-repository planning, Tier-1 hardened bundled PostgreSQL (PVC, TLS, automatic three-role bootstrap, optional S3/GCS backups) plus a one-step Tier-2 CNPG or external-database bootstrapper, one recorded generic Kubernetes Helm install, outside-user laptop quickstart checks ([Quickstart](quickstart.md)), a standalone front door, a two-minute real-run video, and a static room replay |
 | External team pilot on private repositories | One GitHub and Kubernetes team runs a Tier-1 Pilot (one GitHub App, shadow merge gate, bundled PostgreSQL, standard OIDC/Ingress or Slack Socket Mode, mandatory gVisor) and lands at least ten merged pull requests; hardening (H1–H5), team RBAC (`write` access and GitHub Teams), and per-repository runtime images land alongside the team's stack; also satisfies the "outside demand" trigger of the platform-agnostic decision below |
 | Pluggable three-tier harnesses, OpenCode default | Turn `AgentRun.spec.harness` into a three-tier contract: OpenCode as the slim default once parity passes ([evaluation](https://github.com/Smana/ai-native-ref/pull/404)), OpenHands as the proven fallback, and best-effort bring-your-own Claude Code |
-| Harness visual verification (screenshots) | Opt-in `maku-browser` sidecar inside gVisor pods (`implementer` and `tester`, per-repository opt-in, loopback-only `127.0.0.1` Playwright MCP) for in-loop agent visual checks without bloating the default image or widening egress; human-visible pull-request and room screenshots follow separately |
+| Upkeep routines field validation | Bind starter and custom routines on live repositories across `propose` → `draft` → `pr`, measure merge yield and `$/merged` over real runs, and prove the yield breaker end to end ([Upkeep routines](upkeep-routines.md)) |
 | Slack security model and Socket Mode | Hybrid personal-bound principals over one workspace bot (no personal Slack user tokens): direct-message intake with dynamic per-user repository access and per-person USD budgets, strict author-only thread isolation, Socket Mode as the zero-public-ingress default (unsigned `forge.push` buttons off by default), and broker-verified `X-Slack-Signature` closing the Slack deputy residual in Events API mode while keeping live steering on the room page |
-| Gemini as a model provider | `gemini` (API key) and `vertex` (Vertex AI with the proxy's own Google identity, no key) gateway presets, thought signatures carried through both harnesses, a `model:<alias>` pin, `evaluation.treatmentModel` and `maku stages --by model`; selectable and public-only, then a paired comparison against the default model on the reference deployment ([design](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-25-gemini-provider-design.md)) |
 | Spec-driven development intake | Ingest open markdown specs (GitHub Spec Kit, OpenSpec, or EARS sections in issues or `specs/`) natively when present, falling back to a minimal compatible Maku spec written by the planner and scoper |
 | Outcome analytics and live merge proof | Join merge rate, revert rate, human wait time, and USD cost per merged pull request into one view by repository, policy, model, and workflow; prove at least one engineering class beyond `docs-links` (`deps-patch` or `docs`) live with a revert drill and a second-family reviewer |
 | Time-boxed `kagent` and Agent Substrate check | After the first external team pilot ships, spend at most two days rerunning [ADR-0062](https://airef.ogenki.io/docs/decisions/0062-agent-runtime-remains-agent-sandbox/)'s comparison against current releases and its triggers, then adopt, borrow from, or keep deferring each |

@@ -81,12 +81,26 @@ Gated actions (`forge.push`, `forge.pr`, `forge.other`, `mcp.write`, `shell.high
 
 ## Routines
 
-Open **Routines** (`/routines`) to monitor and configure upkeep routines ([Routines reference](reference/web-ui-settings.md#routines)):
+Open **Routines** (`/routines`) to monitor and configure scheduled repository maintenance ([Upkeep routines](upkeep-routines.md), [Routines reference](reference/web-ui-settings.md#routines)):
 
-1. **Overview (`/routines`):** filter by repository, inspect 14-day sparklines, merge rate, `$/merged`, next run, and breaker state (`ok`, `half_open`, `paused`), and click **Run now**, **Pause**, or **Resume**.
-2. **Routine Gallery (`/routines/catalog`):** browse shipped and custom `Routine` definitions, pick a target repository, and click **Enable** or **Configure**.
-3. **Guided Configurator (`/routines/<owner>/<repo>/<name>/edit`):** pick a delivery mode (`propose`, `draft`, `pr`, `disabled`), choose a UTC cron preset with live local/UTC next-3-runs preview, tighten bounds inside `Routine` ceilings, validate a repo prompt (`.github/agent-factory/upkeep/<name>.md`) or open its GitHub edit link, run **Check & Generate YAML**, and copy/download `repository-<name>.yaml` — or click **Save to cluster** when `routines.uiWrite: true`.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/web-ui/routines-overview-1280-dark.png">
+  <img alt="Routines overview showing bound routines, 14-day outcome sparklines, merge rate, cost per merged PR, open PR counts, and maintainer controls" src="assets/web-ui/routines-overview-1280-light.png" width="800">
+</picture>
+
+1. **Overview (`/routines`):** filter by repository, state, or mode; inspect 14-day sparklines, merge rate, `$/merged`, next run, and breaker state (`ok`, `half_open`, `paused`); click **Run now**, **Pause**, or **Resume**.
+2. **Routine catalog (`/routines/catalog`):** browse shipped and custom `Routine` definitions, pick a target repository, and click **Enable** or **Configure**.
+3. **Guided configurator (`/routines/<owner>/<repo>/<name>/edit`):** pick a delivery mode (`propose`, `draft`, `pr`, `disabled`), choose a UTC cron preset with live local/UTC preview, tighten bounds inside `Routine` ceilings, validate a repo prompt (`.github/agent-factory/upkeep/<name>.md`), and run **Check & Generate YAML** (or **Save to cluster** when `routines.uiWrite: true`).
 4. **Detail & Run History (`/routines/<owner>/<repo>/<name>`):** inspect recent tasks, prompt SHA changes, and skip diagnostics.
+
+## Settings and environment
+
+Open **Settings** (`/settings`) for section cards (**Merge policies**, **Evidence**, **Approval memory**) and the **Environment** panel below them, showing broker and factory versions (flagging any mismatch), factory name, namespace, sign-in mode, default harness, merge policy stage, hardening mode, routines UI write setting, and install notices ([Settings reference](reference/web-ui-settings.md#settings)).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/web-ui/settings-env-1280-dark.png">
+  <img alt="Settings home showing the Merge policies, Evidence, and Approval memory cards above the Environment panel with broker and factory versions and cluster settings" src="assets/web-ui/settings-env-1280-light.png" width="800">
+</picture>
 
 ## When something fails
 
