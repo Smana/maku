@@ -96,6 +96,10 @@ RUN ln -s /opt/agent/agent_run.py /usr/local/bin/agent-run \
 ENV OH_ENABLE_VSCODE=false
 # git must never fall back to an interactive prompt in a sandbox with no tty.
 ENV GIT_TERMINAL_PROMPT=0
+# LiteLLM fetches its model price map from raw.githubusercontent.com when the SDK loads; the run's
+# egress refuses that host once the install phase closes (an install_closed refusal on every run, the
+# alert's signature). The bundled copy is the one it falls back to anyway.
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 USER 10001
 ENTRYPOINT ["tini", "--", "/usr/local/bin/agent-run"]
 

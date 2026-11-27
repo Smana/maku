@@ -78,15 +78,15 @@ optional: it gives OpenHands its alias's rates ([the gateway](gateway.md)).
 
 ## GitHub release downloads only while the toolchain installs
 
-A run no longer reaches GitHub's release and raw hosts once its agent is running. An install that
+A run no longer reaches GitHub's release hosts once its agent is running, nor its raw and tarball hosts at all. An install that
 keeps the built-in profiles needs no value change; upgrade the harness images with the run-controller.
 
 | What | Before | Now |
 |---|---|---|
 | Built-in `github` profile | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com`, `release-assets.githubusercontent.com` | `github.com`, `api.github.com` |
-| Release and raw hosts | Every run, for the whole run | A check-enabled run's install set (`runController.installEgress`): in `kubernetes` mode until the harness closes it, or `windowSeconds` (1200) after the pod's creation; in `cilium` mode for the whole run |
+| Release hosts (`release-assets`, `objects`) | Every run, for the whole run | A check-enabled run's install set (`runController.installEgress`): in `kubernetes` mode until the harness closes it, or `windowSeconds` (1200) after the pod's creation; in `cilium` mode for the whole run |
 | `pypi`, `npm`, `crates` | Only when the run requests them | Also in a check run's install set, for pre-commit's hook environments |
-| `codeload.github.com` | Every run | No run |
+| `codeload.github.com`, `raw.githubusercontent.com` | Every run | No run. The harness images read LiteLLM's model price map from its bundled copy (`LITELLM_LOCAL_MODEL_COST_MAP`), and OpenCode skips its model catalog fetch |
 | Toolchain install | In the background while the agent starts | Before the agent starts. A tool whose pin changes during the run is not installed: `agent-checks` says `toolchain incomplete: <tool> (pin changed after the install phase; CI checks it)` |
 | Egress proxy | Watches run pods | Also patches a run pod's `maku.ogenki.io/egress-install-closed` annotation, which the run-pod policy holds to that one change |
 

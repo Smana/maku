@@ -110,6 +110,8 @@ class OpenCodeDriver(HarnessDriver):
         out["XDG_CACHE_HOME"] = self.paths["cache"]
         out["OPENCODE_CONFIG_DIR"] = self.paths["config"]
         out["OPENCODE_DISABLE_CLAUDE_CODE"] = "1"
+        # The model catalog is the run's own provider; models.opencode.ai is on no run's allow-list.
+        out["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
         out["OPENCODE_SERVER_PASSWORD"] = self.password
         out["MAKU_LLM_API_KEY"] = _read_api_key(self.env, "LLM_API_KEY_FILE")
         if self.env.get("LIGHT_BASE_URL"):

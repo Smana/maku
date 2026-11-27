@@ -406,9 +406,10 @@ type InstallEgress struct {
 	WindowSeconds int `json:"windowSeconds,omitempty"`
 }
 
-// defaultInstallHosts are GitHub's release asset hosts (new, then old assets) and raw files, which
-// mise's GitHub backends read during the install (the spec's M1 measurement).
-var defaultInstallHosts = []string{"release-assets.githubusercontent.com", "objects.githubusercontent.com", "raw.githubusercontent.com"}
+// defaultInstallHosts are GitHub's release asset hosts, new then old assets. raw.githubusercontent.com
+// is in no set: M1's install-phase raw calls were LiteLLM's price map at boot, which the harness images
+// now read from their bundled copy (gcp-0 drill, 2026-11-27).
+var defaultInstallHosts = []string{"release-assets.githubusercontent.com", "objects.githubusercontent.com"}
 
 // installSpec names the design a warning points at.
 const installSpec = "docs/superpowers/specs/2026-11-26-github-egress-tightening-design.md"

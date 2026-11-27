@@ -2,7 +2,7 @@ metadata:
   annotations:
     agents.ogenki.io/principal: human:a
     maku.ogenki.io/egress: github.com:443,api.github.com:443,api.anthropic.com:443
-    maku.ogenki.io/egress-install: release-assets.githubusercontent.com:443,objects.githubusercontent.com:443,raw.githubusercontent.com:443,pypi.org:443,files.pythonhosted.org:443,registry.npmjs.org:443,index.crates.io:443,static.crates.io:443
+    maku.ogenki.io/egress-install: release-assets.githubusercontent.com:443,objects.githubusercontent.com:443,pypi.org:443,files.pythonhosted.org:443,registry.npmjs.org:443,index.crates.io:443,static.crates.io:443
     maku.ogenki.io/egress-install-until: "2026-11-26T12:20:00Z"
   labels:
     agents.ogenki.io/role: implementer

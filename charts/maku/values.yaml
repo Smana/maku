@@ -349,7 +349,7 @@ runController:
   # A check-enabled run's install set: hosts it reaches only while its toolchain installs, before the
   # agent starts. In networkPolicies.mode kubernetes the egress proxy closes them when the harness asks,
   # or windowSeconds after the pod's creation; in cilium mode they stay open for the run. Empty: the
-  # built-in hosts (release-assets, objects and raw.githubusercontent.com), hookProfiles pypi, npm
+  # built-in hosts (release-assets and objects.githubusercontent.com), hookProfiles pypi, npm
   # and crates (for pre-commit's hook environments), windowSeconds 1200.
   installEgress: {}
   # Run traces (v4 D21, docs/observability.md). Empty otlpEndpoint: runs export nothing, and their
