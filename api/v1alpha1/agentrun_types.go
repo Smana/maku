@@ -39,6 +39,7 @@ type AgentRunList struct {
 // +kubebuilder:validation:XValidation:rule="has(self.roomRef) == has(oldSelf.roomRef) && (!has(self.roomRef) || self.roomRef == oldSelf.roomRef)",message="roomRef is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="has(self.queueName) == has(oldSelf.queueName) && (!has(self.queueName) || self.queueName == oldSelf.queueName)",message="queueName is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="has(self.suspendable) == has(oldSelf.suspendable) && (!has(self.suspendable) || self.suspendable == oldSelf.suspendable)",message="suspendable is immutable and cannot be added or removed after creation"
+// +kubebuilder:validation:XValidation:rule="has(self.prDraft) == has(oldSelf.prDraft) && (!has(self.prDraft) || self.prDraft == oldSelf.prDraft)",message="prDraft is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy) || self.meteredBy == oldSelf.meteredBy)",message="meteredBy is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="self.dataClass != 'internal' || !has(self.__loop__) || !has(self.__loop__.checks) || !self.__loop__.checks",message="an internal run runs no repository checks"
 // +kubebuilder:validation:XValidation:rule="has(self.__loop__) == has(oldSelf.__loop__) && (!has(self.__loop__) || (has(self.__loop__.checks) == has(oldSelf.__loop__.checks) && (!has(self.__loop__.checks) || self.__loop__.checks == oldSelf.__loop__.checks) && has(self.__loop__.search) == has(oldSelf.__loop__.search) && (!has(self.__loop__.search) || self.__loop__.search == oldSelf.__loop__.search)))",message="loop is immutable and cannot be added or removed after creation"
@@ -121,6 +122,10 @@ type AgentRunSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="screenshots is immutable"
 	// +optional
 	Screenshots *AgentRunScreenshots `json:"screenshots,omitempty"`
+	// PRDraft instructs the harness (AGENT_PR_DRAFT=1) to pass --draft when opening a pull
+	// request for a draft-mode upkeep routine (UP14, P2-R3). Immutable once set.
+	// +optional
+	PRDraft bool `json:"prDraft,omitempty"`
 }
 
 // AgentRunScreenshots is a run's browser opt-in and its screenshot cap (v5 Q16).

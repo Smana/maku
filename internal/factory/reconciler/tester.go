@@ -67,6 +67,7 @@ func testerRun(t *v1alpha1.Task) bool { return len(t.Status.Runs) > 0 && current
 // testerSpec (F3-R2): the implementer's claim, on the task's own model and caps (R19), as a tester.
 func (r *Reconciler) testerSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
 	s := r.implementerSpec(cfg, t, text)
+	s.PRDraft = false
 	s.Role = "tester"
 	s.Persona = "tester"
 	r.withChecks(cfg, &s, t)

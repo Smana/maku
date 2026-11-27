@@ -470,8 +470,8 @@ func (g *GitHub) RenderMarkdown(ctx context.Context, text string) (string, error
 // restIssue is a REST issue as the forge reads one.
 func restIssue(i *github.Issue) Issue {
 	out := Issue{Number: i.GetNumber(), ID: i.GetID(), URL: i.GetHTMLURL(), Title: i.GetTitle(), Body: i.GetBody(),
-		State: strings.ToUpper(i.GetState()), Author: i.GetUser().GetLogin(), Association: i.GetAuthorAssociation(),
-		CreatedAt: i.GetCreatedAt().Time}
+		State: strings.ToUpper(i.GetState()), StateReason: strings.ToLower(i.GetStateReason()), Author: i.GetUser().GetLogin(), Association: i.GetAuthorAssociation(),
+		CreatedAt: i.GetCreatedAt().Time, ClosedAt: i.GetClosedAt().Time}
 	for _, l := range i.Labels {
 		out.Labels = append(out.Labels, l.GetName())
 	}
@@ -489,6 +489,27 @@ func (g *GitHub) IssuesLabelled(ctx context.Context, label string) ([]Issue, err
 	}
 	if resp.NextPage != 0 { // a short list would read as a missing part, and open a duplicate
 		return nil, fmt.Errorf("forge: more than 100 issues carry %q", label)
+	}
+	var out []Issue
+	for _, i := range iss {
+		if !i.IsPullRequest() {
+			out = append(out, restIssue(i))
+		}
+	}
+	return out, nil
+}
+
+// OpenIssuesLabelled returns open non-PR issues carrying every label in labels (capped at one page
+// of 100).
+func (g *GitHub) OpenIssuesLabelled(ctx context.Context, labels ...string) ([]Issue, error) {
+	iss, resp, err := g.rest.Issues.ListByRepo(ctx, g.owner, g.name, &github.IssueListByRepoOptions{
+		State: "open", Labels: labels, ListOptions: github.ListOptions{PerPage: 100}})
+	g.mark(err)
+	if err != nil {
+		return nil, wrap("list open labelled issues", err)
+	}
+	if resp.NextPage != 0 {
+		return nil, fmt.Errorf("forge: more than 100 open issues carry %v", labels)
 	}
 	var out []Issue
 	for _, i := range iss {
@@ -694,7 +715,7 @@ func restPR(p *github.PullRequest) PR {
 		state = "MERGED"
 	}
 	return PR{Number: p.GetNumber(), NodeID: p.GetNodeID(), URL: p.GetHTMLURL(), Title: p.GetTitle(), Body: p.GetBody(),
-		State: state, Author: p.GetUser().GetLogin(), BaseRef: p.GetBase().GetRef(), HeadRef: p.GetHead().GetRef(), HeadSHA: p.GetHead().GetSHA()}
+		State: state, Draft: p.GetDraft(), Author: p.GetUser().GetLogin(), BaseRef: p.GetBase().GetRef(), HeadRef: p.GetHead().GetRef(), HeadSHA: p.GetHead().GetSHA()}
 }
 
 // PullRequestForBranch is the newest pull request from branch targeting main in the repository, 0
@@ -1003,8 +1024,11 @@ func (g *GitHub) Issue(ctx context.Context, number int) (Issue, error) {
 				Title             string
 				Body              string
 				State             string
+				StateReason       *string `graphql:"stateReason"`
 				Author            *actor
 				AuthorAssociation string `graphql:"authorAssociation"`
+				CreatedAt         *githubv4.DateTime
+				ClosedAt          *githubv4.DateTime
 				LastEditedAt      *githubv4.DateTime
 				Labels            struct{ Nodes []struct{ Name string } } `graphql:"labels(first: 50)"`
 				Renames           struct {
@@ -1027,6 +1051,15 @@ func (g *GitHub) Issue(ctx context.Context, number int) (Issue, error) {
 	i := q.Repository.Issue
 	out := Issue{Number: i.Number, URL: i.URL, Title: i.Title, Body: i.Body, State: i.State, Author: i.Author.login(),
 		Association: i.AuthorAssociation}
+	if i.StateReason != nil {
+		out.StateReason = strings.ToLower(*i.StateReason)
+	}
+	if i.CreatedAt != nil {
+		out.CreatedAt = i.CreatedAt.Time
+	}
+	if i.ClosedAt != nil {
+		out.ClosedAt = i.ClosedAt.Time
+	}
 	if i.LastEditedAt != nil {
 		out.LastEditedAt = i.LastEditedAt.Time
 	}
@@ -1052,6 +1085,7 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 				Body             string
 				LastEditedAt     *githubv4.DateTime
 				State            string
+				IsDraft          bool `graphql:"isDraft"`
 				BaseRefName      string
 				HeadRefName      string
 				HeadRefOid       string
@@ -1059,6 +1093,7 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 				Author           *actor
 				MergedBy         *actor
 				MergedAt         *githubv4.DateTime
+				ClosedAt         *githubv4.DateTime
 				MergeCommit      *struct{ Oid string }
 				AutoMergeRequest *struct{ EnabledAt githubv4.DateTime }
 				Labels           struct {
@@ -1115,7 +1150,7 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 		return PR{}, wrap("read a pull request", err)
 	}
 	p := q.Repository.PullRequest
-	out := PR{Number: p.Number, NodeID: p.ID, URL: p.URL, Title: p.Title, Body: p.Body, State: p.State, Author: p.Author.login(),
+	out := PR{Number: p.Number, NodeID: p.ID, URL: p.URL, Title: p.Title, Body: p.Body, State: p.State, Draft: p.IsDraft, Author: p.Author.login(),
 		BaseRef: p.BaseRefName, HeadRef: p.HeadRefName, HeadSHA: p.HeadRefOid, CrossRepository: p.IsCrossRepo,
 		ReviewsTruncated: p.Reviews.PageInfo.HasPreviousPage, LabelsTruncated: p.Labels.PageInfo.HasNextPage,
 		MergedBy: p.MergedBy.login(), AutoMerge: p.AutoMergeRequest != nil}
@@ -1127,6 +1162,9 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 	}
 	if p.MergedAt != nil {
 		out.MergedAt = p.MergedAt.Time
+	}
+	if p.ClosedAt != nil {
+		out.ClosedAt = p.ClosedAt.Time
 	}
 	for _, l := range p.Labels.Nodes {
 		out.Labels = append(out.Labels, l.Name)

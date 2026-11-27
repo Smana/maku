@@ -2762,6 +2762,11 @@ spec:
                   url:
                     maxLength: 2048
                     type: string
+                  wasDraft:
+                    description: |-
+                      WasDraft records that this PR was observed as a draft at least once, so marking it Ready for
+                      review early does not trigger draft_mode_mismatch (UP14).
+                    type: boolean
                 required:
                 - number
                 - url

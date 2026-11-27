@@ -441,8 +441,17 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		}
 		return nil // a nil interface, never a typed-nil *forge.GitHub
 	}}
+	// The day ledgers and routine state ConfigMap are invisible to the manager's cache: its ConfigMap
+	// informer carries a metadata.name selector for the stop object (factoryManagerOptions), so
+	// read and write them through an uncached live client.
+	ledgers, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		return err
+	}
+	routineState := &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log}
+	breaker := &upkeep.Breaker{Store: routineState, Now: time.Now, Log: log}
 	statusWriter := &statuswriter.Writer{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: ns, Log: log,
-		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, privateCode.Visibility, log)}
+		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, privateCode.Visibility, routineState, log)}
 	src.OnSynced = statusWriter.Kick
 	if err := src.Watch(ctx, mgr.GetCache(), kinds); err != nil {
 		return err
@@ -542,15 +551,6 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	for name, usd := range meter.RunUSD(cfg) {
 		m.RunBudgetUSD(ctx, name, usd)
 	}
-	// The day ledgers are invisible to the manager's cache: its ConfigMap informer carries a
-	// metadata.name selector for the stop object (factoryManagerOptions). R50's reservation, the
-	// meter's settle and Queued's daily cap (which reserves its runs there, #78) read and write
-	// date-named ledgers, so through a live client.
-	ledgers, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
-	if err != nil {
-		return err
-	}
-	routineState := &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log}
 	syncRoutinePaused(ctx, cfg, routineState, m)
 	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs.Kind, MeteredBy: meteredBy(cfg)}
 	perRun := perRunTokens(cfg, live.Current, mgr.GetClient(), mgr.GetCache(), ledgers, ns, m, log)
@@ -561,8 +561,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	rec := &reconciler.Reconciler{Kind: cfg.Runs.Kind, Client: mgr.GetClient(), Ledger: ledgers, Namespace: ns, Cfg: live, Clients: conns.task, Owned: fenced.Owned,
 		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
 		Triage:  triage.Classify{Clients: conns.class}, // no C7: every task takes the static standard tier (WF9)
-		Metrics: m, RoutineMetrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
-		Trace: sink, Costs: costs, Decisions: recorder, Hardening: hardened}
+		Metrics: m, RoutineMetrics: m, RoutineBreaker: breaker, Now: time.Now, Nonce: taskid.Random, Log: log,
+		Trace: sink, Costs: costs, Decisions: recorder, Hardening: hardened, Redact: redactor}
 	if cfg.PolicyManagement.Manages() { // stage 5: grants read from the broker, never cached
 		rec.Grants = broker
 	}
@@ -833,7 +833,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Repository: name, Demo: cfg.Demo, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: ledgers,
 			CanWrite:      func(ctx context.Context, login string) (bool, error) { return perms.CanWrite(ctx, name, login) },
 			HandoffStarts: handoffStarts(broker), Logins: logins,
-			Proposal: proposal, Redact: redactor}, true
+			Proposal: proposal, Redact: redactor, Breaker: breaker}, true
 	}}
 	pollers.Sync(conns.names())
 	runnables = append(runnables, pollers)
@@ -1058,6 +1058,7 @@ func newRoutineSchedulerWithState(clients func(string) (intake.ScheduleForge, in
 		APIReader:      apiReader,
 		Ledger:         ledgers,
 		State:          state,
+		Breaker:        &upkeep.Breaker{Store: state, Now: time.Now, Log: log},
 		RoutineMetrics: m,
 		Namespace:      ns,
 		Cfg:            live,
@@ -1524,7 +1525,6 @@ var routineErrorMap = []struct {
 	{intake.ErrRoutineNotFound, api.ErrRoutineNotFound},
 	{intake.ErrRepoNotOwned, api.ErrRoutineRepoNotOwned},
 	{intake.ErrRoutineDisabled, api.ErrRoutineDisabled},
-	{intake.ErrModePhase2, api.ErrRoutineModePhase2},
 	{intake.ErrInvalidMode, api.ErrRoutineInvalidMode},
 	{intake.ErrModeWidening, api.ErrRoutineModeWidening},
 	{intake.ErrInvalidIdempotencyKey, api.ErrRoutineBadIdempotencyKey},
@@ -1533,6 +1533,9 @@ var routineErrorMap = []struct {
 	{intake.ErrBudgetExhausted, api.ErrRoutineBudgetExhausted},
 	{intake.ErrProbeEmpty, api.ErrRoutineProbeEmpty},
 	{intake.ErrProbeRefused, api.ErrRoutineProbeRefused},
+	{intake.ErrPromptInvalid, api.ErrRoutinePromptInvalid},
+	{intake.ErrSkillMissing, api.ErrRoutineSkillMissing},
+	{intake.ErrSkillInvalid, api.ErrRoutineSkillInvalid},
 }
 
 func mapRoutineTriggerError(err error) error {
@@ -1563,14 +1566,16 @@ func syncRoutinePaused(ctx context.Context, cfg *config.Config, state *upkeep.St
 		seen := make(map[string]bool, len(rc.ResolvedRoutines)+len(rc.Routines))
 		for name, rr := range rc.ResolvedRoutines {
 			seen[name] = true
-			m.RoutinePaused(ctx, rc.Name, name, rr.Paused || repoStates[name].Paused)
+			rs := repoStates[name]
+			m.RoutinePaused(ctx, rc.Name, name, rr.Paused || rs.Paused || rs.BreakerState == upkeep.BreakerPaused)
 		}
 		for _, b := range rc.Routines {
 			if seen[b.Name] {
 				continue
 			}
 			seen[b.Name] = true
-			m.RoutinePaused(ctx, rc.Name, b.Name, b.Paused || repoStates[b.Name].Paused)
+			rs := repoStates[b.Name]
+			m.RoutinePaused(ctx, rc.Name, b.Name, b.Paused || rs.Paused || rs.BreakerState == upkeep.BreakerPaused)
 		}
 	}
 }

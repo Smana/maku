@@ -47,7 +47,6 @@ var (
 	ErrRoutineNotFound            = errors.New("api: routine not found")
 	ErrRoutineRepoNotOwned        = errors.New("api: routine repository not owned by this factory")
 	ErrRoutineDisabled            = errors.New("api: routine is disabled")
-	ErrRoutineModePhase2          = errors.New("api: routine mode requires Phase 2")
 	ErrRoutineInvalidMode         = errors.New("api: invalid routine mode")
 	ErrRoutineModeWidening        = errors.New("api: routine mode cannot widen configured mode")
 	ErrRoutineBadIdempotencyKey   = errors.New("api: invalid routine idempotency key")
@@ -56,6 +55,9 @@ var (
 	ErrRoutineBudgetExhausted     = errors.New("api: routine daily budget exhausted")
 	ErrRoutineProbeEmpty          = errors.New("api: routine probe found no work")
 	ErrRoutineProbeRefused        = errors.New("api: routine probe findings refused")
+	ErrRoutinePromptInvalid       = errors.New("api: routine prompt invalid")
+	ErrRoutineSkillMissing        = errors.New("api: routine skill missing")
+	ErrRoutineSkillInvalid        = errors.New("api: routine skill invalid")
 )
 
 const (
@@ -471,8 +473,6 @@ func (s *Server) runRoutine(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) refuseRoutineTrigger(w http.ResponseWriter, r *http.Request, repo, routine string, err error) {
 	switch {
-	case errors.Is(err, ErrRoutineModePhase2):
-		refuse(w, http.StatusBadRequest, "mode_requires_phase2")
 	case errors.Is(err, ErrRoutineModeWidening):
 		refuse(w, http.StatusBadRequest, "mode_widening")
 	case errors.Is(err, ErrRoutineInvalidMode):
@@ -497,6 +497,12 @@ func (s *Server) refuseRoutineTrigger(w http.ResponseWriter, r *http.Request, re
 		refuse(w, http.StatusConflict, "probe_empty")
 	case errors.Is(err, ErrRoutineProbeRefused):
 		refuse(w, http.StatusUnprocessableEntity, "probe_refused")
+	case errors.Is(err, ErrRoutinePromptInvalid):
+		refuse(w, http.StatusUnprocessableEntity, "prompt_invalid")
+	case errors.Is(err, ErrRoutineSkillMissing):
+		refuse(w, http.StatusUnprocessableEntity, "skill_missing")
+	case errors.Is(err, ErrRoutineSkillInvalid):
+		refuse(w, http.StatusUnprocessableEntity, "skill_invalid")
 	default:
 		s.log().ErrorContext(r.Context(), "routine manual trigger failed", "repository", repo, "routine", routine, "error", err)
 		refuse(w, http.StatusServiceUnavailable, "routines_unavailable")
@@ -750,10 +756,14 @@ func buildRoutineOverview(repo string, rr config.ResolvedRoutine, st upkeep.Rout
 		usdPerMerged = &v
 	}
 
-	paused := rr.Paused || st.Paused
+	paused := rr.Paused || st.Paused || st.BreakerState == upkeep.BreakerPaused
 	pausedReason := st.PausedReason
-	if rr.Paused && pausedReason == "" {
-		pausedReason = "declarative"
+	if paused && pausedReason == "" {
+		if rr.Paused {
+			pausedReason = "declarative"
+		} else if st.BreakerState == upkeep.BreakerPaused {
+			pausedReason = st.BreakerReason
+		}
 	}
 
 	var nextRunAt *time.Time

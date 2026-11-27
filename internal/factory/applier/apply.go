@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/hardening"
 )
@@ -232,7 +233,8 @@ func (a *Applier) applyPR(ctx context.Context, t *v1alpha1.Task, pub Publisher, 
 		}
 		return pr.URL, "", nil
 	}
-	pr, err = pub.CreatePR(ctx, baseRef, branch(t), o.Title, body, o.Draft)
+	draft := o.Draft || isDraftRoutine(t)
+	pr, err = pub.CreatePR(ctx, baseRef, branch(t), o.Title, body, draft)
 	if errors.Is(err, forge.ErrPRExists) {
 		return "", "", errors.New("the branch's pull request appeared since it was read: retried next tick")
 	}
@@ -240,6 +242,11 @@ func (a *Applier) applyPR(ctx context.Context, t *v1alpha1.Task, pub Publisher, 
 		return "", "", fmt.Errorf("open the pull request: %w", err)
 	}
 	return pr.URL, "", nil
+}
+
+func isDraftRoutine(t *v1alpha1.Task) bool {
+	return t != nil && t.Spec.Source.Kind == v1alpha1.SourceKindRoutine &&
+		t.Spec.Routine != nil && t.Spec.Routine.Mode == config.RoutineModeDraft
 }
 
 // footerOutput is the Agent-Output a factory footer names, read from the body's last paragraph

@@ -92,10 +92,17 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		return nil
 	}
 	if !cfg.NeedsMerger() {
+		reason := "merge_gate_off"
+		switch {
+		case draftModeMismatch(t, pr):
+			reason = "draft_mode_mismatch"
+		case pr.Draft:
+			reason = "draft_pr"
+		}
 		// No class is live or in shadow, so the factory may hold no merger key: there is no gate to
 		// read. A maintainer owns the pull request, as in any other hand-off.
-		r.to(t, v1alpha1.PhaseAwaitingHuman, "merge_gate_off")
-		narrateLater(t, narrate.WaitingForHuman(t, "merge_gate_off"))
+		r.to(t, v1alpha1.PhaseAwaitingHuman, reason)
+		narrateLater(t, narrate.WaitingForHuman(t, reason))
 		return nil
 	}
 	checks, err := r.merger(ctx).PullRequestChecks(ctx, n)
@@ -176,9 +183,10 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 	// Without policy-bot, though, an approved head's diff is read for one row only: a gate path is
 	// never the gate's to merge, approval or not (S9, D11).
 	approved := d.Verdict == "arm" && d.Reason == "maintainer_approved"
-	gatePathRead := approved && !r.repo(cfg, t).Merge.UsesPolicyBot()
+	upkeepProtected := upkeepPathProtected(r.repo(cfg, t))
+	gatePathRead := approved && (!r.repo(cfg, t).Merge.UsesPolicyBot() || upkeepProtected)
 	if gatePathRead || !approved && (d.Verdict == "arm" || d.Verdict == "shadow") && (byDiff || policy.readsDiff(r.repo(cfg, t), t.Spec.PredictedClass) ||
-		cfg.SteeringOn()) {
+		cfg.SteeringOn() || upkeepProtected) {
 		// The diff is read late (steering on: always, to refuse a changed note): only a decision that would arm or shadow a class with a condition
 		// on its diff pays its 2N+1 API calls. The first pass held those conditions vacuously;
 		// this second pass decides on the real diff.
@@ -533,8 +541,19 @@ const maxGateReentries = 3
 // so an approval cannot return it; the room's report does (reenter), or a human's merge.
 var byHandReasons = map[string]bool{"not_agent_authored": true, "gate_path": true, "contract_modified": true,
 	"contract_check_not_run": true, "checks_truncated": true, "base_not_main": true, "not_owned": true,
-	"steering_path": true, "foreign_trailer": true, "not_mergeable": true, "changes_requested": true, "human_commit_in_pr": true,
-	"head_unreported": true}
+	"steering_path": true, "upkeep_path": true, "foreign_trailer": true, "not_mergeable": true, "changes_requested": true, "human_commit_in_pr": true,
+	"head_unreported": true, "draft_pr": true, "draft_mode_mismatch": true}
+
+func draftModeMismatch(t *v1alpha1.Task, pr forge.PR) bool {
+	if t == nil || t.Spec.Source.Kind != v1alpha1.SourceKindRoutine ||
+		t.Spec.Routine == nil || t.Spec.Routine.Mode != config.RoutineModeDraft || pr.Draft {
+		return false
+	}
+	if ref := t.Status.PullRequest; ref != nil && (ref.WasDraft || ref.HandedOffReason == "draft_pr") {
+		return false
+	}
+	return t.Status.Reason != "draft_pr" && t.Status.Reason != "reentered_ready"
+}
 
 // handOff is the gate's hand-off comment (AM3): with approveToMerge, "approve this pull request"
 // for an agents pull request an approval can merge; the bypass instructions for an adopted one and
@@ -644,6 +663,16 @@ func (r *Reconciler) escalatedReturn(ctx context.Context, cfg *config.Config, t 
 // re-reviews it itself.
 func (r *Reconciler) reenter(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	why := t.Status.Reason
+	if why == "draft_pr" {
+		ref := t.Status.PullRequest
+		if ref == nil || pr.Draft || pr.HeadSHA == "" || pr.HeadSHA != ref.HeadSHA {
+			return false, nil
+		}
+		ref.WasDraft = true
+		t.Status.GateReentries-- // marking Ready for review is a human gate transition, not a flap
+		r.backToGate(cfg, t, why, "reentered_ready", pr.HeadSHA)
+		return true, nil
+	}
 	if why == "held" { // MR10: only a maintainer's removal lets the next pass decide, on the held head
 		if slices.Contains(pr.Labels, LabelHold) || pr.LabelsTruncated || t.Status.GateReentries >= maxGateReentries ||
 			pr.HeadSHA == "" || pr.HeadSHA != t.Status.PullRequest.HeadSHA {

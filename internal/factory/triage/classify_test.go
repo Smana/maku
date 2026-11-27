@@ -572,4 +572,54 @@ func TestRoutineTriage(t *testing.T) {
 			t.Fatalf("unexpected ceiling: %+v", capped)
 		}
 	})
+
+	t.Run("propose routine investigates while preserving DataClass", func(t *testing.T) {
+		c7 := &fakeC7{resp: C7Response{Tier: "light", Classifier: "semantic-router", Fallback: "none"}}
+		// Public propose routine with OracleClass must still take investigate and keep DataClass=public.
+		pubTask := &v1alpha1.Task{
+			ObjectMeta: metav1.ObjectMeta{Name: "proposep1"},
+			Spec: v1alpha1.TaskSpec{
+				Source:      v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "dead-links"},
+				DataClass:   "public",
+				MaxMicroUSD: 600_000,
+				Text:        "propose link fixes",
+				Routine:     &v1alpha1.TaskRoutine{Name: "dead-links", Mode: config.RoutineModePropose},
+			},
+		}
+		dPub, err := Classify{C: c7}.Triage(t.Context(), cfg, pubTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dPub.Template != "investigate" || dPub.PredictedClass != "review" || dPub.DataClass != "public" || !Investigates(cfg, pubTask) {
+			t.Fatalf("unexpected public propose triage: %+v", dPub)
+		}
+
+		// Internal propose routine preserves DataClass=internal.
+		privTask := pubTask.DeepCopy()
+		privTask.Spec.DataClass = "internal"
+		dPriv, err := Classify{C: c7}.Triage(t.Context(), cfg, privTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dPriv.Template != "investigate" || dPriv.DataClass != "internal" {
+			t.Fatalf("unexpected internal propose triage: %+v", dPriv)
+		}
+
+		// RunLore source still forces DataClass=internal even if Spec.DataClass was public.
+		rlTask := &v1alpha1.Task{
+			ObjectMeta: metav1.ObjectMeta{Name: "rlp1"},
+			Spec: v1alpha1.TaskSpec{
+				Source:    v1alpha1.Source{Kind: "runlore", Ref: "alert-1"},
+				DataClass: "public",
+				Text:      "alert text",
+			},
+		}
+		dRL, err := Classify{C: c7}.Triage(t.Context(), cfg, rlTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dRL.Template != "investigate" || dRL.DataClass != "internal" {
+			t.Fatalf("runlore did not force internal: %+v", dRL)
+		}
+	})
 }

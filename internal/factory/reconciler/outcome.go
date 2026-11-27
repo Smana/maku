@@ -5,6 +5,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // StuckAfter is how long a Running run may show no room activity before the factory ends it (§6.3).
@@ -123,6 +125,7 @@ func (r *Reconciler) outcome(ctx context.Context, cfg *config.Config, t *v1alpha
 			if p := t.Status.Profile; p != nil && p.StepUp != nil && (p.StepUp.Mode == "auto" || p.StepUp.Mode == "manual") {
 				r.noteStage(t, "step_up", stepUpEffect(p.StepUp.Mode, "escalated"))
 			}
+			r.recordRoutineBreaker(ctx, cfg, t)
 		}
 		return
 	}
@@ -134,6 +137,7 @@ func (r *Reconciler) outcome(ctx context.Context, cfg *config.Config, t *v1alpha
 		t.Status.EndedAt, t.Status.Outcome = &at, taskOutcome(t)
 	}
 	r.finalizeStages(ctx, cfg, t, t.Status.Outcome)
+	r.recordRoutineBreaker(ctx, cfg, t)
 	if !r.settling(t) { // never ran: nothing settles, and nothing waits (R34)
 		outcome, micro, _, err := r.tally(ctx, cfg, t)
 		if err != nil { // a family read: a task that never ran has none
@@ -281,6 +285,101 @@ func (r *Reconciler) routineMetrics() interface {
 		return rm
 	}
 	return nil
+}
+
+func (r *Reconciler) recordRoutineBreaker(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) {
+	if r.RoutineBreaker == nil || t == nil || t.Spec.Source.Kind != v1alpha1.SourceKindRoutine {
+		return
+	}
+	name := routineName(t)
+	if name == "" {
+		return
+	}
+	at := r.Now()
+	if t.Status.EndedAt != nil {
+		at = t.Status.EndedAt.Time
+	} else if t.Status.PhaseSince != nil {
+		at = t.Status.PhaseSince.Time
+	}
+	var out upkeep.BreakerOutcome
+	out.At = at
+	if t.Spec.Routine != nil {
+		out.PromptSHA = t.Spec.Routine.PromptSHA
+	}
+
+	switch t.Status.Phase {
+	case v1alpha1.PhaseEscalated:
+		out.ID = fmt.Sprintf("%s:esc:%d", t.Name, t.Status.Retries)
+		out.Outcome = upkeep.OutcomeEscalated
+	case v1alpha1.PhaseNoOp:
+		out.ID = t.Name
+		out.Outcome = upkeep.OutcomeNoOp
+	case v1alpha1.PhaseDone:
+		if t.Status.Reason == "proposal_filed" || t.Status.Reason == "proposal_ready" {
+			return // pending maintainer decision on factory/proposed issue
+		}
+		out.ID = t.Name
+		if t.Status.Outcome == "failed" {
+			out.Outcome = upkeep.OutcomeClosedUnmerged
+		} else {
+			out.Outcome = upkeep.OutcomeMerged
+		}
+	case v1alpha1.PhaseClosed:
+		out.ID = t.Name
+		if t.Status.Reason == "stale" {
+			out.Outcome = upkeep.OutcomeStale
+		} else {
+			out.Outcome = upkeep.OutcomeClosedUnmerged
+		}
+	case v1alpha1.PhaseReverted:
+		if t.Annotations[v1alpha1.AnnotationDrill] == "true" {
+			return
+		}
+		out.ID = t.Name
+		out.Outcome = upkeep.OutcomeReverted
+	default:
+		return
+	}
+
+	var spec config.ResolvedBreaker
+	var declPaused bool
+	if rc := r.repo(cfg, t); rc != nil {
+		if rr, ok := rc.ResolvedRoutines[name]; ok {
+			spec = rr.Breaker
+			declPaused = rr.Paused
+		}
+	}
+	record(ctx, func(ctx context.Context) {
+		res, err := r.RoutineBreaker.Record(ctx, t.Spec.Repository, name, spec, out)
+		if err != nil {
+			r.log().Warn("routine breaker record failed", "task.id", t.Name, "routine", name, "err", err)
+			return
+		}
+		paused := declPaused || res.State.Paused || res.State.BreakerState == upkeep.BreakerPaused
+		if pm, ok := r.RoutineMetrics.(interface {
+			RoutinePaused(ctx context.Context, repository, routine string, paused bool)
+		}); ok {
+			pm.RoutinePaused(ctx, t.Spec.Repository, name, paused)
+		} else if pm, ok := r.Metrics.(interface {
+			RoutinePaused(ctx context.Context, repository, routine string, paused bool)
+		}); ok {
+			pm.RoutinePaused(ctx, t.Spec.Repository, name, paused)
+		}
+		if res.HasMergeRate {
+			if mm, ok := r.RoutineMetrics.(interface {
+				RoutineMergeRate(ctx context.Context, repository, routine string, rate float64)
+			}); ok {
+				mm.RoutineMergeRate(ctx, t.Spec.Repository, name, res.MergeRate)
+			} else if mm, ok := r.Metrics.(interface {
+				RoutineMergeRate(ctx context.Context, repository, routine string, rate float64)
+			}); ok {
+				mm.RoutineMergeRate(ctx, t.Spec.Repository, name, res.MergeRate)
+			}
+		}
+		if res.NewlyTripped && r.OnRoutinePaused != nil {
+			r.OnRoutinePaused(ctx, t.Spec.Repository, name, res.Reason)
+		}
+	})
 }
 
 // countCardHealth records the workflow card's health metrics once at task end (WR5): whether the

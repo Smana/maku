@@ -141,16 +141,19 @@ type Issue struct {
 	Number int
 	// ID is REST's numeric id, which the sub-issues API takes (splitter SL8); 0 when read through
 	// GraphQL (Issue).
-	ID     int64
-	URL    string
-	Title  string
-	Body   string
-	State  string // OPEN | CLOSED
-	Author string // a bot's with "[bot]", as REST writes it
+	ID    int64
+	URL   string
+	Title string
+	Body  string
+	State string // OPEN | CLOSED
+	// StateReason is GitHub's issue state_reason (completed | not_planned | reopened | ""), lowercased.
+	StateReason string
+	Author      string // a bot's with "[bot]", as REST writes it
 	// Association is the author's relation to the repository, as Review.Association (UH6).
 	Association string
-	// CreatedAt is when the issue was opened; zero when read through GraphQL (Issue).
+	// CreatedAt is when the issue was opened.
 	CreatedAt    time.Time
+	ClosedAt     time.Time // zero while open or unknown
 	Labels       []string
 	LastEditedAt time.Time // the body's last edit; zero when never edited
 	// The last title rename (a RenamedTitleEvent): lastEditedAt does not cover the title,
@@ -197,6 +200,7 @@ type PR struct {
 	// does not cover it (forge_read, UH6).
 	BodyEditedAt time.Time
 	State        string // OPEN | CLOSED | MERGED
+	Draft        bool
 	Author       string
 	BaseRef      string
 	HeadRef      string
@@ -212,6 +216,7 @@ type PR struct {
 	HeadCommittedAt time.Time
 	MergedBy        string
 	MergedAt        time.Time // zero while unmerged
+	ClosedAt        time.Time // zero while open or unknown
 	MergeCommitSHA  string
 	AutoMerge       bool
 	Labels          []string

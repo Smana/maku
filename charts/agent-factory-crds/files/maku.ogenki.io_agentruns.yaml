@@ -212,6 +212,11 @@ spec:
                 x-kubernetes-validations:
                 - message: model is immutable
                   rule: self == oldSelf
+              prDraft:
+                description: |-
+                  PRDraft instructs the harness (AGENT_PR_DRAFT=1) to pass --draft when opening a pull
+                  request for a draft-mode upkeep routine (UP14, P2-R3). Immutable once set.
+                type: boolean
               principal:
                 maxLength: 128
                 pattern: ^(human:[A-Za-z0-9@._-]+|system:[a-z0-9-]+)$
@@ -324,6 +329,9 @@ spec:
                 creation
               rule: has(self.suspendable) == has(oldSelf.suspendable) && (!has(self.suspendable)
                 || self.suspendable == oldSelf.suspendable)
+            - message: prDraft is immutable and cannot be added or removed after creation
+              rule: has(self.prDraft) == has(oldSelf.prDraft) && (!has(self.prDraft)
+                || self.prDraft == oldSelf.prDraft)
             - message: meteredBy is immutable and cannot be added or removed after
                 creation
               rule: has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy)

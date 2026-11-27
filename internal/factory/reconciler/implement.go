@@ -8,23 +8,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/intake"
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/hardening"
@@ -230,8 +235,20 @@ func (r *Reconciler) implementerSpec(cfg *config.Config, t *v1alpha1.Task, text 
 		Model: t.Spec.Budget.Model, RoomRef: t.Status.RoomRef, SourceURL: sourceURL(t),
 		MaxTokens: t.Spec.Budget.RunTokens, MaxMinutes: t.Spec.Budget.RunMinutes, Traceparent: traceparent(t), Tier: t.Spec.Budget.Tier,
 		CoordinationArtifacts: t.Spec.CoordinationArtifacts}
+	if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine && t.Spec.Routine != nil {
+		s.PRDraft = t.Spec.Routine.Mode == config.RoutineModeDraft
+		s.Routine = t.Spec.Routine.Name
+		s.RoutinePromptSHA = short12(t.Spec.Routine.PromptSHA)
+	}
 	r.withChecks(cfg, &s, t)
 	return s
+}
+
+func short12(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a
@@ -405,7 +422,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 			// maintainer instead of backing off forever. Only a refusal of spec.loop (checks and
 			// search included: Strict validation, the host's XRD lacks it) is loop_unsupported; any
 			// other refused field is run_refused, and the log names it.
-			if (s.Loop != nil || s.Checks || s.Search || s.Screenshots > 0) && refusedSchema(err) {
+			if (s.Loop != nil || s.Checks || s.Search || s.Screenshots > 0 || s.PRDraft) && refusedSchema(err) {
 				fields := refusedFields(err)
 				if refusedLoop(err, fields) {
 					r.log().Warn("loop, repository checks or search claim refused by the cluster", "task.id", t.Name, "err", err)
@@ -1028,6 +1045,9 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		if len(evs) == 0 {
 			return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, "no_action")
 		}
+		if isProposeRoutine(t) {
+			return r.finishProposeRoutine(ctx, cfg, t)
+		}
 		if t.Spec.Outcome == config.OutcomeReport && t.Spec.Source.Kind != "runlore" && cfg.InternalBy(t.Spec.Source.RequestedBy) == nil {
 			findings := lastHandoffSummary(evs)
 			r.finish(ctx, cfg, t, v1alpha1.PhaseDone, ReasonFindingsPosted, narrate.FindingsPosted(t, findings, cfg.RoomsURL))
@@ -1488,3 +1508,117 @@ const (
 
 // maxServedModels is RunProvenance.ServedModels' maxItems.
 const maxServedModels = 8
+
+var proposeRenderedLive = regexp.MustCompile(`(?i)<a[\s>/]|class="[^"]*\b(?:user-mention|team-mention|issue-link|commit-link)\b`)
+
+func isProposeRoutine(t *v1alpha1.Task) bool {
+	return t != nil && t.Spec.Source.Kind == v1alpha1.SourceKindRoutine &&
+		t.Spec.Routine != nil && t.Spec.Routine.Mode == config.RoutineModePropose
+}
+
+func (r *Reconciler) finishProposeRoutine(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	marker := intake.PublishedFromLabel(t.Name)
+	found, err := r.gh(ctx).IssuesLabelled(ctx, marker)
+	if err != nil {
+		return fmt.Errorf("propose routine lookup: %w", err)
+	}
+	var filed forge.Issue
+	for _, i := range found {
+		if !forge.SameLogin(i.Author, cfg.FactoryLogin) {
+			continue
+		}
+		if filed.Number == 0 || i.Number < filed.Number {
+			filed = i
+		}
+	}
+	name := cmp.Or(routineName(t), t.Spec.Source.Ref)
+	if filed.Number == 0 {
+		var title, body string
+		if t.Spec.DataClass == "public" {
+			var reason string
+			title, body, reason, err = r.publicRoutineProposal(ctx, cfg, t, name)
+			if err != nil {
+				return err
+			}
+			if reason != "" {
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
+			}
+		} else {
+			title = fmt.Sprintf("Upkeep proposal from routine `%s` (%s)", name, t.Name)
+			body = fmt.Sprintf("Upkeep routine `%s` task `%s` proposed a change in [the room](%s/r/%s).\n\n"+
+				"Apply `factory/publish` to publish a sanitised public issue from this proposal.",
+				name, t.Name, strings.TrimSuffix(cfg.RoomsURL, "/"), t.Status.RoomRef)
+		}
+		filed, err = r.gh(ctx).CreateIssue(ctx, title, body, []string{"factory/proposed", "factory/routine:" + name, marker})
+		if err != nil {
+			return fmt.Errorf("create proposed issue: %w", err)
+		}
+	}
+	wantLabel := strconv.Itoa(filed.Number)
+	if t.Spec.Issue != filed.Number || t.Labels[v1alpha1.LabelIssue] != wantLabel {
+		patch, _ := json.Marshal(map[string]any{
+			"metadata": map[string]any{"labels": map[string]string{v1alpha1.LabelIssue: wantLabel}},
+			"spec":     map[string]any{"issue": filed.Number},
+		})
+		obj := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: t.Name, Namespace: t.Namespace}}
+		if err := r.Client.Patch(ctx, obj, client.RawPatch(types.MergePatchType, patch)); err != nil {
+			return fmt.Errorf("patch proposed issue on task: %w", err)
+		}
+		t.ResourceVersion = obj.ResourceVersion
+		t.Spec.Issue = filed.Number
+		if t.Labels == nil {
+			t.Labels = map[string]string{}
+		}
+		t.Labels[v1alpha1.LabelIssue] = wantLabel
+	}
+	reason := "proposal_ready"
+	if t.Spec.DataClass == "public" {
+		reason = "proposal_filed"
+	}
+	return r.end(ctx, cfg, t, v1alpha1.PhaseDone, reason)
+}
+
+func (r *Reconciler) publicRoutineProposal(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, name string) (title, body, reason string, err error) {
+	proposal, err := r.Proposal(ctx, t)
+	switch {
+	case errors.Is(err, ErrNoProposal):
+		return "", "", "no_proposal", nil
+	case err != nil:
+		return "", "", "", err
+	}
+	first, rest, _ := strings.Cut(proposal, "\n")
+	d, err := sanitize.CheckFinalDraft(strings.TrimLeft(first, "# \t"), rest)
+	if err != nil {
+		return "", "", "invalid_draft", nil
+	}
+	if r.Redact == nil {
+		return "", "", "redacted", nil
+	}
+	foldedTitle, _ := sanitize.Text(d.Title)
+	foldedBody, _ := sanitize.Text(d.Body)
+	for _, text := range []string{d.Title + "\n" + d.Body, foldedTitle + "\n" + foldedBody} {
+		if _, rules := r.Redact.String(text); len(rules) > 0 {
+			return "", "", "redacted", nil
+		}
+	}
+	title, tr := sanitize.Public(d.Title)
+	body, br := sanitize.Public(d.Body)
+	if tr.Withheld || br.Withheld {
+		return "", "", "live_reference", nil
+	}
+	if _, rules := r.Redact.String(title + "\n" + body); len(rules) > 0 {
+		return "", "", "redacted", nil
+	}
+	for _, text := range []string{title, body} {
+		page, err := r.gh(ctx).RenderMarkdown(ctx, text)
+		if err != nil {
+			return "", "", "", fmt.Errorf("render proposed issue: %w", err)
+		}
+		if proposeRenderedLive.MatchString(page) {
+			return "", "", "live_reference", nil
+		}
+	}
+	body += fmt.Sprintf("\n\n---\nProposed by upkeep routine `%s` ([the room](%s/r/%s)). Apply `factory/ready` to implement this proposal.",
+		name, strings.TrimSuffix(cfg.RoomsURL, "/"), t.Status.RoomRef)
+	return title, body, "", nil
+}

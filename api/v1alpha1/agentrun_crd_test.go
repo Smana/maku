@@ -49,6 +49,7 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 		"has(self.roomRef) == has(oldSelf.roomRef) && (!has(self.roomRef) || self.roomRef == oldSelf.roomRef)":                                                         "roomRef is immutable and cannot be added or removed after creation",
 		"has(self.queueName) == has(oldSelf.queueName) && (!has(self.queueName) || self.queueName == oldSelf.queueName)":                                               "queueName is immutable and cannot be added or removed after creation",
 		"has(self.suspendable) == has(oldSelf.suspendable) && (!has(self.suspendable) || self.suspendable == oldSelf.suspendable)":                                     "suspendable is immutable and cannot be added or removed after creation",
+		"has(self.prDraft) == has(oldSelf.prDraft) && (!has(self.prDraft) || self.prDraft == oldSelf.prDraft)":                                                         "prDraft is immutable and cannot be added or removed after creation",
 		"has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy) || self.meteredBy == oldSelf.meteredBy)":                                               "meteredBy is immutable and cannot be added or removed after creation",
 		"self.dataClass != 'internal' || !has(self.__loop__) || !has(self.__loop__.checks) || !self.__loop__.checks":                                                   "an internal run runs no repository checks",
 		"self.dataClass == 'public' || !has(self.model) || !(self.model in ['kimi-frontier', 'mistral-standard', 'mistral-light', 'gemini-standard', 'gemini-light'])": "an internal run never names a provider alias",
@@ -58,8 +59,8 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 			t.Errorf("spec rule %q: message %q, want %q", rule, m, msg)
 		}
 	}
-	if len(spec.XValidations) != 12 {
-		t.Errorf("spec has %d rules, want 12", len(spec.XValidations))
+	if len(spec.XValidations) != 13 {
+		t.Errorf("spec has %d rules, want 13", len(spec.XValidations))
 	}
 	// review #518: a run the factory meters by its gateway identity says so, and only "gateway".
 	if mb := spec.Properties["meteredBy"]; len(mb.Enum) != 1 || string(mb.Enum[0].Raw) != `"gateway"` || slices.Contains(spec.Required, "meteredBy") {

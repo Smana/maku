@@ -33,6 +33,7 @@ import (
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
+	"github.com/Smana/maku/internal/factory/upkeep"
 	"github.com/Smana/maku/internal/hardening"
 )
 
@@ -134,6 +135,8 @@ type IssuePoller struct {
 	Redact interface {
 		String(string) (string, []string)
 	}
+	// Breaker records proposal acceptance/rejection outcomes for propose-mode routines.
+	Breaker RoutineBreaker
 }
 
 // repo is the poller's repository entry; nil when the published config no longer serves it.
@@ -498,6 +501,9 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 			return err
 		}
 	}
+	if slices.Contains(iss.Labels, "factory/proposed") && p.Breaker != nil {
+		p.recordProposalAccepted(ctx, cfg, iss)
+	}
 	return p.Forge.RemoveLabel(ctx, n, label)
 }
 
@@ -778,4 +784,44 @@ func (p *IssuePoller) drill(ctx context.Context, cfg *config.Config, n int) (boo
 		return false, err
 	}
 	return slices.Contains(pr.Labels, LabelDrill), nil
+}
+
+func (p *IssuePoller) recordProposalAccepted(ctx context.Context, cfg *config.Config, iss forge.Issue) {
+	rc := p.repo(cfg)
+	if rc == nil {
+		return
+	}
+	var routine string
+	for _, lbl := range iss.Labels {
+		if name, ok := strings.CutPrefix(lbl, "factory/routine:"); ok && name != "" {
+			routine = name
+			break
+		}
+	}
+	if routine == "" {
+		return
+	}
+	var brSpec config.ResolvedBreaker
+	if rr, ok := rc.ResolvedRoutines[routine]; ok {
+		brSpec = rr.Breaker
+	}
+	promptSHA := upkeep.DefaultPromptEffectiveSHA(rc.ResolvedRoutines[routine].DefaultPrompt)
+	var list v1alpha1.TaskList
+	if err := p.Client.List(ctx, &list, client.InNamespace(p.Namespace), client.MatchingLabels{v1alpha1.LabelRoutine: routine}); err == nil {
+		for i := range list.Items {
+			tk := &list.Items[i]
+			if strings.EqualFold(tk.Spec.Repository, rc.Name) && tk.Spec.Issue == iss.Number && tk.Spec.Routine != nil && tk.Spec.Routine.PromptSHA != "" {
+				promptSHA = tk.Spec.Routine.PromptSHA
+				break
+			}
+		}
+	}
+	if _, err := p.Breaker.Record(ctx, rc.Name, routine, brSpec, upkeep.BreakerOutcome{
+		ID:        fmt.Sprintf("proposal:%d", iss.Number),
+		Outcome:   upkeep.OutcomeProposalAccepted,
+		PromptSHA: promptSHA,
+		At:        p.now(),
+	}); err != nil {
+		p.log().Warn("routine breaker proposal_accepted failed", "repository", rc.Name, "routine", routine, "issue", iss.Number, "err", err)
+	}
 }

@@ -41,6 +41,7 @@ import (
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/factory/upkeep"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/runwatch"
 )
@@ -101,6 +102,7 @@ type TaskForge interface {
 	LabelEventsBy(ctx context.Context, number int, actor string, since time.Time) ([]forge.LabelEvent, error)
 	IssuesByAuthorSince(ctx context.Context, login string, since time.Time) ([]forge.Issue, error)
 	CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error)
+	RenderMarkdown(ctx context.Context, text string) (string, error)
 	IssuesLabelled(ctx context.Context, label string) ([]forge.Issue, error)
 	IssuesLabelledSince(ctx context.Context, label string, since time.Time) ([]forge.Issue, error)
 	AddSubIssue(ctx context.Context, parent int, childID int64) error
@@ -244,7 +246,13 @@ type Reconciler struct {
 	RoutineMetrics interface {
 		RoutineRun(ctx context.Context, repository, routine, outcome string, usd float64)
 	}
-	Now func() time.Time
+	// RoutineBreaker updates the rolling yield circuit breaker for routine tasks.
+	RoutineBreaker interface {
+		Record(ctx context.Context, repo, routine string, spec config.ResolvedBreaker, out upkeep.BreakerOutcome) (upkeep.RecordResult, error)
+	}
+	// OnRoutinePaused is invoked after a status update commits when a routine's breaker trips to paused.
+	OnRoutinePaused func(ctx context.Context, repository, routine, reason string)
+	Now             func() time.Time
 	// Decisions remembers each class's latest merge decision for the resources' status; nil: off.
 	Decisions *decision.Recorder
 	// CleanDecisions reads cached promotion evidence for a shadow comment; nil: progress is omitted.
@@ -264,6 +272,10 @@ type Reconciler struct {
 	// Hardening is the untrusted-input hardening track's ports (H1): with a repository in audit,
 	// a writer run's brief gets a canary and the task records its input trust. nil is off.
 	Hardening *HardeningPorts
+	// Redact scans public proposals before a propose-mode routine files a public GitHub issue.
+	Redact interface {
+		String(string) (string, []string)
+	}
 
 	oldBroker sync.Once  // the broker serves no task route: said once per process
 	notServed onceSet    // tasks whose repository is not served, said once each
@@ -1753,6 +1765,25 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 				return err
 			}
 		}
+		if t.Spec.Routine != nil && (t.Spec.Routine.PromptSource == "repo" || t.Spec.Routine.Skill != "") {
+			rp, err := r.hydrateRoutinePrompt(ctx, t)
+			switch {
+			case errors.Is(err, upkeep.ErrPromptInvalid):
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "prompt_invalid")
+			case errors.Is(err, upkeep.ErrSkillMissing):
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "skill_missing")
+			case errors.Is(err, upkeep.ErrSkillInvalid):
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "skill_invalid")
+			case err != nil:
+				return err
+			}
+			if msg := RoutinePromptMessage(t, rp); msg != "" {
+				if err := narrate.Room(ctx, r.Rooms, t, "routine-prompt", msg,
+					func(ctx context.Context) error { return r.Client.Status().Update(ctx, t) }); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	if overlapPending(t) {
 		return r.startOverlapScoper(ctx, cfg, t)
@@ -1782,13 +1813,29 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 	// triager one either: the config's validation cannot guard a name removed after a task was
 	// triaged.
 	if cfg.Investigates(t.Spec.Template) {
+		rp, err := r.hydrateRoutinePrompt(ctx, t)
+		switch {
+		case errors.Is(err, upkeep.ErrPromptInvalid):
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "prompt_invalid")
+		case errors.Is(err, upkeep.ErrSkillMissing):
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "skill_missing")
+		case errors.Is(err, upkeep.ErrSkillInvalid):
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "skill_invalid")
+		case err != nil:
+			return err
+		}
+		var history []upkeep.HistoryItem
+		if t.Spec.Source.Kind == v1alpha1.SourceKindRoutine && nextTrigger(t) != "resume" {
+			history = r.hydrateRoutineHistory(ctx, cfg, t)
+		}
 		text, refs, err := r.briefWithQueue(ctx, t, func(nonce string) string {
-			return resumed(t, nextTrigger(t)) + TriagerBrief(t, nonce)
+			return resumed(t, nextTrigger(t)) + TriagerBriefWithRoutineHistory(t, nonce, rp, history)
 		})
 		if err != nil {
 			return err
 		}
 		s := r.implementerSpec(cfg, t, text)
+		s.PRDraft = false
 		s.Role = "triager"
 		s.Persona = "triager"
 		return r.startConsuming(ctx, cfg, t, s, nextTrigger(t), refs)
@@ -1806,7 +1853,14 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 			}
 		case "implementer":
 			s, refs, trigger, err := r.nextImplementer(ctx, cfg, t)
-			if err != nil {
+			switch {
+			case errors.Is(err, upkeep.ErrPromptInvalid):
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "prompt_invalid")
+			case errors.Is(err, upkeep.ErrSkillMissing):
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "skill_missing")
+			case errors.Is(err, upkeep.ErrSkillInvalid):
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "skill_invalid")
+			case err != nil:
 				return err
 			}
 			if err := r.startConsuming(ctx, cfg, t, s, trigger, refs); err != nil {

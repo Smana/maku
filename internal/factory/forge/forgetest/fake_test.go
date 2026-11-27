@@ -344,3 +344,25 @@ func TestFakeCreateEditPR(t *testing.T) {
 		t.Errorf("edited %+v", got)
 	}
 }
+
+func TestFakeCloseIssueSetsClosedAt(t *testing.T) {
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	f := NewFake()
+	f.Now = func() time.Time { return now }
+	f.SetIssue(forge.Issue{Number: 1, State: "OPEN"})
+	f.SetIssue(forge.Issue{Number: 2, State: "OPEN"})
+	if err := f.CloseIssue(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.CloseIssueNotPlanned(t.Context(), 2); err != nil {
+		t.Fatal(err)
+	}
+	got1, _ := f.Issue(t.Context(), 1)
+	got2, _ := f.Issue(t.Context(), 2)
+	if got1.StateReason != "completed" || !got1.ClosedAt.Equal(now) {
+		t.Fatalf("CloseIssue got %+v, want StateReason=completed ClosedAt=%v", got1, now)
+	}
+	if got2.StateReason != "not_planned" || !got2.ClosedAt.Equal(now) {
+		t.Fatalf("CloseIssueNotPlanned got %+v, want StateReason=not_planned ClosedAt=%v", got2, now)
+	}
+}

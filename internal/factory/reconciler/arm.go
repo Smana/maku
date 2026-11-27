@@ -19,6 +19,7 @@ import (
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/grant"
 	"github.com/Smana/maku/internal/factory/steering"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // ArmInputs is everything §5.1's rule decides on. ReportedHead, Verifiers and Files serve the
@@ -251,6 +252,9 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 	if in.DiffRead && cfg.SteeringOn() && touchesSteering(in.Stats) {
 		return human("steering_path", class) // no agent pull request changes a note (scoper SC3)
 	}
+	if in.DiffRead && touchesUpkeepPath(rc, in.Stats) {
+		return human("upkeep_path", class) // no agent pull request changes a routine prompt or bound skill
+	}
 	d, _ := judge(in, rc, class, cl, rows)
 	return withIntegrationHold(in.Integration, d)
 }
@@ -341,6 +345,9 @@ func judge(in ArmInputs, rc *config.Repository, name string, cl config.Class, ro
 // list there (D11). It applies once, to the final decision, so no variant of an any-branch class
 // can arm over a gate path. The reconciler reads an approved head's diff whenever policy-bot is off.
 func withGatePath(d ArmDecision, in ArmInputs, rc *config.Repository, extra []string) ArmDecision {
+	if d.Verdict == "arm" && d.Reason == "maintainer_approved" && in.DiffRead && touchesUpkeepPath(rc, in.Stats) {
+		return ArmDecision{Verdict: "human", Reason: "upkeep_path", Matched: "gate", Rows: d.Rows}
+	}
 	if d.Verdict != "arm" || d.Reason != "maintainer_approved" || rc.Merge.UsesPolicyBot() || !in.DiffRead {
 		return d
 	}
@@ -628,6 +635,9 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 	if in.Task.Status.Contract != nil && rc.Merge.ContractCheck == "" {
 		return ArmDecision{Verdict: "human", Reason: "contract_check_unset"}, true
 	}
+	if draftModeMismatch(in.Task, in.PR) {
+		return ArmDecision{Verdict: "human", Reason: "draft_mode_mismatch"}, true
+	}
 	switch CIState(in.Checks, requiredFor(rc, in.Task)) {
 	case "FAILURE":
 		return ArmDecision{Verdict: "ci_red", Reason: "ci_red"}, true
@@ -653,6 +663,9 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 	}
 	if in.NotOwned {
 		return ArmDecision{Verdict: "human", Reason: "not_owned"}, true
+	}
+	if in.PR.Draft {
+		return ArmDecision{Verdict: "human", Reason: "draft_pr"}, true
 	}
 	if !rc.Merge.UsesPolicyBot() {
 		return holdLabelled(in) // no policy-bot: the gate's own rows decide
@@ -810,5 +823,79 @@ func adoptEvidence(in ArmInputs, cl config.Class) string {
 func touchesSteering(stats []forge.FileStat) bool {
 	return slices.ContainsFunc(stats, func(f forge.FileStat) bool {
 		return strings.HasPrefix(f.Path, steering.Dir) || strings.HasPrefix(f.Previous, steering.Dir)
+	})
+}
+
+func boundUpkeepSkills(rc *config.Repository) []string {
+	if rc == nil {
+		return nil
+	}
+	var out []string
+	if len(rc.ResolvedRoutines) > 0 {
+		for _, name := range slices.Sorted(maps.Keys(rc.ResolvedRoutines)) {
+			if sk := rc.ResolvedRoutines[name].Skill; sk != "" {
+				out = append(out, sk)
+			}
+		}
+		return out
+	}
+	for _, b := range rc.Routines {
+		if b.Mode != config.RoutineModeDisabled && b.Skill != "" {
+			out = append(out, b.Skill)
+		}
+	}
+	return out
+}
+
+func upkeepRepoPromptOn(rc *config.Repository) bool {
+	if rc == nil {
+		return false
+	}
+	if len(rc.ResolvedRoutines) > 0 {
+		for _, rr := range rc.ResolvedRoutines {
+			if rr.RepoPrompt {
+				return true
+			}
+		}
+		return false
+	}
+	for _, b := range rc.Routines {
+		if b.Mode != config.RoutineModeDisabled && (b.RepoPrompt == nil || *b.RepoPrompt) {
+			return true
+		}
+	}
+	return false
+}
+
+func upkeepPathProtected(rc *config.Repository) bool {
+	return upkeepRepoPromptOn(rc) || len(boundUpkeepSkills(rc)) > 0
+}
+
+// touchesUpkeepPath is true when a changed file, or the path it was renamed from, touches
+// .github/agent-factory/upkeep/ (when any routine has repoPrompt enabled) or any bound
+// .agents/skills/<skill>/ directory.
+func touchesUpkeepPath(rc *config.Repository, stats []forge.FileStat) bool {
+	if !upkeepPathProtected(rc) {
+		return false
+	}
+	checkPromptDir := upkeepRepoPromptOn(rc)
+	skills := boundUpkeepSkills(rc)
+	return slices.ContainsFunc(stats, func(f forge.FileStat) bool {
+		for _, p := range []string{f.Path, f.Previous} {
+			if p == "" {
+				continue
+			}
+			if checkPromptDir && upkeep.IsProtectedPath(p, skills) {
+				return true
+			}
+			if !checkPromptDir {
+				for _, sk := range skills {
+					if config.ValidSkillName(sk) && (p == upkeep.SkillsDir+sk || strings.HasPrefix(p, upkeep.SkillsDir+sk+"/")) {
+						return true
+					}
+				}
+			}
+		}
+		return false
 	})
 }

@@ -852,3 +852,23 @@ func TestPublishFilesMarkerOnly(t *testing.T) {
 		t.Fatalf("published issue carried a dead class label: %q", got)
 	}
 }
+
+func TestPublishRefusesPublicProposeIssue(t *testing.T) {
+	tk := investigated("prop1pub")
+	tk.Spec.Source = v1alpha1.Source{Kind: v1alpha1.SourceKindRoutine, Ref: "doc-drift", RequestedBy: "system:scheduler"}
+	tk.Spec.DataClass = "public"
+	tk.Status.Reason = "proposal_filed"
+	p, f, cl := publishing(t, proposalOK, tk, "Smana")
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cs := commentsOf(f, 7)
+	if len(f.Created()) != 0 || !strings.Contains(cs, "did not publish #7's proposal") ||
+		!slices.Contains(f.Removed(7), LabelPublish) {
+		t.Fatalf("expected refusal with zero created issues, got created=%d comments=%q removed=%v",
+			len(f.Created()), cs, f.Removed(7))
+	}
+	if got := getTask(t, cl, "prop1pub"); got.Status.Published != nil {
+		t.Fatalf("refusal should not record Published: %+v", got.Status.Published)
+	}
+}

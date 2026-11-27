@@ -11,7 +11,7 @@ func TestStripHarnessFooter(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
 		"the footer":               {"Fixes the link.\n\n" + footer, "Fixes the link."},
 		"with a trailing newline":  {"Fixes the link.\n\n" + footer + "\n", "Fixes the link."},
-		"every key":                {"Body.\n\n---\nAgent-Room: r\nAgent-Run: x\nAgent-Role: implementer\nAgent-Task: t\nAgent-Task-URL: https://github.com/o/r/issues/1\nAgent-Model: m\n", "Body."},
+		"every key":                {"Body.\n\n---\nAgent-Room: r\nAgent-Run: x\nAgent-Role: implementer\nAgent-Task: t\nAgent-Task-URL: https://github.com/o/r/issues/1\nAgent-Model: m\nAgent-Routine: dead-code\nAgent-Routine-Prompt-SHA: 0123456789ab\n", "Body."},
 		"CRLF":                     {"Body.\r\n\r\n---\r\nAgent-Room: r\r\nAgent-Run: x\r\n", "Body."},
 		"a footer alone":           {footer + "\n", ""},
 		"no footer":                {"Fixes the link.\n", "Fixes the link.\n"},

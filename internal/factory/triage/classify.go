@@ -45,6 +45,8 @@ func Investigates(cfg *config.Config, t *v1alpha1.Task) bool {
 		return true
 	case "api":
 		return cfg.InternalBy(t.Spec.Source.RequestedBy) != nil
+	case v1alpha1.SourceKindRoutine:
+		return t.Spec.Routine != nil && t.Spec.Routine.Mode == config.RoutineModePropose
 	}
 	return false
 }
@@ -95,7 +97,7 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 		outcome, outcomeNote = config.OutcomeReview, ""
 	}
 	internalInvestigate := Investigates(cfg, t)
-	if internalInvestigate {
+	if internalInvestigate && t.Spec.Source.Kind != v1alpha1.SourceKindRoutine {
 		dataClass = "internal" // RunLore and internal API sources force internal (§2, RA4)
 	}
 	class, declared := c.predictClass(cfg, t)
