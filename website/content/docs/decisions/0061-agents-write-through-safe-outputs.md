@@ -6,9 +6,9 @@ description: Proposed. A run that reads strangers' text no longer holds a write 
 lastVerified: 2026-11-07
 ---
 
-**Status**: Proposed
-**Date**: 2026-11-07
-**Deciders**: Smana (Platform Owner)
+**Status**: Proposed\
+**Date**: 2026-11-07\
+**Deciders**: Smana (Platform Owner)\
 **Related**: [design, decisions UH1 to UH14](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-07-untrusted-input-hardening-design.md#decisions), [ADR-0043]({{< relref "/docs/decisions/0043-octo-sts-for-agent-github-tokens.md" >}}), [ADR-0042]({{< relref "/docs/decisions/0042-agent-router-identity-gateway.md" >}})
 
 ---

@@ -6,10 +6,10 @@ description: A run exchanges its projected ServiceAccount token at an in-cluster
 lastVerified: 2026-09-26
 ---
 
-**Status**: Partly superseded
-**Partly superseded** (2026-11-14): the octo-sts exchange. Since R3, Maku's run-controller has the factory mint each run's installation token of the agents' App, scoped to the run's repository and role, so octo-sts, the agent router's `sts` listener and the trust policies are deleted. The two rulesets that confine the App stand.
-**Date**: 2026-09-26
-**Deciders**: Smana (Platform Owner)
+**Status**: Partly superseded\
+**Partly superseded** (2026-11-14): the octo-sts exchange. Since R3, Maku's run-controller has the factory mint each run's installation token of the agents' App, scoped to the run's repository and role, so octo-sts, the agent router's `sts` listener and the trust policies are deleted. The two rulesets that confine the App stand.\
+**Date**: 2026-09-26\
+**Deciders**: Smana (Platform Owner)\
 **Related Spec**: [SP1 — Agent runtime & identity](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-runtime-identity-design.md)
 
 ---

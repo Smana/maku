@@ -1,51 +1,31 @@
 {{ define "main" }}
   {{ partial "sidebar.html" (dict "context" . "disableSidebar" true) }}
   <main id="content" class="maku-home">
-    {{- /* Band 1: Hero + grounded fact strip */ -}}
+    {{- /* Band 1: Hero copy beside the real-run screencast, grounded fact strip */ -}}
     <section class="maku-hero-band" aria-labelledby="hero-title">
       <div class="maku-wrap maku-hero-inner">
-        <h1 id="hero-title" class="maku-hero-title">
-          Sovereign coding agents on <span class="maku-hero-accent">your own Kubernetes cluster.</span>
-        </h1>
-        <p class="maku-hero-lead">
-          Keep Claude Code, OpenCode, or Cursor on your laptop, and hand off asynchronous backlog, maintenance, and SRE issues to <strong>Maku</strong>.
-          Every agent runs in a gVisor sandbox behind hard USD budgets and auditable rooms—bringing back a reviewed pull request without trusting a third-party SaaS control plane or the agents themselves.
-        </p>
-        <div class="maku-cta-row">
-          <a class="maku-btn maku-btn-primary" href="{{ "docs/get-started/quickstart/" | relURL }}">
-            Try on your laptop (15 min)
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10h12"/><path d="M11 5l5 5-5 5"/></svg>
-          </a>
-          <a class="maku-btn maku-btn-secondary" href="#replay">
-            Drive a recorded room
-          </a>
-          <a class="maku-btn maku-btn-ghost" href="{{ "docs/get-started/pilot/" | relURL }}">
-            Run a Tier-1 Pilot →
-          </a>
-        </div>
-        <ul class="maku-fact-strip" aria-label="Recorded production run summary">
-          <li><span class="maku-live-dot" aria-hidden="true"></span><strong>Apache-2.0</strong><span>open source, zero seat tax</span></li>
-          <li><strong>12 min</strong><span>sentence to merge</span></li>
-          <li><strong>2</strong><span>sandboxed agents</span></li>
-          <li><strong>$0.14</strong><span>model spend</span></li>
-          <li><strong>1</strong><span>human approval</span></li>
-        </ul>
-      </div>
-    </section>
-
-    {{- /* Band 2: Real-run screencast + synchronized 10-step run rail */ -}}
-    <section class="maku-band" aria-labelledby="stage-title">
-      <div class="maku-wrap">
-        <div class="maku-band-head">
-          <div>
-            <h2 id="stage-title" class="maku-band-title">One sentence in. A reviewed, merged pull request out.</h2>
-            <p class="maku-band-lead">
-              A real documentation fix handed off from OpenCode on a live cluster: the planner drafts the issue, an implementer and a reviewer work inside separate sandboxes, a maintainer approves, and the merger lands the exact approved commit. Nothing was staged; waiting is sped up.
-            </p>
+        <div class="maku-hero-copy">
+          <h1 id="hero-title" class="maku-hero-title">
+            Sovereign coding agents on <span class="maku-hero-accent">your own Kubernetes cluster.</span>
+          </h1>
+          <p class="maku-hero-lead">
+            Keep Claude Code, OpenCode, or Cursor on your laptop, and hand off asynchronous backlog, maintenance, and SRE issues to <strong>Maku</strong>.
+            Every agent runs in a gVisor sandbox behind hard USD budgets and auditable rooms—bringing back a reviewed pull request without trusting a third-party SaaS control plane or the agents themselves.
+          </p>
+          <div class="maku-cta-row">
+            <a class="maku-btn maku-btn-primary" href="{{ "docs/get-started/quickstart/" | relURL }}">
+              Try on your laptop (15 min)
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10h12"/><path d="M11 5l5 5-5 5"/></svg>
+            </a>
+            <a class="maku-btn maku-btn-secondary" href="#replay">
+              Drive a recorded room
+            </a>
+            <a class="maku-btn maku-btn-ghost" href="{{ "docs/get-started/pilot/" | relURL }}">
+              Run a Tier-1 Pilot →
+            </a>
           </div>
         </div>
-
-        <div class="maku-stage">
+        <div class="maku-hero-media">
           <div class="maku-window">
             <div class="maku-chrome" aria-hidden="true">
               <span class="maku-dots"><i></i><i></i><i></i></span>
@@ -58,29 +38,49 @@
               <a href="{{ "media/maku-run.mp4" | relURL }}">Download the screencast (MP4, 2 min)</a>
             </video>
           </div>
-
-          <nav class="maku-rail" aria-labelledby="maku-rail-title">
-            <h3 id="maku-rail-title" class="maku-rail-head">The run, step by step</h3>
-            <ol id="maku-chapters">
-              <li class="k-you"><button type="button" data-t="0"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Hand it off</b><small>One line in OpenCode</small></span><time>0:00</time></button></li>
-              <li class="k-factory"><button type="button" data-t="10"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">planner</span><b>The issue, drafted</b><small>One form files it and starts it</small></span><time>0:10</time></button></li>
-              <li class="k-factory"><button type="button" data-t="24"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">factory</span><b>Filed as you</b><small>Issue #479, your gh, your name</small></span><time>0:24</time></button></li>
-              <li class="k-factory"><button type="button" data-t="38.4"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">room</span><b>Every step, live</b><small>The room opens on the run</small></span><time>0:38</time></button></li>
-              <li class="k-agent"><button type="button" data-t="45.7"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">implementer</span><b>Edit, check, PR</b><small>agent-checks 6/6, PR #480</small></span><time>0:45</time></button></li>
-              <li class="k-agent"><button type="button" data-t="60.4"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">reviewer</span><b>Fresh eyes</b><small>Reruns the checks, approves</small></span><time>1:00</time></button></li>
-              <li class="k-you"><button type="button" data-t="81.1"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Needs you</b><small>The merge gate asks a maintainer</small></span><time>1:21</time></button></li>
-              <li class="k-you"><button type="button" data-t="89.1"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Read, approve</b><small>A one-line diff on GitHub</small></span><time>1:29</time></button></li>
-              <li class="k-done"><button type="button" data-t="100.6"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">merger</span><b>Merged</b><small>The approved head, nothing else</small></span><time>1:40</time></button></li>
-              <li class="k-done"><button type="button" data-t="108.6"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">metrics</span><b>What it cost</b><small>2 runs, $0.14, 366k tokens</small></span><time>1:48</time></button></li>
-            </ol>
-            <div class="maku-rail-legend" aria-hidden="true">
-              <span class="k-you">you</span>
-              <span class="k-factory">factory</span>
-              <span class="k-agent">agents</span>
-              <span class="k-done">done</span>
-            </div>
-          </nav>
         </div>
+        <ul class="maku-fact-strip" aria-label="Recorded production run summary">
+          <li><span class="maku-live-dot" aria-hidden="true"></span><strong>Apache-2.0</strong><span>open source, zero seat tax</span></li>
+          <li><strong>12 min</strong><span>sentence to merge</span></li>
+          <li><strong>2</strong><span>sandboxed agents</span></li>
+          <li><strong>$0.14</strong><span>model spend</span></li>
+          <li><strong>1</strong><span>human approval</span></li>
+        </ul>
+      </div>
+    </section>
+
+    {{- /* Band 2: The run told in 10 steps; the rail seeks the hero screencast */ -}}
+    <section class="maku-band" aria-labelledby="stage-title">
+      <div class="maku-wrap">
+        <div class="maku-band-head">
+          <div>
+            <h2 id="stage-title" class="maku-band-title">One sentence in. A reviewed, merged pull request out.</h2>
+            <p class="maku-band-lead">
+              A real documentation fix handed off from OpenCode on a live cluster: the planner drafts the issue, an implementer and a reviewer work inside separate sandboxes, a maintainer approves, and the merger lands the exact approved commit. Nothing was staged; waiting is sped up.
+            </p>
+          </div>
+        </div>
+        <nav class="maku-rail" aria-labelledby="maku-rail-title">
+          <h3 id="maku-rail-title" class="maku-rail-head">The run, step by step</h3>
+          <ol id="maku-chapters">
+            <li class="k-you"><button type="button" data-t="0"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Hand it off</b><small>One line in OpenCode</small></span><time>0:00</time></button></li>
+            <li class="k-factory"><button type="button" data-t="10"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">planner</span><b>The issue, drafted</b><small>One form files it and starts it</small></span><time>0:10</time></button></li>
+            <li class="k-factory"><button type="button" data-t="24"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">factory</span><b>Filed as you</b><small>Issue #479, your gh, your name</small></span><time>0:24</time></button></li>
+            <li class="k-factory"><button type="button" data-t="38.4"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">room</span><b>Every step, live</b><small>The room opens on the run</small></span><time>0:38</time></button></li>
+            <li class="k-agent"><button type="button" data-t="45.7"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">implementer</span><b>Edit, check, PR</b><small>agent-checks 6/6, PR #480</small></span><time>0:45</time></button></li>
+            <li class="k-agent"><button type="button" data-t="60.4"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">reviewer</span><b>Fresh eyes</b><small>Reruns the checks, approves</small></span><time>1:00</time></button></li>
+            <li class="k-you"><button type="button" data-t="81.1"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Needs you</b><small>The merge gate asks a maintainer</small></span><time>1:21</time></button></li>
+            <li class="k-you"><button type="button" data-t="89.1"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Read, approve</b><small>A one-line diff on GitHub</small></span><time>1:29</time></button></li>
+            <li class="k-done"><button type="button" data-t="100.6"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">merger</span><b>Merged</b><small>The approved head, nothing else</small></span><time>1:40</time></button></li>
+            <li class="k-done"><button type="button" data-t="108.6"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">metrics</span><b>What it cost</b><small>2 runs, $0.14, 366k tokens</small></span><time>1:48</time></button></li>
+          </ol>
+          <div class="maku-rail-legend" aria-hidden="true">
+            <span class="k-you">you</span>
+            <span class="k-factory">factory</span>
+            <span class="k-agent">agents</span>
+            <span class="k-done">done</span>
+          </div>
+        </nav>
       </div>
     </section>
 
@@ -203,24 +203,13 @@
         </div>
 
         <div class="maku-tabs" role="tablist" aria-label="Maku Web UI views">
-          <button type="button" class="maku-tab" role="tab" id="tab-room" aria-controls="panel-room" aria-selected="true">Live room</button>
-          <button type="button" class="maku-tab" role="tab" id="tab-policies" aria-controls="panel-policies" aria-selected="false" tabindex="-1">Merge policies</button>
+          <button type="button" class="maku-tab" role="tab" id="tab-policies" aria-controls="panel-policies" aria-selected="true">Merge policies</button>
           <button type="button" class="maku-tab" role="tab" id="tab-routines" aria-controls="panel-routines" aria-selected="false" tabindex="-1">Upkeep routines</button>
           <button type="button" class="maku-tab" role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1">Cluster posture</button>
+          <button type="button" class="maku-tab" role="tab" id="tab-room" aria-controls="panel-room" aria-selected="false" tabindex="-1">Live room</button>
         </div>
 
-        <div class="maku-panel" role="tabpanel" id="panel-room" aria-labelledby="tab-room">
-          <figure class="maku-shot">
-            <img class="maku-shot-light" src="{{ "images/web-ui/room-fold-light.png" | relURL }}" alt="Maku room view in Day theme showing live run rail, folded tool steps, human steering composer, and cost strip." loading="lazy" />
-            <img class="maku-shot-dark" src="{{ "images/web-ui/room-fold-dark.png" | relURL }}" alt="Maku room view in Night theme showing live run rail, folded tool steps, human steering composer, and cost strip." loading="lazy" />
-          </figure>
-          <div class="maku-panel-bar">
-            <span>Watch folded tool calls, read reviewer verdicts, approve gated commands, or steer the running agent live.</span>
-            <a href="{{ "docs/use/web-ui/" | relURL }}">Web UI guide →</a>
-          </div>
-        </div>
-
-        <div class="maku-panel" role="tabpanel" id="panel-policies" aria-labelledby="tab-policies" hidden>
+        <div class="maku-panel" role="tabpanel" id="panel-policies" aria-labelledby="tab-policies">
           <figure class="maku-shot">
             <img class="maku-shot-light" src="{{ "images/web-ui/merge-policies-1280-light.png" | relURL }}" alt="Maku Merge Policies page in Day theme showing shadow vs live policy cards, backtest decisions, and promotion controls." loading="lazy" />
             <img class="maku-shot-dark" src="{{ "images/web-ui/merge-policies-1280-dark.png" | relURL }}" alt="Maku Merge Policies page in Night theme showing shadow vs live policy cards, backtest decisions, and promotion controls." loading="lazy" />
@@ -250,6 +239,17 @@
           <div class="maku-panel-bar">
             <span>Check broker and factory version skew, bounded cluster posture, connected repositories, and CLI setup in one read-only view.</span>
             <a href="{{ "docs/reference/web-ui-settings/" | relURL }}">Settings reference →</a>
+          </div>
+        </div>
+
+        <div class="maku-panel" role="tabpanel" id="panel-room" aria-labelledby="tab-room" hidden>
+          <figure class="maku-shot">
+            <img class="maku-shot-light" src="{{ "images/web-ui/room-fold-light.png" | relURL }}" alt="Maku room view in Day theme showing live run rail, folded tool steps, human steering composer, and cost strip." loading="lazy" />
+            <img class="maku-shot-dark" src="{{ "images/web-ui/room-fold-dark.png" | relURL }}" alt="Maku room view in Night theme showing live run rail, folded tool steps, human steering composer, and cost strip." loading="lazy" />
+          </figure>
+          <div class="maku-panel-bar">
+            <span>Watch folded tool calls, read reviewer verdicts, approve gated commands, or steer the running agent live.</span>
+            <a href="{{ "docs/use/web-ui/" | relURL }}">Web UI guide →</a>
           </div>
         </div>
       </div>
@@ -364,7 +364,8 @@
 
   <script>
   (function () {
-    // 1. Synchronized run rail: past steps filled, active step lit, click seeks video.
+    // 1. Synchronized run rail: past steps filled, active step lit, click seeks the hero video
+    //    and brings it back into view.
     var video = document.getElementById("maku-run-video");
     var list = document.getElementById("maku-chapters");
     if (video && list) {
@@ -374,6 +375,11 @@
         li.querySelector("button").addEventListener("click", function () {
           video.currentTime = starts[i] + 0.05;
           video.play().catch(function () {});
+          var r = video.getBoundingClientRect();
+          if (r.top < 0 || r.bottom > window.innerHeight) {
+            var still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            video.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
+          }
         });
       });
       function syncRail() {
@@ -385,12 +391,10 @@
           li.classList.toggle("now", i === now);
           li.querySelector("button").toggleAttribute("aria-current", i === now);
         });
-        var cur = items[Math.max(now, 0)];
-        list.style.setProperty("--fill", now < 0 ? "0px" : (cur.offsetTop + cur.offsetHeight / 2 - 14) + "px");
+        list.style.setProperty("--fill", video.duration ? Math.min(t / video.duration, 1) : 0);
       }
       video.addEventListener("timeupdate", syncRail);
       video.addEventListener("seeked", syncRail);
-      window.addEventListener("resize", syncRail);
       syncRail();
     }
 

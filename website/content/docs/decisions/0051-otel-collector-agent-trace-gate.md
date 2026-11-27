@@ -6,9 +6,9 @@ description: Agent runs send spans to an OpenTelemetry Collector outside the san
 lastVerified: 2026-10-01
 ---
 
-**Status**: Accepted
-**Date**: 2026-09-27
-**Deciders**: Smana (Platform Owner)
+**Status**: Accepted\
+**Date**: 2026-09-27\
+**Deciders**: Smana (Platform Owner)\
 **Related Spec**: `docs/superpowers/specs/2026-09-27-agent-observability-design.md`
 
 ---

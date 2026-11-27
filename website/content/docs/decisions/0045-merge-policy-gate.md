@@ -6,9 +6,9 @@ description: Agent PRs in a live low-risk class auto-merge only when policy-bot,
 lastVerified: 2026-09-27
 ---
 
-**Status**: Accepted
-**Date**: 2026-09-27
-**Deciders**: Smana
+**Status**: Accepted\
+**Date**: 2026-09-27\
+**Deciders**: Smana\
 **Related Spec**: [SP3 dark factory §5](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-dark-factory-design.md#5-merge-policy-gate-d4)
 
 ---

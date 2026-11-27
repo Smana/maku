@@ -6,9 +6,9 @@ description: The room web UI is served by the broker itself and reached on the t
 lastVerified: 2026-11-05
 ---
 
-**Status**: Accepted
-**Date**: 2026-09-27
-**Deciders**: Smana (Platform Owner)
+**Status**: Accepted\
+**Date**: 2026-09-27\
+**Deciders**: Smana (Platform Owner)\
 **Related Spec**: [SP2 — Collaboration rooms](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-collaboration-rooms-design.md)
 
 ---

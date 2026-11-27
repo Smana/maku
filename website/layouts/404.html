@@ -1,0 +1,22 @@
+{{ define "main" }}
+  {{ partial "sidebar.html" (dict "context" . "disableSidebar" true) }}
+  <main id="content" class="maku-home">
+    <section class="maku-hero-band maku-404" aria-labelledby="nf-title">
+      <div class="maku-wrap maku-404-inner">
+        <h1 id="nf-title" class="maku-404-title"><span class="maku-hero-accent">404.</span> This page is not here.</h1>
+        <p class="maku-hero-lead">
+          The link may be out of date. Search the docs, or start from one of these pages.
+        </p>
+        <div class="maku-404-search">
+          {{- partial "search.html" (dict "params" dict "location" "404") -}}
+        </div>
+        <div class="maku-cta-row">
+          <a class="maku-btn maku-btn-primary" href="{{ "docs/get-started/" | relURL }}">Get started</a>
+          <a class="maku-btn maku-btn-secondary" href="{{ "docs/guide/" | relURL }}">User guide</a>
+          <a class="maku-btn maku-btn-secondary" href="{{ "docs/status/" | relURL }}">Status</a>
+          <a class="maku-btn maku-btn-ghost" href="{{ "" | relURL }}">Home</a>
+        </div>
+      </div>
+    </section>
+  </main>
+{{ end }}
