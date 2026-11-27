@@ -154,6 +154,47 @@ func (f Factory) ResumeRoutine(ctx context.Context, accessToken, owner, name, ro
 	return raw, err
 }
 
+// CatalogRoutines forwards GET /v1/routines/catalog with the caller's token.
+func (f Factory) CatalogRoutines(ctx context.Context, accessToken string) (json.RawMessage, error) {
+	if accessToken == "" {
+		return nil, ErrForbidden
+	}
+	_, raw, err := f.callRoutines(ctx, http.MethodGet, accessToken, "/v1/routines/catalog", "", nil)
+	return raw, err
+}
+
+// PreviewRoutine forwards POST /v1/routines/{owner}/{name}/preview with the caller's token.
+func (f Factory) PreviewRoutine(ctx context.Context, accessToken, owner, name string, body json.RawMessage) (json.RawMessage, error) {
+	if accessToken == "" {
+		return nil, ErrForbidden
+	}
+	if !validRoutineRepo(owner, name) {
+		return nil, fmt.Errorf("runrequest: invalid routine repository")
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		body = json.RawMessage("{}")
+	}
+	path := "/v1/routines/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/preview"
+	_, raw, err := f.callRoutines(ctx, http.MethodPost, accessToken, path, "", body)
+	return raw, err
+}
+
+// PutRoutine forwards PUT /v1/routines/{owner}/{name}/{routine} with the caller's token.
+func (f Factory) PutRoutine(ctx context.Context, accessToken, owner, name, routine string, body json.RawMessage) (json.RawMessage, error) {
+	if accessToken == "" {
+		return nil, ErrForbidden
+	}
+	if !validRoutineTarget(owner, name, routine) {
+		return nil, fmt.Errorf("runrequest: invalid routine target")
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		body = json.RawMessage("{}")
+	}
+	path := "/v1/routines/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" + url.PathEscape(routine)
+	_, raw, err := f.callRoutines(ctx, http.MethodPut, accessToken, path, "", body)
+	return raw, err
+}
+
 func (f Factory) callRoutines(ctx context.Context, method, accessToken, path, idempotencyKey string, body json.RawMessage) (int, json.RawMessage, error) {
 	if accessToken == "" {
 		return 0, nil, ErrForbidden

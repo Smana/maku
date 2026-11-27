@@ -421,7 +421,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Connected condition says why, and the retry wires it once the App is installed (#447).
 	conns := newRepoConns(log)
 	startupWire(ctx, log, conns, cfg)
-	mgr, err := newFactoryManager(log, ns, cfg.Runs.Kind, kinds)
+	mgr, err := newFactoryManager(log, ns, cfg.Runs.Kind, kinds, cfg.Routines.UIWrite)
 	if err != nil {
 		return err
 	}
@@ -449,11 +449,16 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return err
 	}
 	routineState := &upkeep.StateStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log}
+	routineBindings := &upkeep.BindingsStore{Client: ledgers, Reader: ledgers, Namespace: ns, Now: time.Now, Log: log}
 	breaker := &upkeep.Breaker{Store: routineState, Now: time.Now, Log: log}
 	statusWriter := &statuswriter.Writer{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: ns, Log: log,
 		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, privateCode.Visibility, routineState, log)}
 	src.OnSynced = statusWriter.Kick
-	if err := src.Watch(ctx, mgr.GetCache(), kinds); err != nil {
+	watchKinds := slices.Clone(kinds)
+	if cfg.Routines.UIWrite {
+		watchKinds = append(watchKinds, &corev1.ConfigMap{})
+	}
+	if err := src.Watch(ctx, mgr.GetCache(), watchKinds); err != nil {
 		return err
 	}
 	if err := mgr.Add(src); err != nil {
@@ -880,7 +885,16 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	rec.OnRoutinePaused = onRoutinePaused
 	sched.OnRoutinePaused = onRoutinePaused
 	apiSrv.RoutineState = routineState
+	apiSrv.RoutineBindings = routineBindings
 	apiSrv.RoutineTrigger = routineTrigger{s: sched}
+	apiSrv.ConfigKick = src.Kick
+	apiSrv.RoutinePrompts = func(repo string) upkeep.DefaultBranchReader {
+		c, ok := conns.get(repo)
+		if !ok || c.gh == nil {
+			return nil
+		}
+		return c.gh
+	}
 	apiSrv.Tasks = mgr.GetClient()
 	wired := &wiring{log: log, conns: conns, pollers: pollers, m: m, routineState: routineState, kick: fenced.Kick}
 	for _, r := range append(runnables,
@@ -994,10 +1008,13 @@ func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string, gate *
 	if err != nil {
 		return nil, nil, fmt.Errorf("kubeconfig: %w", err)
 	}
-	// The plain client reads the factory's own kinds only: the runs kind, which factoryScheme
-	// needs, is a startup field of the config this builds.
+	// The plain client reads the factory's own kinds (plus ConfigMaps for routines.uiWrite) only:
+	// the runs kind, which factoryScheme needs, is a startup field of the config this builds.
 	scheme := runtime.NewScheme()
 	if err := factoryv1.AddToScheme(scheme); err != nil {
+		return nil, nil, err
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
 		return nil, nil, err
 	}
 	plain, err := client.New(restCfg, client.Options{Scheme: scheme})
@@ -1284,20 +1301,25 @@ func elected(mgr manager.Manager) func() bool {
 	}
 }
 
-// factoryManagerOptions caches Tasks, Rooms, the stop object and the served factory resources in
-// the factory's namespace and kind's AgentRuns in theirs only: the chart's Roles grant exactly that. Unstructured reads stay
-// uncached, so a stop's run list sees the API server (ruling SN), not the watch.
-func factoryManagerOptions(ns string, kind runwatch.Kind, resources []client.Object) ctrl.Options {
+// factoryManagerOptions caches Tasks, Rooms, the stop object (or all namespace ConfigMaps when
+// uiWrite is true so agent-factory-routine-bindings can be watched) and the served factory
+// resources in the factory's namespace and kind's AgentRuns in theirs only: the chart's Roles
+// grant exactly that. Unstructured reads stay uncached, so a stop's run list sees the API server
+// (ruling SN), not the watch.
+func factoryManagerOptions(ns string, kind runwatch.Kind, resources []client.Object, uiWrite bool) ctrl.Options {
 	runObj := &unstructured.Unstructured{}
 	runObj.SetGroupVersionKind(kind.GVK())
 	drain := managerDrain
 	here := map[string]cache.Config{ns: {}}
+	cmByObj := cache.ByObject{Namespaces: here}
+	if !uiWrite {
+		cmByObj.Field = fields.OneTermEqualSelector("metadata.name", killswitch.ConfigMap)
+	}
 	byObject := map[client.Object]cache.ByObject{
-		&factoryv1.Task{}: {Namespaces: here},
-		&v1alpha1.Room{}:  {Namespaces: here},
-		&corev1.ConfigMap{}: {Namespaces: here,
-			Field: fields.OneTermEqualSelector("metadata.name", killswitch.ConfigMap)},
-		runObj: {Namespaces: map[string]cache.Config{kind.Namespace: {}}},
+		&factoryv1.Task{}:   {Namespaces: here},
+		&v1alpha1.Room{}:    {Namespaces: here},
+		&corev1.ConfigMap{}: cmByObj,
+		runObj:              {Namespaces: map[string]cache.Config{kind.Namespace: {}}},
 	}
 	for _, obj := range resources { // the config's own kinds (D5), watched in the factory's namespace
 		byObject[obj] = cache.ByObject{Namespaces: here}
@@ -1313,7 +1335,7 @@ func factoryManagerOptions(ns string, kind runwatch.Kind, resources []client.Obj
 }
 
 // newFactoryManager builds the manager on factoryManagerOptions, logging through log.
-func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind, resources []client.Object) (ctrl.Manager, error) {
+func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind, resources []client.Object, uiWrite bool) (ctrl.Manager, error) {
 	lr := logr.FromSlogHandler(log.Handler())
 	// controller-runtime and client-go's leader election log through these globals.
 	ctrl.SetLogger(lr)
@@ -1326,7 +1348,7 @@ func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind, resource
 	if err != nil {
 		return nil, err
 	}
-	opts := factoryManagerOptions(ns, kind, resources)
+	opts := factoryManagerOptions(ns, kind, resources, uiWrite)
 	opts.Scheme, opts.Logger = scheme, lr
 	mgr, err := ctrl.NewManager(restCfg, opts)
 	if err != nil {

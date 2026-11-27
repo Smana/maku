@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mountSettingsLink } from "../src/settingslink";
+import { mountRoutinesLink, mountSettingsLink } from "../src/settingslink";
 import { mountRoom } from "../src/room";
 import { listRooms } from "../src/view";
 import { FakeSocket } from "./fakes";
@@ -59,10 +59,24 @@ describe("the Settings link in the page headers", () => {
     expect(app.querySelector(".page-header a.settings-link")?.getAttribute("href")).toBe("/settings");
   });
 
-  it("is in the rooms list's header", async () => {
+  it("is in the rooms list's header alongside Routines", async () => {
     const app = document.createElement("div");
     await listRooms(app, (() => Promise.resolve(new Response(JSON.stringify([])))) as typeof fetch, {}, theme);
     expect(app.querySelector(".page-header a.settings-link")?.getAttribute("href")).toBe("/settings");
+    expect(app.querySelector(".page-header a.routines-link")?.getAttribute("href")).toBe("/routines");
+  });
+
+  it("mountRoutinesLink reveals when /api/routines succeeds and stays hidden on 404", async () => {
+    const okHost = document.createElement("header");
+    const okLink = mountRoutinesLink(okHost, "/routines", (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch);
+    expect(okLink.hidden).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(okLink.hidden).toBe(false);
+
+    const errHost = document.createElement("header");
+    const errLink = mountRoutinesLink(errHost, "/routines", (() => Promise.resolve(new Response("", { status: 404 }))) as typeof fetch);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(errLink.hidden).toBe(true);
   });
 });
 

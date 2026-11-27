@@ -112,6 +112,7 @@ The checks, generated from `internal/preflight`:
 | `knowledge` | runlore | broker | tools/list lists kb_search and kb_get within the timeout | `knowledge_unreachable`, `knowledge_tools_missing` |  |
 | `exposure` | exposure | factory, cli | no route reaches the broker around the proxy; each host resolves and answers | `broker_exposed_around_proxy`, `host_unresolved`, `route_unanswered`, `slack_route_too_wide` |  |
 | `tracing` | observability | run-controller | the collector's OTLP port accepts a run's connection | `collector_unreachable` |  |
+| `routines-ui-write` | cluster | factory | routines.uiWrite off for GitOps repositories | `ui_write_check_failed` | `ui_write_gitops_managed` |
 <!-- preflight:end -->
 
 ## Private code

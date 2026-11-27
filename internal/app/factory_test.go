@@ -84,12 +84,18 @@ func TestRunFactoryRefuses(t *testing.T) {
 func TestFactoryManagerOptions(t *testing.T) {
 	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
 	for _, tc := range []struct {
-		ns string
-		rk runwatch.Kind // the runs kind: the loop below has its own kind
-	}{{"agent-system", runwatch.DefaultKind}, {"factory-test", native}} {
-		ns, rk := tc.ns, tc.rk
-		t.Run(ns, func(t *testing.T) {
-			o := factoryManagerOptions(ns, rk, configsource.Kinds())
+		name    string
+		ns      string
+		rk      runwatch.Kind // the runs kind: the loop below has its own kind
+		uiWrite bool
+	}{
+		{"agent-system_uiWrite_false", "agent-system", runwatch.DefaultKind, false},
+		{"factory-test_uiWrite_false", "factory-test", native, false},
+		{"agent-system_uiWrite_true", "agent-system", runwatch.DefaultKind, true},
+	} {
+		ns, rk, uiWrite := tc.ns, tc.rk, tc.uiWrite
+		t.Run(tc.name, func(t *testing.T) {
+			o := factoryManagerOptions(ns, rk, configsource.Kinds(), uiWrite)
 			if !o.LeaderElection || o.LeaderElectionID != "agent-factory.agents.ogenki.io" || o.LeaderElectionNamespace != ns ||
 				!o.LeaderElectionReleaseOnCancel {
 				t.Fatalf("leader election: %+v", o)
@@ -118,9 +124,15 @@ func TestFactoryManagerOptions(t *testing.T) {
 					kind = "Room"
 				case *corev1.ConfigMap:
 					kind = "ConfigMap"
-					// Only the stop object: the factory never lists the namespace's ConfigMaps.
-					if by.Field == nil || by.Field.String() != "metadata.name="+killswitch.ConfigMap {
-						t.Fatalf("ConfigMaps cached by %v", by.Field)
+					if uiWrite {
+						if by.Field != nil {
+							t.Fatalf("uiWrite=true ConfigMaps must be namespace-scoped without field selector, got %v", by.Field)
+						}
+					} else {
+						// Only the stop object: the factory never lists the namespace's ConfigMaps.
+						if by.Field == nil || by.Field.String() != "metadata.name="+killswitch.ConfigMap {
+							t.Fatalf("ConfigMaps cached by %v", by.Field)
+						}
 					}
 				case *factoryv1.Factory:
 					kind = "Factory"

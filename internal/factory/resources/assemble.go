@@ -229,9 +229,23 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 	res.RoutineBindings, res.ResolvedRoutines = rs.routineBindings, rs.resolvedRoutines
 	if cfg != nil {
 		cfg.Policies = rs.policies
+		if rs.routines != nil {
+			cfg.ServedRoutines = make(map[string]config.ServedRoutine, len(rs.routines))
+			for k, v := range rs.routines {
+				cfg.ServedRoutines[k] = config.ServedRoutine{
+					Spec:       v.Spec,
+					Generation: v.Generation,
+					Catalog:    v.Catalog,
+				}
+			}
+		}
 		for i := range cfg.Repositories {
-			if rr := rs.repoRoutines[strings.ToLower(cfg.Repositories[i].Name)]; len(rr) > 0 {
+			repoLower := strings.ToLower(cfg.Repositories[i].Name)
+			if rr := rs.repoRoutines[repoLower]; len(rr) > 0 {
 				cfg.Repositories[i].ResolvedRoutines = rr
+			}
+			if ui := rs.repoUIRoutines[repoLower]; len(ui) > 0 {
+				cfg.Repositories[i].UIRoutines = ui
 			}
 		}
 	}

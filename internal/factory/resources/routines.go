@@ -3,6 +3,7 @@
 package resources
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -27,6 +28,7 @@ type RoutineOutcome struct {
 type servedRoutine struct {
 	Spec       config.RoutineSpec
 	Generation int64
+	Catalog    bool
 }
 
 // routineConfigContext builds the subset of config.Config needed by ValidateRoutineSpec and
@@ -70,31 +72,40 @@ func judgeRoutines(routines []Object, cfg *config.Config, res *resolution) {
 			})
 			continue
 		}
-		res.routines[rt.Name] = servedRoutine{Spec: spec, Generation: rt.Generation}
+		res.routines[rt.Name] = servedRoutine{Spec: spec, Generation: rt.Generation, Catalog: rt.Catalog}
 		res.accepted = append(res.accepted, rt)
 	}
 }
 
-// resolveRoutines resolves one Repository's spec.routines[] in isolation so an invalid binding
-// never causes parseMap to refuse the whole Repository. It returns the valid/restored bindings to
-// pass to parseMap and ok=false only when spec.routines fails to decode as a slice (left raw for
-// parseMap to refuse the Repository).
+// resolveRoutines resolves one Repository's spec.routines[] (and opt-in UIBindings when
+// opts.UIWrite is true) in isolation so an invalid binding never causes parseMap to refuse the
+// whole Repository. It returns the valid/restored bindings to pass to parseMap and ok=false only
+// when spec.routines fails to decode as a slice (left raw for parseMap to refuse the Repository).
 func resolveRoutines(r Object, cfgCtx *config.Config, classes map[string]config.Class, bound []string,
 	opts Options, res *resolution) ([]config.RoutineBinding, bool) {
-	raw, hasRoutines := r.Spec["routines"]
-	if !hasRoutines || raw == nil {
-		return nil, true
+	repoName := str(r.Spec, "repository")
+	var uiBindings []config.RoutineBinding
+	if opts.UIWrite && len(opts.UIBindings) > 0 {
+		uiBindings = slices.Clone(opts.UIBindings[strings.ToLower(repoName)])
+		slices.SortFunc(uiBindings, func(a, b config.RoutineBinding) int {
+			return cmp.Compare(a.Name, b.Name)
+		})
 	}
+	raw, hasRoutines := r.Spec["routines"]
 	var bindings []config.RoutineBinding
-	if err := decodeStrict(raw, &bindings); err != nil {
-		return nil, false
+	if hasRoutines && raw != nil {
+		if err := decodeStrict(raw, &bindings); err != nil {
+			return nil, false
+		}
+	}
+	if len(bindings) == 0 && len(uiBindings) == 0 {
+		return nil, true
 	}
 
 	var checks config.Checks
 	if rawChecks, ok := r.Spec["checks"]; ok && rawChecks != nil {
 		_ = decodeStrict(rawChecks, &checks)
 	}
-	repoName := str(r.Spec, "repository")
 	repoCtx := &config.Repository{
 		Name:           repoName,
 		ClassAuthority: str(r.Spec, "classAuthority"),
@@ -114,11 +125,25 @@ func resolveRoutines(r Object, cfgCtx *config.Config, classes map[string]config.
 		}
 	}
 
+	type taggedBinding struct {
+		b      config.RoutineBinding
+		fromUI bool
+	}
+	var all []taggedBinding
+	for _, b := range bindings {
+		all = append(all, taggedBinding{b: b})
+	}
+	for _, b := range uiBindings {
+		all = append(all, taggedBinding{b: b, fromUI: true})
+	}
+
 	seen := map[string]bool{}
 	resolvedMap := map[string]config.ResolvedRoutine{}
-	kept := make([]config.RoutineBinding, 0, len(bindings))
+	uiNames := map[string]bool{}
+	var kept []config.RoutineBinding
 
-	for _, b := range bindings {
+	for _, item := range all {
+		b := item.b
 		k := BindingKey{Repository: r.Name, Name: b.Name}
 		o := RoutineOutcome{Repository: r.Name, Name: b.Name, Mode: b.Mode, Paused: b.Paused}
 
@@ -128,18 +153,25 @@ func resolveRoutines(r Object, cfgCtx *config.Config, classes map[string]config.
 			o.Message = fmt.Sprintf("routine name %q must match ^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$", b.Name)
 		case seen[b.Name]:
 			o.Reason = config.ReasonDefinedTwice
-			o.Message = fmt.Sprintf("routine %q is defined twice (%s)", b.Name, config.ReasonDefinedTwice)
+			if item.fromUI {
+				o.Message = fmt.Sprintf("routine %q is defined in both Repository.spec.routines and UI bindings (%s)", b.Name, config.ReasonDefinedTwice)
+			} else {
+				o.Message = fmt.Sprintf("routine %q is defined twice (%s)", b.Name, config.ReasonDefinedTwice)
+			}
 		case schedNames[b.Name]:
 			o.Reason = config.ReasonDefinedTwice
 			o.Message = fmt.Sprintf("routine %q is also a schedule (%s)", b.Name, config.ReasonDefinedTwice)
 		case b.Mode == config.RoutineModeDisabled:
 			seen[b.Name] = true
-			if msg := validateDisabledRoutineBinding(b, checks, cfgCtx); msg != "" {
+			if msg := config.ValidateDisabledRoutineBinding(b, checks, cfgCtx); msg != "" {
 				o.Reason = config.ReasonInvalid
 				o.Message = msg
 			} else {
 				o.Accepted = true
 				kept = append(kept, b)
+				if item.fromUI {
+					uiNames[b.Name] = true
+				}
 			}
 		default:
 			seen[b.Name] = true
@@ -163,6 +195,9 @@ func resolveRoutines(r Object, cfgCtx *config.Config, classes map[string]config.
 				res.resolvedRoutines[k] = rr
 				resolvedMap[b.Name] = rr
 				kept = append(kept, b)
+				if item.fromUI {
+					uiNames[b.Name] = true
+				}
 				break
 			}
 			o.Reason, o.Message = reason, err.Error()
@@ -184,6 +219,9 @@ func resolveRoutines(r Object, cfgCtx *config.Config, classes map[string]config.
 							Workflow: last.Workflow,
 							Egress:   slices.Clone(last.Egress),
 						})
+						if item.fromUI {
+							uiNames[b.Name] = true
+						}
 					}
 				}
 			}
@@ -198,27 +236,13 @@ func resolveRoutines(r Object, cfgCtx *config.Config, classes map[string]config.
 		}
 		res.repoRoutines[strings.ToLower(repoName)] = resolvedMap
 	}
+	if len(uiNames) > 0 {
+		if res.repoUIRoutines == nil {
+			res.repoUIRoutines = map[string]map[string]bool{}
+		}
+		res.repoUIRoutines[strings.ToLower(repoName)] = uiNames
+	}
 	return kept, true
-}
-
-func validateDisabledRoutineBinding(b config.RoutineBinding, checks config.Checks, cfgCtx *config.Config) string {
-	if b.Workflow != "" {
-		if b.Workflow == config.TemplateNone {
-			return fmt.Sprintf("routine %s: workflow cannot be %q", b.Name, config.TemplateNone)
-		}
-		if cfgCtx != nil && len(cfgCtx.HarnessProfiles) > 0 && !cfgCtx.IsWorkflow(b.Workflow) {
-			return fmt.Sprintf("routine %s: workflow %q is not a configured workflow", b.Name, b.Workflow)
-		}
-	}
-	for i, p := range b.Egress {
-		if !slices.Contains(config.EgressProfiles, p) || slices.Index(b.Egress, p) != i {
-			return fmt.Sprintf("routine %s: egress %q is not one of %v, or is listed twice", b.Name, p, config.EgressProfiles)
-		}
-		if !slices.Contains(checks.Egress, p) {
-			return fmt.Sprintf("routine %s: egress %q is not in repository checks.egress", b.Name, p)
-		}
-	}
-	return ""
 }
 
 func recheckRestoredRoutine(last config.ResolvedRoutine, rc *config.Repository, cfg *config.Config) string {

@@ -34,6 +34,10 @@ type Options struct {
 	// ConfigDir is the directory containing the factory's config file, used to load custom role
 	// briefs (WR11). Empty skips reading brief files from disk.
 	ConfigDir string
+	// UIWrite enables merging UIBindings from agent-factory-routine-bindings into Repositories.
+	UIWrite bool
+	// UIBindings holds per-repository (lowercased owner/name) routine bindings from the UI ConfigMap.
+	UIBindings map[string][]config.RoutineBinding
 }
 
 // BindingOutcome is what Assemble made of one binding of a served Repository (B9, B10).
@@ -60,6 +64,7 @@ type resolution struct {
 	routineBindings  []RoutineOutcome
 	resolvedRoutines map[BindingKey]config.ResolvedRoutine
 	repoRoutines     map[string]map[string]config.ResolvedRoutine
+	repoUIRoutines   map[string]map[string]bool
 }
 
 // policyContext reads what resolving reads from the merged catalogue, strictly: a key that does not

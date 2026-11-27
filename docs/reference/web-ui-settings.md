@@ -8,6 +8,7 @@ Standing permissions, merge-policy `/settings` routes, theme modes, room forks, 
 
 - [What each standing may do](#what-each-standing-may-do)
 - [Settings](#settings)
+- [Routines](#routines)
 - [Theme](#theme)
 - [Forks](#forks)
 - [Install banner unsafe codes](#install-banner-unsafe-codes)
@@ -149,6 +150,29 @@ the factory's sentence and the backtest is.
 A card whose promotion is blocked keeps **Promote to live** visible and disabled, with one line per
 blocker and its next step: decisions still needed, wrong calls to read, the rollback drill to run.
 
+## Routines
+
+The `/routines` surface manages upkeep routines ([Upkeep routines](../factory.md#upkeep-routines)) for repositories the signed-in caller can read on GitHub. Static routes `/routines/catalog` and `/routines/<owner>/<name>/<routine>/edit` are matched before `/routines/<owner>/<name>/<routine>`.
+
+| Route | Shows |
+|---|---|
+| `/routines` | Overview of bound routines across readable repositories (`?repo=owner/name` filters to one repository): mode (`propose`, `draft`, `pr`, `disabled`), source (`gitops` or `ui`), operational/breaker status (`ok`, `half_open`, `paused`), 14-day sparkline (`merged`, `closed`, `no-op`, `escalated`, `empty`), open PR count vs `maxOpenPRs`, rolling merge rate, `$/merged`, next scheduled run (UTC), and maintainer controls (**Run now**, **Pause**, **Resume**). Links to `/routines/catalog`, each routine's detail page, and `/edit` |
+| `/routines/catalog` | Routine Gallery listing every served `Routine` (`catalog` and `custom`) with description, probe kind, workflow, data class, ceilings (`maxOpenPRs`, `maxCostUSD`, `cooldown`), `requires[]`, egress allowlists, breaker defaults, consumer count, and a target repository selector showing `bound on repository` and **Enable on repository →** / **Configure on repository →** |
+| `/routines/<owner>/<name>/<routine>` | Detail & Run History: full `Routine` parameters, `defaultPrompt`, `Prompt SHA` (12-char prefix, full SHA on hover), **Run history** (up to 50 recent `Task` rows with phase, outcome, PR/room links, cost, prompt source/SHA, and `prompt changed` marker when the SHA changed from the prior run), and **Skip & refusal diagnostics** (`open_cap`, `upkeep_budget`, `breaker_paused`, `probe_empty`, `probe_refused`, `prompt_invalid`, `cooldown`, `paused_manual`, `kill_switch`, `not_owned`, `disabled`) |
+| `/routines/<owner>/<name>/<routine>/edit` | Guided Routine Configurator (see sections below) |
+
+### Guided Configurator (`/routines/<owner>/<name>/<routine>/edit`)
+
+1. **Delivery mode & pause:** radio cards for `propose`, `draft`, `pr`, and `disabled`, plus a **Paused declaratively** checkbox.
+2. **Schedule (UTC):** frequency presets (`Daily 03:00 UTC` `0 3 * * *`, `Weekdays 03:00 UTC` `0 3 * * 1-5`, `Mon & Thu 03:00 UTC` `0 3 * * 1,4`, `Weekly Monday 04:00 UTC` `0 4 * * 1`, `Custom cron`), 5-field UTC cron input, and a live **Next 3 scheduled runs** preview in local time and UTC.
+3. **Bounds, fill-once parameters, egress & breaker:** inputs for `maxOpenPRs`, `maxCostUSD` (shown alongside `upkeepDailyUSD`), `cooldown`, `workflow`, `dataClass`, `maxFindings`, any unset fill-once parameter (`probeWorkflow`, `probeArtifact`, `probeFile`, `probeAuthor`, `oracleClass`; parameters already fixed on `Routine` stay read-only), egress checkboxes intersected with the repository's `checks.egress`, and collapsible yield-breaker overrides. Values widening the `Routine` are refused (`OverRoutine`).
+4. **Split-view prompt & skill editor:** displays `Routine.spec.defaultPrompt` beside an editable preview pane for `.github/agent-factory/upkeep/<routine>.md`, a `repoPrompt` toggle, an optional `skill` input (`.agents/skills/<skill>/SKILL.md`), a **Create on GitHub ↗** / **Edit on GitHub ↗** link, and live validation enforcing UTF-8, `<= 4096` bytes, `<= 5` `## ` sections, a `## Verify` section with at least one `- ` or `* ` check item, and no control or invisible (`Cf`) characters.
+5. **Check, YAML export & conditional Save:** **Check & Generate YAML** calls `POST /api/routines/{owner}/{name}/preview` to validate the binding (and optional prompt text) and renders copyable/downloadable `repository-<name>.yaml` (`Repository.spec.routines[]`). When `routines.uiWrite: true`, **Save to cluster** calls `PUT /api/routines/{owner}/{name}/{routine}` to persist into ConfigMap `agent-factory-routine-bindings`; bindings already declared in `Repository.spec.routines[]` (or `schedules[]`) disable **Save to cluster** in the UI and return `409 defined_twice` (`DefinedTwice`). Use `maku config export --routines` to export UI-stored bindings back to GitOps manifests.
+
+| Who | May |
+|---|---|
+| Repository reader on GitHub | View `/routines`, `/routines/catalog`, and `/routines/<owner>/<name>/<routine>` |
+| Maintainer with `write` on GitHub | Trigger **Run now**, **Pause**, **Resume**, validate/export YAML via **Check & Generate YAML**, and (when `routines.uiWrite: true` and not GitOps-defined) **Save to cluster** |
 ## Theme
 
 Every page has a theme button, in the room page's dock and in the header elsewhere. Each press

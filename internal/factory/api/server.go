@@ -34,6 +34,7 @@ import (
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/stages"
+	"github.com/Smana/maku/internal/factory/upkeep"
 	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/tlsreload"
@@ -158,8 +159,14 @@ type Server struct {
 	StagesCache *stages.Cache
 	// RoutineState reads and updates operational pause flags and skip diagnostics for upkeep routines.
 	RoutineState RoutineStateStore
+	// RoutineBindings persists UI-edited routine bindings when routines.uiWrite is true.
+	RoutineBindings RoutineBindingsStore
 	// RoutineTrigger starts manual upkeep routine tasks via the scheduler without an import cycle.
 	RoutineTrigger RoutineTrigger
+	// ConfigKick notifies configsource.Source to resync after a UI routine binding write.
+	ConfigKick func()
+	// RoutinePrompts reads a repository's default branch for best-effort prompt checks on detail views.
+	RoutinePrompts func(repository string) upkeep.DefaultBranchReader
 	// Tasks reads Tasks (typically mgr.GetClient() in production); nil falls back to taskReader().
 	Tasks client.Reader
 	// forgeReads is forge_read's per-(run, target) answer cache (forgeReadTTL).
@@ -257,13 +264,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(workflowDryRunRoute, s.workflowDryRun)
 	// v4 D3: the banner's factory codes, for any signed-in human.
 	mux.HandleFunc(InstallRoute, s.install)
-	// Upkeep routines Phase 1: overview, detail, manual trigger, pause and resume.
+	// Upkeep routines Phase 1 & 2: overview, catalog, digest, preview, detail, manual trigger, pause, resume and opt-in uiWrite.
 	mux.HandleFunc("GET /v1/routines", s.listRoutines)
+	mux.HandleFunc("GET /v1/routines/catalog", s.routineCatalog)
 	mux.HandleFunc("GET /v1/routines/digest", s.routineDigest)
+	mux.HandleFunc("POST /v1/routines/{owner}/{name}/preview", s.previewRoutine)
 	mux.HandleFunc("GET /v1/routines/{owner}/{name}/{routine}", s.getRoutine)
 	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/runs", s.runRoutine)
 	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/pause", s.pauseRoutine)
 	mux.HandleFunc("POST /v1/routines/{owner}/{name}/{routine}/resume", s.resumeRoutine)
+	mux.HandleFunc("PUT /v1/routines/{owner}/{name}/{routine}", gate(func(c *config.Config) bool { return c.Routines.UIWrite }, s.putRoutine))
 	// stage 6: off lists no policy route, so each is a 404.
 	mux.HandleFunc("GET /v1/policy/evidence", gate(s.promotionOn, s.policyEvidence))
 	mux.HandleFunc("GET /v1/policy/repositories", gate(s.promotionOn, s.policyRepositories))

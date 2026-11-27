@@ -249,7 +249,7 @@ func (s *Server) routineDigest(w http.ResponseWriter, r *http.Request) {
 		repoStates := states[strings.ToLower(rc.Name)]
 		entries := make([]RoutineDigestEntry, 0, len(names))
 		for _, name := range names {
-			rr, _, found := findRoutineEntry(rc, name)
+			rr, _, found := findRoutineEntry(cfg, rc, name)
 			if !found {
 				continue
 			}

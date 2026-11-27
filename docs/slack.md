@@ -110,7 +110,8 @@ Replies (a reply re-plans a proposal, and a filed thread answers five questions)
 | Key | Meaning |
 |---|---|
 | `teamID` | Required. The one workspace served; any other workspace's events are dropped |
-| `channels` | Required, at least one: `<channel id>: {repositories: [owner/name], maxCostUSD, approvals}`. The repositories a proposal there may name, and the `max_cost` a check mark there sends (at least 0.01) |
+| `channels` | Required, at least one: `<channel id>: {repositories: [owner/name], maxCostUSD, approvals, upkeep}`. The repositories a proposal there may name, and the `max_cost` a check mark there sends (at least 0.01); `repositories` and `maxCostUSD` on the parent channel are optional when `upkeep` is set (dedicated upkeep channel) |
+| `channels.<id>.upkeep` | Optional: `{repositories, routines?, notify?, digest?: {cron}}`. Routes upkeep routine threads, breaker alerts, and periodic scorecards to this channel. `routines` filters by routine name when non-empty; `notify` defaults to `[room.pr_opened, room.waiting_for_human, room.ended, routine.paused]` and also admits `room.merged` and `room.reverted` (`[]` disables webhook posts); `digest.cron` is a 5-field UTC cron |
 | `channels.<id>.approvals` | Optional, default `false`: a `forge.push` wait in that channel is drawn as [the card](#the-card), and a press on it reaches the broker. Off, the wait keeps the text line, and a press on a card posted while it was on is answered "approvals are not turned on in this channel" with the room link, without reaching the broker. Turning it off is the fast rollback; it is not the authority, since a broker without `human.slackDecide` answers the route with a 404 and a press then says the factory could not be reached |
 | `channels.<id>.intents` | Optional, `off` (the default), `shadow` or `on`: whether [tier 1](#understanding-a-reply) reads the replies of a filed thread that the phrase table does not know. `shadow` classifies each one, counts and logs it, and posts today's unknown line. `on` is accepted and, until the read intents are served, behaves as `shadow`. Write it quoted or bare: YAML reads a bare `off` or `on` as a boolean, and the App reads it back as the word. Off is the rollback, and the fast one: tier 1 is never asked |
 | `channels.<id>.collectReplies` | Optional, default `false`: the channel's agreement that its replies are stored, redacted, with the label the classifier gave them, for the broker's `retentionDays` (30 by default) and then deleted. It needs `intents` `shadow` or `on`. A channel without it stores nothing a person typed |
@@ -136,13 +137,13 @@ webhooks:
     network: cluster
     url: http://<svc>.<ns>.svc.cluster.local:8081/webhooks
     events: [room.task_triaged, room.run_started, room.waiting_for_human, room.pr_opened, room.verdict_posted,
-             room.merged, room.reverted, room.budget_reached, room.ended, room.approval_closed]
+             room.merged, room.reverted, room.budget_reached, room.ended, room.approval_closed, routine.paused]
     repositories: [Smana/ai-native-ref]
     secretFile: /etc/webhook/key   # the key file the App mounts as webhookKeyFile
 ```
 
 - `network: cluster`; the port `:8081` is mandatory and the path is exactly `/webhooks`.
-- `events` are the ten above, by their full names: the broker refuses a short one. The App posts no line for `room.task_received`, `room.run_ended` or `room.monitor_verdict`, and none for `room.run_started` unless a channel's `notify` lists it. `room.approval_closed` is what makes a card inert after the deadline or another surface's decision, so a subscriber serving a channel with `approvals: true` must list it.
+- `events` are the eleven above, by their full names: the broker refuses a short one. The App posts no line for `room.task_received`, `room.run_ended` or `room.monitor_verdict`, and none for `room.run_started` unless a channel's `notify` lists it. `room.approval_closed` is what makes a card inert after the deadline or another surface's decision, so a subscriber serving a channel with `approvals: true` must list it, and `routine.paused` delivers yield-breaker alerts for upkeep channels using bounded IDs and enums only.
 - `repositories` is required.
 - `secretFile` is the same key as the App's `webhookKeyFile`: one or two base64 lines, each at least 32 bytes decoded.
 
@@ -247,6 +248,15 @@ By default, the App posts five transitions (`room.task_triaged`, `room.waiting_f
 - `room.pr_opened` (`changed`): `Pull request #<pr> opened.`, with no mention.
 - `room.stepped_up` (`changed`): `Stepped up from <from> to <to> (<reason>) · new ceiling $<ceiling>.`, with no mention.
 - `room.ended`: **one end line per thread**, stored under `endTS` in `factory-slack-threads`: outcome (`Merged #<pr>`, `Ended: done`, `Ended: stopped`, `Ended: escalated (out of budget)`, `Reverted #<pr>`), spend against budget (`$0.16 of $2.00`, marked `so far` until `spendFinal`), duration from the first run's `startedAt` to the last run's `endedAt`, and the merge gate's decision (`merged automatically by policy <name>`, `merged on @<login>'s approval`, `waits for a human: touches a protected file`). An escalated `room.ended` (`state: failed`) is `needs_you`: it mentions the filer, offers `Retry` and `Run again deeper` buttons (or `/factory retry` when `retry` is off in `intentActions`), and says `If nothing is done, it stops in 7 days.` (from `escalatedHours`). A terminal `room.ended`, `room.merged`, or `room.reverted` is `done`: it mentions the filer once (recorded in `doneMentioned`) and later `room.merged` or `room.reverted` events edit `endTS` in place (`chat.update`) without mentioning again (listing `room.reverted` in `notify` also posts a separate line without a second mention); if `room.merged` arrives before `room.ended`, it posts the end line with the one mention first and `room.ended` updates it without mentioning again.
+
+### Upkeep channel and weekly scorecard
+
+Channels with `upkeep` set receive scheduled routine activity without needing `@factory` proposal settings on the parent channel (`repositories` and `maxCostUSD` are optional on dedicated upkeep channels):
+
+- **Silent by default:** `room.task_received`, `room.task_triaged`, `room.ended` with `reason: "no_op"`, and non-escalated endings on rooms without an existing thread post nothing.
+- **Top-level threads:** the first qualifying event (`room.pr_opened`, `room.waiting_for_human`, or escalated `room.ended`) opens a top-level channel message and records the room in `factory-slack-threads`, so subsequent `room.merged` or `room.reverted` transitions update the thread in place and interactive thread replies work as on interactive tasks.
+- **Breaker alerts:** `routine.paused` posts a channel alert naming the repository, routine, and breaker reason, with a direct link to `.github/agent-factory/upkeep/<name>.md` on the default branch.
+- **Weekly scorecard (`upkeep.digest.cron`):** when the 5-field UTC cron matches, the App calls `<brokerURL>/api/routines/digest?window=7d` over its existing `brokerURL` connection (zero new NetworkPolicy egress) and posts `Weekly upkeep scorecard (7d):` summarizing runs, merge rate, spend, and paused state per active routine, skipping weeks where all counts are zero.
 
 ## State
 

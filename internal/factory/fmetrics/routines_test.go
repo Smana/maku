@@ -26,6 +26,8 @@ func TestRoutineMetricsAreExposedAndRenamed(t *testing.T) {
 	s.RoutinePaused(ctx, "Acme/App", "doc-drift", true)
 	s.RoutinePaused(ctx, "Acme/App", "dead-code", false)
 	s.RoutineMergeRate(ctx, "Acme/App", "dead-code", 0.75)
+	s.RoutineConfigWrite(ctx, "Acme/App", "ok")
+	s.RoutineConfigWrite(ctx, "Evil/Repo", "bogus_outcome")
 
 	body := scrape()
 	for _, want := range []string{
@@ -39,6 +41,8 @@ func TestRoutineMetricsAreExposedAndRenamed(t *testing.T) {
 		`maku_factory_routine_paused{repository="Acme/App",routine="doc-drift"} 1`,
 		`maku_factory_routine_paused{repository="Acme/App",routine="dead-code"} 0`,
 		`maku_factory_routine_merge_rate{repository="Acme/App",routine="dead-code"} 0.75`,
+		`maku_factory_routine_config_writes_total{outcome="ok",repository="Acme/App"} 1`,
+		`maku_factory_routine_config_writes_total{outcome="other",repository="other"} 1`,
 	} {
 		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %s\n%s", want, body)
@@ -208,6 +212,7 @@ func TestRoutineMetricsConcurrentAndNilSafe(t *testing.T) {
 	noopSet.RoutinePromptRead(ctx, "Acme/App", "dead-code", "default")
 	noopSet.RoutinePaused(ctx, "Acme/App", "dead-code", true)
 	noopSet.RoutineMergeRate(ctx, "Acme/App", "dead-code", 0.5)
+	noopSet.RoutineConfigWrite(ctx, "Acme/App", "ok")
 
 	var nilSet *Set
 	nilSet.SetRoutines(map[string][]string{"Acme/App": {"dead-code"}})
@@ -216,6 +221,7 @@ func TestRoutineMetricsConcurrentAndNilSafe(t *testing.T) {
 	nilSet.RoutinePromptRead(ctx, "Acme/App", "dead-code", "default")
 	nilSet.RoutinePaused(ctx, "Acme/App", "dead-code", true)
 	nilSet.RoutineMergeRate(ctx, "Acme/App", "dead-code", 0.5)
+	nilSet.RoutineConfigWrite(ctx, "Acme/App", "ok")
 }
 
 func TestRoutineGuardsUnwiredRepoAndNonFiniteUSD(t *testing.T) {

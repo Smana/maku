@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Upkeep routines and `schedules[]` deprecation](#upkeep-routines-and-schedules-deprecation)
 - [The `golang` profile reaches the Go vulnerability database](#the-golang-profile-reaches-the-go-vulnerability-database)
 - [`evaluation.treatmentModel`](#evaluationtreatmentmodel)
 - [The `model:<alias>` label pin](#the-modelalias-label-pin)
@@ -56,6 +57,16 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
 
+## Upkeep routines and `schedules[]` deprecation
+
+Upgrade the CRD chart (`agent-factory-crds`) before upgrading `maku-factory` and `maku`: this release adds the `Routine` CRD (`maku.ogenki.io/v1alpha1`), `Repository.spec.routines[]` and `Repository.status.routines[]`, `Task.spec.routine`, `Task.spec.source.kind: "routine"` (`"schedule"` stays valid for legacy entries), and `AgentRun.spec.prDraft`.
+
+- **`schedules[]` deprecated:** existing `Repository.spec.schedules[]` entries keep running in this release and report a `Deprecated` condition (`spec.schedules is deprecated: run maku config migrate to convert schedules to Routine bindings`). Duplicate names across `schedules[]`, `routines[]`, and UI bindings are refused (`DefinedTwice`). `schedules[]` will be refused in the next minor release. Run `maku config migrate --from ...` to generate `Routine` (`routine-<name>.yaml`) and `Repository.spec.routines[]` manifests.
+- **Catalog routines:** `charts/agent-factory` installs six inert starter `Routine` objects (`dead-links`, `renovate-red`, `doc-drift`, `dead-code`, `flaky-tests`, `dup-unifier`) labelled `maku.ogenki.io/catalog: "true"`. None runs until bound by a `Repository`.
+- **Upkeep budgets and WIP caps:** `budgets.upkeepDailyUSD` (`system:upkeep`, defaulting to `min(10.00, 0.25 * factoryDailyUSD)`, `0` disables cron routine spend) and `caps.upkeepAwaitingHumanWIP` (defaulting to `max(1, awaitingHumanWIP / 2)`) isolate scheduled upkeep from interactive tasks.
+- **Optional UI writes (`routines.uiWrite`):** defaults to `false` (YAML export only). Setting `routines.uiWrite: true` persists `/routines` configurator saves in ConfigMap `agent-factory-routine-bindings` while keeping `Repository` and `Routine` CR RBAC read-only; `maku preflight` warns `ui_write_gitops_managed` if Flux or Argo annotations exist. Export UI bindings back to GitOps with `maku config export --routines`.
+- **Slack upkeep routing & `routine.paused` webhook:** `maku-slack` adds per-channel `channels.<id>.upkeep` (`repositories`, `routines`, `notify`, `digest.cron` reading `<brokerURL>/api/routines/digest`). Add `routine.paused` to the broker's `webhooks[].events` entry for `slack-app` to deliver yield-breaker alerts. See [Upkeep routines](factory.md#upkeep-routines) and [The Slack App](slack.md#config).
+
 ## The `golang` profile reaches the Go vulnerability database
 
 No value changes. A run that requests `golang` now also reaches `vuln.go.dev` (govulncheck's
@@ -64,7 +75,6 @@ go command's toolchain downloads. The egress proxy matches hosts, not paths, so 
 public Cloud Storage object to such a run. An install that overrides `runController.egressProfiles`
 keeps its own list. Separately, `gh run view --log` and `gh api .../actions/.../logs` now exit 3 in a
 run with a message: GitHub serves those logs from Azure blob storage, which no run reaches.
-
 ## `evaluation.treatmentModel`
 
 The `Factory` and `Task` CRDs gain `evaluation.treatmentModel`, `evaluation.treatmentRoles`,
@@ -104,7 +114,6 @@ An install that overrides `runController.egressProfiles.github` with the old lis
 for the whole run; the run-controller logs a warning naming them. Drop them from the override to get
 the install window. A new alert, `MakuEgressInstallClosedRefusal`, fires when an agent tries a
 release download after the window ([Run path alerts](reference/alerts.md#run-path-alerts)).
-
 ## Gemini: the gemini and vertex presets
 
 No default changes, and no value changes for an existing install. The AgentRun CRD's `model` and

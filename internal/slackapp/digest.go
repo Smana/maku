@@ -42,8 +42,12 @@ func (a *App) StartDigest(ctx context.Context) {
 	stopCh := a.digestStop
 	a.digestMu.Unlock()
 
+	interval := a.DigestEvery
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
 	a.digestWG.Go(func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {

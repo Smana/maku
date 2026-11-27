@@ -108,6 +108,9 @@ var Catalog = []Check{
 		What: "no route reaches the broker around the proxy; each host resolves and answers", From: "D19"},
 	{ID: "tracing", Seams: []Seam{SeamObservability}, RunsIn: []Where{InRunController}, Fail: []string{"collector_unreachable"},
 		What: "the collector's OTLP port accepts a run's connection", From: "D21"},
+	{ID: "routines-ui-write", Seams: []Seam{SeamCluster}, RunsIn: []Where{InFactory},
+		Fail: []string{"ui_write_check_failed"}, Warn: []string{"ui_write_gitops_managed"},
+		What: "routines.uiWrite off for GitOps repositories", From: "UP17"},
 }
 
 // lookup is the catalog's entry for id.

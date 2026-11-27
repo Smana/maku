@@ -149,6 +149,8 @@ const makuUsage = `usage: maku <command>
                                   check manifests against a config file the way the factory would, offline;
                                   --base prints each changed policy's consumers, a guardrail: line names
                                   each binding over a guardrail, a binding: line each one refused
+  config export --routines [--repository owner/name] [--namespace NS] [--kubeconfig FILE] [--context NAME]
+                                  export UI-managed routine bindings from agent-factory-routine-bindings as Repository YAML
   policy list --repository owner/name [--since DATE]
                                   each policy, what checks its meaning and its progress, then the
                                   recent per-policy decisions, through the broker

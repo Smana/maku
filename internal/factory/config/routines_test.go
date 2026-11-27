@@ -434,3 +434,61 @@ func TestRepositoryRoutinesValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestRoutinesConfig(t *testing.T) {
+	t.Run("defaults uiWrite to false", func(t *testing.T) {
+		c, err := Parse([]byte(good))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Routines.UIWrite {
+			t.Fatal("Routines.UIWrite must default to false")
+		}
+	})
+
+	t.Run("accepts routines.uiWrite true", func(t *testing.T) {
+		raw := good + "\nroutines:\n  uiWrite: true\n"
+		c, err := Parse([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.Routines.UIWrite {
+			t.Fatal("expected Routines.UIWrite=true")
+		}
+	})
+
+	t.Run("rejects unknown field inside routines", func(t *testing.T) {
+		raw := good + "\nroutines:\n  uiWrtie: true\n"
+		if _, err := Parse([]byte(raw)); err == nil {
+			t.Fatal("expected unknown field error")
+		}
+	})
+
+	t.Run("CheckBlocks rejects duplicate routines block and duplicate keys inside routines", func(t *testing.T) {
+		dupBlock := good + "\nroutines:\n  uiWrite: true\nroutines:\n  uiWrite: false\n"
+		if err := CheckBlocks([]byte(dupBlock)); err == nil {
+			t.Fatal("expected duplicate routines block error")
+		}
+		dupKey := good + "\nroutines:\n  uiWrite: true\n  uiWrite: false\n"
+		if err := CheckBlocks([]byte(dupKey)); err == nil {
+			t.Fatal("expected duplicate key inside routines block error")
+		}
+	})
+
+	t.Run("ValidateDisabledRoutineBinding enforces workflow and repository egress", func(t *testing.T) {
+		c, err := Parse([]byte(good))
+		if err != nil {
+			t.Fatal(err)
+		}
+		checks := Checks{Egress: []string{"pypi"}}
+		if msg := ValidateDisabledRoutineBinding(RoutineBinding{Name: "dead-links", Mode: RoutineModeDisabled, Workflow: "quick", Egress: []string{"pypi"}}, checks, c); msg != "" {
+			t.Fatalf("unexpected error: %s", msg)
+		}
+		if msg := ValidateDisabledRoutineBinding(RoutineBinding{Name: "dead-links", Mode: RoutineModeDisabled, Egress: []string{"golang"}}, checks, c); msg == "" {
+			t.Fatal("expected egress refusal")
+		}
+		if msg := ValidateDisabledRoutineBinding(RoutineBinding{Name: "dead-links", Mode: RoutineModeDisabled, Workflow: "none"}, checks, c); msg == "" {
+			t.Fatal("expected workflow=none refusal")
+		}
+	})
+}

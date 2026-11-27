@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/minter"
@@ -292,4 +293,102 @@ func TestPreflightRouteFiltersOnTheQuery(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("a malformed repository: %d", rec.Code)
 	}
+}
+
+type failingReader struct{ client.Reader }
+
+func (failingReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
+	return context.DeadlineExceeded
+}
+
+func TestFactoryChecksRoutinesUIWrite(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = factoryv1.AddToScheme(scheme)
+
+	repoWithLabels := func(name string, labels map[string]string) *factoryv1.Repository {
+		return &factoryv1.Repository{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "agent-system", Labels: labels},
+			Spec:       factoryv1.RepositorySpec{FactoryRef: "prod", Repository: "acme/" + name},
+		}
+	}
+
+	t.Run("uiWrite false passes even with Flux labels", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			repoWithLabels("r1", map[string]string{"kustomize.toolkit.fluxcd.io/name": "apps"}),
+		).Build()
+		f := factoryChecks{
+			Live:      func() *config.Config { return &config.Config{Routines: config.RoutinesConfig{UIWrite: false}} },
+			Kube:      cl,
+			Namespace: "agent-system",
+		}
+		res := f.routinesUIWrite(t.Context())
+		if res.Outcome != preflight.Pass {
+			t.Fatalf("got %+v, want Pass", res)
+		}
+	})
+
+	t.Run("uiWrite true without GitOps labels passes", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			repoWithLabels("r1", map[string]string{"team": "platform"}),
+		).Build()
+		f := factoryChecks{
+			Live:      func() *config.Config { return &config.Config{Routines: config.RoutinesConfig{UIWrite: true}} },
+			Kube:      cl,
+			Namespace: "agent-system",
+		}
+		res := f.routinesUIWrite(t.Context())
+		if res.Outcome != preflight.Pass {
+			t.Fatalf("got %+v, want Pass", res)
+		}
+	})
+
+	t.Run("uiWrite true with Flux or Argo labels warns ui_write_gitops_managed", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			repoWithLabels("flux-repo", map[string]string{"kustomize.toolkit.fluxcd.io/name": "apps"}),
+			repoWithLabels("argo-repo", map[string]string{"argocd.argoproj.io/instance": "maku"}),
+		).Build()
+		f := factoryChecks{
+			Live:      func() *config.Config { return &config.Config{Routines: config.RoutinesConfig{UIWrite: true}} },
+			Kube:      cl,
+			Namespace: "agent-system",
+		}
+		res := f.routinesUIWrite(t.Context())
+		if res.Outcome != preflight.Warn || res.Code != "ui_write_gitops_managed" ||
+			!strings.Contains(res.Message, "argo-repo") || !strings.Contains(res.Message, "flux-repo") {
+			t.Fatalf("got %+v, want Warn ui_write_gitops_managed naming both repos", res)
+		}
+	})
+
+	t.Run("uiWrite true fails ui_write_check_failed when Repository list fails", func(t *testing.T) {
+		f := factoryChecks{
+			Live:      func() *config.Config { return &config.Config{Routines: config.RoutinesConfig{UIWrite: true}} },
+			Kube:      failingReader{},
+			Namespace: "agent-system",
+		}
+		res := f.routinesUIWrite(t.Context())
+		if res.Outcome != preflight.Fail || res.Code != "ui_write_check_failed" {
+			t.Fatalf("got %+v, want Fail ui_write_check_failed", res)
+		}
+	})
+
+	t.Run("factoryChecks.source runs routines-ui-write", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			repoWithLabels("flux-repo", map[string]string{"kustomize.toolkit.fluxcd.io/name": "apps"}),
+		).Build()
+		f := factoryChecks{
+			Live:      func() *config.Config { return &config.Config{Routines: config.RoutinesConfig{UIWrite: true}} },
+			Kube:      cl,
+			Namespace: "agent-system",
+		}
+		results := f.source()(t.Context())
+		var found bool
+		for _, r := range results {
+			if r.Check == "routines-ui-write" && r.Outcome == preflight.Warn && r.Code == "ui_write_gitops_managed" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("routines-ui-write missing or wrong in source() results: %+v", results)
+		}
+	})
 }

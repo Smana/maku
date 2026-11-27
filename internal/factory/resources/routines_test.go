@@ -548,3 +548,107 @@ func TestChartCatalogRoutinesAssembleAndInertWhenUnbound(t *testing.T) {
 		t.Fatalf("unexpected resolved routines: %+v", rc2)
 	}
 }
+
+func TestAssembleUIBindingsAndDefinedTwice(t *testing.T) {
+	validRT := routineObj(t, "dead-links", 3, true, `
+workflow: quick
+defaultPrompt: Fix dead links.
+probe: {kind: dead-links, requireConsecutive: 2, maxFindings: 10}
+requires: [oracleClass]
+`)
+	catalogRT := routineObj(t, "doc-drift", 2, true, `
+workflow: standard
+defaultPrompt: Check docs drift.
+probe: {kind: none}
+`)
+	thirdRT := routineObj(t, "dead-code", 1, false, `
+workflow: standard
+defaultPrompt: Remove dead code.
+probe: {kind: none}
+`)
+	uiMap := map[string][]config.RoutineBinding{
+		"smana/ai-native-ref": {
+			{Name: "doc-drift", Mode: config.RoutineModePropose, Cron: "0 4 * * 1"},
+			{Name: "dead-code", Mode: config.RoutineModeDraft, Cron: "0 5 * * 1"},
+		},
+	}
+
+	t.Run("UIWrite false ignores UIBindings completely", func(t *testing.T) {
+		repoObj := boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 1, anrBindings)
+		objs := append(specPolicies(t), validRT, catalogRT, thirdRT, repoObj)
+		res, err := Assemble(file(t), objs, Options{UIWrite: false, UIBindings: uiMap})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Config.ServedRoutines) != 3 || !res.Config.ServedRoutines["dead-links"].Catalog || res.Config.ServedRoutines["dead-code"].Catalog {
+			t.Fatalf("ServedRoutines = %+v", res.Config.ServedRoutines)
+		}
+		rc := res.Config.RepositoryFor("Smana/ai-native-ref")
+		if len(rc.ResolvedRoutines) != 0 || len(rc.UIRoutines) != 0 || len(res.RoutineBindings) != 0 {
+			t.Fatalf("UIBindings must be ignored when UIWrite=false: resolved=%+v ui=%+v outcomes=%+v", rc.ResolvedRoutines, rc.UIRoutines, res.RoutineBindings)
+		}
+	})
+
+	t.Run("UIWrite true merges into Repository with nil spec.routines", func(t *testing.T) {
+		repoObj := boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 1, anrBindings)
+		delete(repoObj.Spec, "routines")
+		objs := append(specPolicies(t), validRT, catalogRT, thirdRT, repoObj)
+		res, err := Assemble(file(t), objs, Options{UIWrite: true, UIBindings: uiMap})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rc := res.Config.RepositoryFor("Smana/ai-native-ref")
+		if len(rc.ResolvedRoutines) != 2 || rc.ResolvedRoutines["doc-drift"].Mode != config.RoutineModePropose || rc.ResolvedRoutines["dead-code"].Mode != config.RoutineModeDraft {
+			t.Fatalf("resolved routines = %+v", rc.ResolvedRoutines)
+		}
+		if !rc.UIRoutines["doc-drift"] || !rc.UIRoutines["dead-code"] || rc.UIRoutines["dead-links"] {
+			t.Fatalf("UIRoutines = %+v", rc.UIRoutines)
+		}
+	})
+
+	t.Run("DefinedTwice refuses UI collision with GitOps routines and schedules without overwriting or falling back", func(t *testing.T) {
+		repoObj := boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 2, anrBindings)
+		repoObj.Spec["schedules"] = []any{
+			map[string]any{"name": "dead-code", "cron": "0 6 * * 1", "text": "Remove dead code."},
+		}
+		repoObj.Spec["routines"] = []any{
+			map[string]any{"name": "doc-drift", "mode": "pr", "cron": "0 2 * * 1"},
+		}
+		objs := append(specPolicies(t), validRT, catalogRT, thirdRT, repoObj)
+		prev := map[BindingKey]config.ResolvedRoutine{
+			{Repository: "ai-native-ref", Name: "doc-drift"}: {Name: "doc-drift", Mode: config.RoutineModePropose, Cron: "0 9 * * 1"},
+			{Repository: "ai-native-ref", Name: "dead-code"}: {Name: "dead-code", Mode: config.RoutineModePR, Cron: "0 9 * * 1"},
+		}
+		collideUI := map[string][]config.RoutineBinding{
+			"smana/ai-native-ref": {
+				{Name: "doc-drift", Mode: config.RoutineModeDraft, Cron: "0 4 * * 1"},
+				{Name: "dead-code", Mode: config.RoutineModeDraft, Cron: "0 5 * * 1"},
+				{Name: "dead-links", Mode: config.RoutineModePR, Cron: "0 7 * * *", OracleClass: "dead-links"},
+			},
+		}
+		res, err := Assemble(file(t), objs, Options{UIWrite: true, UIBindings: collideUI, LastResolvedRoutines: prev})
+		if err != nil {
+			t.Fatalf("Assemble failed: %v", err)
+		}
+		rc := res.Config.RepositoryFor("Smana/ai-native-ref")
+		// GitOps doc-drift stays intact (pr, 0 2 * * 1), NOT overwritten by UI draft.
+		if rc.ResolvedRoutines["doc-drift"].Mode != config.RoutineModePR || rc.ResolvedRoutines["doc-drift"].Cron != "0 2 * * 1" {
+			t.Fatalf("GitOps doc-drift overwritten: %+v", rc.ResolvedRoutines["doc-drift"])
+		}
+		// Non-colliding UI dead-links resolves and is marked UI-owned.
+		if rc.ResolvedRoutines["dead-links"].Mode != config.RoutineModePR || !rc.UIRoutines["dead-links"] || rc.UIRoutines["doc-drift"] {
+			t.Fatalf("resolved=%+v ui=%+v", rc.ResolvedRoutines, rc.UIRoutines)
+		}
+		// Both colliding UI bindings produce DefinedTwice outcomes with Served=false.
+		var dupReasons []string
+		for _, o := range res.RoutineBindings {
+			if !o.Accepted && o.Reason == config.ReasonDefinedTwice && !o.Served {
+				dupReasons = append(dupReasons, o.Name)
+			}
+		}
+		slices.Sort(dupReasons)
+		if !slices.Equal(dupReasons, []string{"dead-code", "doc-drift"}) {
+			t.Fatalf("DefinedTwice outcomes = %v, all outcomes = %+v", dupReasons, res.RoutineBindings)
+		}
+	})
+}

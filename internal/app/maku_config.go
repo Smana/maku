@@ -4,24 +4,33 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/factory/resources"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 // config is `maku config`: offline, it splits a factory config file into the Factory, Repository
@@ -32,7 +41,15 @@ func (r Maku) config(ctx context.Context, args []string) error {
 		return fmt.Errorf("config migrate or validate\n%s", makuUsage)
 	}
 	verb, args := args[0], args[1:]
-	if verb == "export" || verb == "check" {
+	if verb == "export" {
+		if slices.ContainsFunc(args, func(a string) bool {
+			return a == "--routines" || strings.HasPrefix(a, "--routines=")
+		}) {
+			return r.configExportRoutines(ctx, args)
+		}
+		return r.policy(ctx, append([]string{verb}, args...))
+	}
+	if verb == "check" {
 		return r.policy(ctx, append([]string{verb}, args...))
 	}
 	if verb == "migrate" && len(args) > 0 && (args[0] == "export" || args[0] == "check") {
@@ -588,5 +605,89 @@ func writeMigratedDir(out io.Writer, dir string, objs []resources.Object) error 
 		written = append(written, path)
 	}
 	_, err := fmt.Fprintf(out, "equivalent: %d manifests written to %s (%s)\n", len(written), dir, strings.Join(written, ", "))
+	return err
+}
+
+func (r Maku) configExportRoutines(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("config export", flag.ContinueOnError)
+	routines := fs.Bool("routines", false, "export UI-managed routine bindings from ConfigMap "+upkeep.BindingsConfigMap)
+	ns := fs.String("namespace", "", "the factory namespace (default: the kubeconfig context's)")
+	kubeconfig := fs.String("kubeconfig", "", "the kubeconfig (default: KUBECONFIG, then ~/.kube/config)")
+	kubecontext := fs.String("context", "", "the kubeconfig context (default: its current one)")
+	repoFilter := fs.String("repository", "", "export only this repository (owner/name)")
+	fileFlag := fs.String("file", "", "read ConfigMap YAML or JSON from a file instead of the cluster")
+	pos, err := flags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 0 {
+		return errors.New("config export --routines: nothing is positional")
+	}
+	if !*routines {
+		return r.policy(ctx, append([]string{"export"}, args...))
+	}
+
+	var cm corev1.ConfigMap
+	var targetNS string
+	if *fileFlag != "" {
+		raw, err := os.ReadFile(filepath.Clean(*fileFlag))
+		if err != nil {
+			return fmt.Errorf("config export --routines: %w", err)
+		}
+		if err := yaml.UnmarshalStrict(raw, &cm); err != nil {
+			return fmt.Errorf("config export --routines: %w", err)
+		}
+		targetNS = cmp.Or(*ns, cm.Namespace, "agent-system")
+	} else {
+		kube := r.Kube
+		if kube == nil {
+			kube = kubeCluster
+		}
+		c, ctxNS, err := kube(*kubeconfig, *kubecontext)
+		if err != nil {
+			return fmt.Errorf("config export --routines: %w", err)
+		}
+		targetNS = cmp.Or(*ns, ctxNS, "agent-system")
+		err = c.Client.Get(ctx, client.ObjectKey{Namespace: targetNS, Name: upkeep.BindingsConfigMap}, &cm)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("config export --routines: %w", err)
+		}
+	}
+
+	byRepo, err := upkeep.DecodeBindingsMap(cm.Data)
+	if err != nil {
+		return fmt.Errorf("config export --routines: %w", err)
+	}
+	allRepos := slices.Sorted(maps.Keys(byRepo))
+	var selected []string
+	for _, repo := range allRepos {
+		if *repoFilter != "" && !strings.EqualFold(repo, *repoFilter) {
+			continue
+		}
+		if len(byRepo[repo]) == 0 {
+			continue
+		}
+		selected = append(selected, repo)
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+
+	docs := make([][]byte, 0, len(selected))
+	for _, repo := range selected {
+		objName := resources.ObjectName(repo, allRepos)
+		manifest, err := resources.RepositoryManifest(objName, targetNS, map[string]any{
+			"repository": repo,
+			"routines":   byRepo[repo],
+		})
+		if err != nil {
+			return fmt.Errorf("config export --routines: %w", err)
+		}
+		docs = append(docs, bytes.TrimSpace(manifest))
+	}
+	_, err = fmt.Fprintf(r.Out, "%s\n", bytes.Join(docs, []byte("\n---\n")))
 	return err
 }

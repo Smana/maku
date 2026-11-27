@@ -7,19 +7,23 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/resources"
+	"github.com/Smana/maku/internal/factory/upkeep"
 )
 
 const ns = "agent-system"
@@ -36,6 +40,7 @@ func file(t *testing.T) []byte {
 func scheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = v1alpha1.AddToScheme(s)
+	_ = corev1.AddToScheme(s)
 	return s
 }
 
@@ -404,5 +409,111 @@ func TestSyncLogsARefusedGenerationOnce(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Fatalf("log lacks %q:\n%s", w, out)
 		}
+	}
+}
+
+func TestHandlerConfigMapResourceVersionAndFilter(t *testing.T) {
+	s, _ := source(t)
+	h := s.handler()
+	drainKick := func() bool {
+		select {
+		case <-s.kickCh():
+			return true
+		default:
+			return false
+		}
+	}
+
+	bindingsCM := func(rv string) *corev1.ConfigMap {
+		return &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            upkeep.BindingsConfigMap,
+				Namespace:       ns,
+				Generation:      0,
+				ResourceVersion: rv,
+			},
+		}
+	}
+	otherCM := func(name, rv string) *corev1.ConfigMap {
+		return &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            name,
+				Namespace:       ns,
+				Generation:      0,
+				ResourceVersion: rv,
+			},
+		}
+	}
+
+	// Unrelated ConfigMaps never kick.
+	h.AddFunc(otherCM("agent-factory-stop", "1"))
+	h.UpdateFunc(otherCM("agent-factory-stop", "1"), otherCM("agent-factory-stop", "2"))
+	h.DeleteFunc(otherCM("agent-factory-stop", "2"))
+	if drainKick() {
+		t.Fatal("unrelated ConfigMap events must not kick")
+	}
+
+	// BindingsConfigMap Add kicks.
+	h.AddFunc(bindingsCM("1"))
+	if !drainKick() {
+		t.Fatal("BindingsConfigMap Add must kick")
+	}
+
+	// BindingsConfigMap Update with unchanged ResourceVersion does not kick.
+	h.UpdateFunc(bindingsCM("1"), bindingsCM("1"))
+	if drainKick() {
+		t.Fatal("BindingsConfigMap Update with same ResourceVersion must not kick")
+	}
+
+	// BindingsConfigMap Update with changed ResourceVersion (Generation=0) kicks.
+	h.UpdateFunc(bindingsCM("1"), bindingsCM("2"))
+	if !drainKick() {
+		t.Fatal("BindingsConfigMap Update with new ResourceVersion must kick even when Generation=0")
+	}
+
+	// BindingsConfigMap Delete tombstone kicks.
+	h.DeleteFunc(toolscache.DeletedFinalStateUnknown{Obj: bindingsCM("2")})
+	if !drainKick() {
+		t.Fatal("BindingsConfigMap Delete tombstone must kick")
+	}
+}
+
+func TestSyncMergesUIBindingsWhenUIWriteEnabled(t *testing.T) {
+	objs := servedObjs(t, "other", "Smana/Other", 1, 1)
+	rt := &v1alpha1.Routine{
+		ObjectMeta: metav1.ObjectMeta{Name: "doc-drift", Namespace: ns, Generation: 1, Labels: map[string]string{v1alpha1.LabelCatalog: "true"}},
+		Spec: v1alpha1.RoutineSpec{
+			RoutineSpec: config.RoutineSpec{
+				DefaultPrompt: "Check docs drift.",
+				Probe:         config.ProbeSpec{Kind: config.ProbeNone},
+			},
+		},
+	}
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: upkeep.BindingsConfigMap, Namespace: ns},
+		Data: map[string]string{
+			"smana__other.json": `{"repository":"Smana/Other","routines":[{"name":"doc-drift","mode":"propose","cron":"0 4 * * 1"}]}`,
+		},
+	}
+	objs = append(objs, rt, cm)
+
+	// With uiWrite omitted/false, ConfigMap bindings are ignored.
+	sOff, _ := source(t, objs...)
+	if err := sOff.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if rc := sOff.Live.Current().RepositoryFor("Smana/Other"); rc == nil || len(rc.ResolvedRoutines) != 0 {
+		t.Fatalf("uiWrite false must ignore ConfigMap bindings: %+v", rc)
+	}
+
+	// With uiWrite: true in base config, ConfigMap bindings are merged.
+	sOn, _ := source(t, objs...)
+	sOn.File = append(slices.Clone(file(t)), []byte("\nroutines:\n  uiWrite: true\n")...)
+	if err := sOn.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rc := sOn.Live.Current().RepositoryFor("Smana/Other")
+	if rc == nil || len(rc.ResolvedRoutines) != 1 || rc.ResolvedRoutines["doc-drift"].Mode != config.RoutineModePropose || !rc.UIRoutines["doc-drift"] {
+		t.Fatalf("uiWrite true did not merge ConfigMap bindings: %+v", rc)
 	}
 }

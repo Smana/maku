@@ -9,7 +9,7 @@ import { maxRows } from "./limits";
 import { NEED_TYPES, needType, needTypeRank } from "./needs";
 import { ago } from "./summary";
 import { mountThemeButton, type ThemeController } from "./theme";
-import { mountSettingsLink } from "./settingslink";
+import { mountRoutinesLink, mountSettingsLink } from "./settingslink";
 import { newTaskForm, offerServedRepositories } from "./newtask";
 
 // A room's rows by seq, in seq order on the page. A resume the broker clamped can
@@ -356,8 +356,12 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   h1.className = "page-title";
   h1.textContent = "Rooms";
   header.append(h1);
-  mountSettingsLink(header);
-  if (theme) mountThemeButton(header, theme);
+  const headerActions = document.createElement("div");
+  headerActions.className = "header-actions";
+  mountRoutinesLink(headerActions);
+  mountSettingsLink(headerActions);
+  if (theme) mountThemeButton(headerActions, theme);
+  header.append(headerActions);
 
   const check = (name: string, label: string, on?: boolean) => {
     const input = document.createElement("input");
