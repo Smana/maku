@@ -35,8 +35,8 @@ jobs:
         run: bash hack/ci-changes.sh
 
   # `task check` on four runners: check-static (every gate but the Go tests) and the Go tests in three
-  # disjoint slices (hack/test-shard.sh), joined by the required `check` below. release.yaml's gate
-  # still runs `task check` whole, on one runner.
+  # disjoint slices (hack/test-shard.sh), joined by the required `check` below. release.yaml runs the
+  # same split before publishing, without caches.
   check-static:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -455,7 +455,7 @@ text and a branch can try to steer ([maku](../cli.md#the-mcp-server)).
 | Images | The Go images are static binaries on digest-pinned distroless `static-debian12:nonroot`; the agent harness is a Python image on the OpenHands `agent-server` base. All multi-arch (`linux/amd64`, `linux/arm64`). Never `latest`: consumers pin by digest |
 | Attestations | An SPDX SBOM and SLSA provenance (`mode=max`) attached to every pushed image |
 | Signing | A keyless cosign signature on the digest, never the tag, from the workflow's OIDC identity |
-| Releases | The release job re-runs `task check` (a tag can name a commit that never passed CI) and uses no build cache |
+| Releases | The release gate re-runs every `task check` gate on parallel workers (a tag can name a commit that never passed CI) and uses no build cache |
 | Repository | `main` is protected by the repository ruleset `main`: pull requests only (squash, the only merge method the repository enables), required checks `check`, `analyze` and `harness-test`, linear history, no force-push or deletion; admins may bypass, through a pull request only. Private vulnerability reporting and Dependabot security updates are on |
 
 Verify an image before you pin it. **The default accepts only images built by the release workflow
