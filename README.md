@@ -5,7 +5,7 @@
   <img src="docs/assets/brand/png/maku-lockup-horizontal-light.png" alt="Maku" width="300">
 </picture>
 
-**A 100% sovereign, Kubernetes-native coding-agent factory (Apache-2.0).**
+**Run coding agents on Kubernetes without trusting them (Apache-2.0).**
 
 Run coding agents on your own Kubernetes cluster without trusting a third-party SaaS control plane
 or the agents themselves. Maku complements local coding agents (Claude Code, OpenCode, Cursor,
@@ -24,7 +24,7 @@ egress, touch another repository's token or approve its own merge, however it is
 
 ## Why Maku
 
-### Sovereign control plane, zero vendor lock-in
+### Your cluster, zero vendor lock-in
 
 - **Your cluster, your data, your keys.** No SaaS control plane, no seat tax, no vendor lock-in.
   Bring any OIDC identity provider (Okta, Entra ID, Keycloak, ZITADEL), any OpenAI- or
@@ -125,7 +125,7 @@ PostgreSQL schema and T12 audit guarantees:
 ## Run a pilot with your team
 
 Maku is Apache-2.0 open source, not a commercial SaaS product. If your engineering team uses
-**GitHub (Cloud or Enterprise Server) + Kubernetes** and wants to pilot sovereign coding agents on
+**GitHub (Cloud or Enterprise Server) + Kubernetes** and wants to pilot self-hosted coding agents on
 real private repositories, read the [Tier-1 Pilot guide](https://maku.ogenki.io/docs/get-started/pilot/):
 
 - **You own** your Kubernetes cluster (with gVisor), GitHub repositories and model API keys.

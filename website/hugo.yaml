@@ -79,7 +79,7 @@ menu:
         icon: github
 
 params:
-  description: "A 100% sovereign, Kubernetes-native coding-agent factory (Apache-2.0): gVisor isolation, gateway-enforced USD budgets, auditable rooms, and GitOps-governed earned auto-merge."
+  description: "Run coding agents on Kubernetes without trusting them (Apache-2.0): gVisor sandboxes, gateway-enforced USD budgets, append-only rooms, and GitOps-governed earned auto-merge."
   images:
     - images/social/github-social-preview.png
   navbar:
