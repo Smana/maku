@@ -189,3 +189,29 @@ func TestCatalogueRepositoriesRoute(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
+
+// Developer review gap 1: the catalogue tells the broker who may start a task: a maintainer, or a
+// writer where access.start: write is in effect, so the web Start is offered to them.
+func TestTheCatalogueSaysWhoStarts(t *testing.T) {
+	path := "/v1/catalogue/" + coordPrimary
+	starter := func(s *Server, token string) bool {
+		w := getAs(s.Handler(), token, path)
+		var c catalogue.Catalogue
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &c) != nil {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
+		return c.Starter
+	}
+	s := catalogueServer(true)
+	if !starter(s, "human") || starter(s, "nonmaint") {
+		t.Fatal("maintainers only by default")
+	}
+	s.Cfg.Current().Repositories[0].Access = config.RepositoryAccess{Start: config.AccessWrite}
+	if starter(s, "nonmaint") {
+		t.Fatal("write without enforced per-person caps starts nothing")
+	}
+	s.Cfg.Current().Budgets = config.Budgets{EnforcePrincipal: true, PerPerson: config.PerPerson{Enabled: true, DailyUSD: 20}}
+	if !starter(s, "nonmaint") {
+		t.Fatal("a writer where write is in effect")
+	}
+}

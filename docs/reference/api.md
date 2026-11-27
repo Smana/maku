@@ -1517,7 +1517,9 @@ The route is on the same port as the policy routes but is **not** behind `policy
 it is mounted whenever the API is. Callers:
 
 - A human token reads it as themselves: `maintainer` is whether their linked GitHub login is in the
-  repository's `maintainers`, and `false` for a login that is not linked.
+  repository's `maintainers`, and `false` for a login that is not linked. `starter` is whether they
+  may start a task: a maintainer, or anyone where the repository's `access.start: write` is in
+  effect; the web **Start** is offered on it, and GitHub's write check still applies.
 - A sponsored principal names the Slack user it reads for in `?onBehalfOf=slack:<team>/<user>`,
   resolved exactly as [`POST /v1/tasks`](#post-v1tasks) resolves it (the config's map, else the
   self-serve link); `maintainer` is that login's. Without `onBehalfOf`, `403 human_only`; for a user

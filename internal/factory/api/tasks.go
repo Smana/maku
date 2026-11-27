@@ -295,7 +295,7 @@ func (s *Server) sponsorOf(ctx context.Context, cfg *config.Config, sp *config.S
 	if rc == nil { // listed for the principal, but not served by the published config (factory resources D12)
 		return "", http.StatusForbidden, "repository_not_allowed"
 	}
-	if !rc.IsMaintainer(login) {
+	if !rc.MayStart(login, cfg.Budgets) {
 		return "", http.StatusForbidden, "not_a_maintainer"
 	}
 	canWrite, err := s.actLoginWrites(ctx, in.Repository, login)

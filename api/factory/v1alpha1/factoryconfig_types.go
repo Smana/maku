@@ -201,6 +201,10 @@ type RepositorySpec struct {
 	// Q16); off by default. Only a maintainer sets it, here: never an issue, a label or a run request.
 	// +optional
 	Screenshots *config.Screenshots `json:"screenshots,omitempty"`
+	// Access is who may start a task: maintainers (the default), or write, which lets anyone with
+	// write access start one where the factory enforces per-person daily caps.
+	// +optional
+	Access config.RepositoryAccess `json:"access,omitzero"`
 }
 
 // RepositoryStatus is what the factory made of its Repository (D11, narrowed for v1).

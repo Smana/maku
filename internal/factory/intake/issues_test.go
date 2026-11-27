@@ -945,3 +945,52 @@ func TestRemovedImagesAreNamedOnce(t *testing.T) {
 		}
 	}
 }
+
+// Developer review gap 1, owner decision D1: with access.start: write and per-person caps enforced,
+// a developer with write access starts a task by labelling it, and is charged for it.
+func TestAWritersLabelStartsWhereCapsAreEnforced(t *testing.T) {
+	f := forgetest.NewFake()
+	labelled(f, 7, "dev1")
+	p, c := poller(t, f)
+	cfg := p.Cfg.Current()
+	cfg.Repositories[0].Access = config.RepositoryAccess{Start: config.AccessWrite}
+	cfg.Budgets = config.Budgets{EnforcePrincipal: true, PerPerson: config.PerPerson{Enabled: true, DailyUSD: 20}}
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := tasks(t, c)
+	if len(got) != 1 || got[0].Spec.Source.RequestedBy != "github:dev1" || got[0].Payer() != v1alpha1.Person("dev1") {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// Set but not in effect: the writer is told why, in words, and nothing starts.
+func TestAWritersLabelWithoutEnforcedCapsSaysWhy(t *testing.T) {
+	f := forgetest.NewFake()
+	labelled(f, 7, "dev1")
+	p, c := poller(t, f)
+	p.Cfg.Current().Repositories[0].Access = config.RepositoryAccess{Start: config.AccessWrite}
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n, cs := len(tasks(t, c)), f.Comments(7); n != 0 || len(cs) != 1 || !strings.Contains(cs[0], "per-person daily caps") {
+		t.Fatalf("tasks %d comments %q", n, cs)
+	}
+}
+
+// Write access alone is not enough: a writer the write check refuses starts nothing.
+func TestAWriteRepositoryStillChecksWriteAccess(t *testing.T) {
+	f := forgetest.NewFake()
+	labelled(f, 7, "dev1")
+	p, c := poller(t, f)
+	cfg := p.Cfg.Current()
+	cfg.Repositories[0].Access = config.RepositoryAccess{Start: config.AccessWrite}
+	cfg.Budgets = config.Budgets{EnforcePrincipal: true, PerPerson: config.PerPerson{Enabled: true, DailyUSD: 20}}
+	p.CanWrite = func(context.Context, string) (bool, error) { return false, nil }
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(tasks(t, c)); n != 0 {
+		t.Fatalf("tasks %d", n)
+	}
+}

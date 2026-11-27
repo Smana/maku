@@ -418,6 +418,8 @@ type Repository struct {
 	PrivateCode *PrivateCode `json:"privateCode,omitempty"`
 	// Screenshots is the repository's opt-in to the browser sidecar (v5 Q16): nil is off.
 	Screenshots *Screenshots `json:"screenshots,omitempty"`
+	// Access is who may start a task (developer review gap 1): maintainers unless it says write.
+	Access RepositoryAccess `json:"access,omitzero"`
 	// Workflow is the workflow a task runs when nothing else names one, and the tester's opt-in (WF3, WF7).
 	Workflow RepositoryWorkflow `json:"workflow,omitzero"`
 	// Bound and Bindings are a Repository object's mergePolicies, written by resources.Assemble
@@ -2422,6 +2424,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if r.Screenshots != nil {
 		r.Screenshots.validate(bad)
 	}
+	r.Access.validate(bad)
 	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
 	for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 		validateClass(name, r.Classes[name], bad)

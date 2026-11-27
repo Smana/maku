@@ -769,14 +769,14 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	var workflows []string
 	var workflowChoices []WorkflowChoice
 	var defaultChoice, activeChoice *WorkflowChoice
-	var maintainer *bool
+	var maintainer, starter *bool
 	defaultNotOffered := ""
 	var catProfiles map[string]catalogue.Profile
 	var catDefault string
 	if s.Catalogue != nil {
 		if cat, err := s.Catalogue.Get(ctx, p, base.Repository, onBehalfOf); err == nil {
-			m := cat.Maintainer
-			maintainer = &m
+			m, st := cat.Maintainer, cat.Maintainer || cat.Starter
+			maintainer, starter = &m, &st
 			catProfiles = cat.Profiles
 			catDefault = cat.DefaultWorkflow
 			if cat.DefaultWorkflow != "" && !cat.Profiles[cat.DefaultWorkflow].Offered {
@@ -880,6 +880,7 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 		CanStart:    canStart,
 		CanStartWhy: why,
 		Maintainer:  maintainer,
+		Starter:     starter,
 	}
 	if s.choices.first(plan.Hash) {
 		s.countChoices(ctx, plan, surface)
@@ -1164,11 +1165,11 @@ func (s *Server) handoffCheckRoute(w http.ResponseWriter, r *http.Request) {
 const notMaintainerStart = "Only a maintainer of this repository can start a task. File the issue on GitHub and ask a maintainer to label it factory/ready."
 
 // webStartable holds the web Start to the factory's own rule: the factory starts a web start's task
-// only for a maintainer (broker-confirmed handoff), so a caller the catalogue names as no maintainer
-// is offered no Start, rather than an issue the factory publicly refuses. An unread catalogue (nil)
-// leaves the factory to decide.
+// only for a maintainer, or a writer where access.start: write is in effect (broker-confirmed
+// handoff), so a caller the catalogue names as neither is offered no Start, rather than an issue the
+// factory publicly refuses. An unread catalogue (nil) leaves the factory to decide.
 func webStartable(c planChecked) planChecked {
-	if c.CanStart && c.Maintainer != nil && !*c.Maintainer {
+	if c.CanStart && c.Starter != nil && !*c.Starter {
 		c.CanStart, c.CanStartWhy = false, startNotMaintainer
 	}
 	return c
