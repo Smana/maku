@@ -224,6 +224,13 @@ Run confinement is controlled by `maku.networkPolicies.mode` ([network policies 
 - **`kubernetes`** pairs default-deny `networking.k8s.io/v1` `NetworkPolicy` rules with a `CONNECT`-only forward `egress-proxy` rooted in the immutable `maku.ogenki.io/egress` pod annotation; before starting any run, the run-controller's preflight proves that the CNI denies unallowed egress. DNS to cluster DNS remains open in `kubernetes` mode, leaving DNS tunnelling as its documented residual.
 - **`none`** applies no network confinement and surfaces `network_policy_none` on the install banner.
 
+GitHub's release and raw hosts are on no run's allow-list. A check-enabled run reaches them only
+while it installs its pinned tools and hook environments; the harness then closes them at the egress
+proxy, checks the close, and starts the agent. A failed close ends the run `egress_install_open`. An agent that later tries a release download is refused, logged `install_closed` and
+alerted (`MakuEgressInstallClosedRefusal`). What stays open: `git clone` of any public repository on
+`github.com`, the `pypi`, `npm` and `crates` profiles a run requests, and, in `cilium` mode, the
+install hosts for the whole run ([the run path's network modes](reference/security-controls.md#the-run-paths-network-modes)).
+
 In `gateway` model mode (the production default), no provider API key enters the runs namespace: each run receives a projected ServiceAccount token scoped to `<prefix>.<dataClass>.<alias>` for the run's deadline plus 10 minutes, verified offline by `agentgateway` ([the run's model credential](reference/security-controls.md#the-runs-model-credential)). Run pods themselves are gated by an in-tree `ValidatingAdmissionPolicy`, `restricted` Pod Security, digest-pinned image repositories and a `runs` `ResourceQuota` ([the run pod's admission](reference/security-controls.md#the-run-pods-admission)).
 
 ## The opt-in browser
