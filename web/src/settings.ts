@@ -269,6 +269,109 @@ export function evaluationWords(pages: RepositoryPage[]): string {
   return e ? ` · evaluation: ${e.mode} · control ${e.controlPercent} %` : "";
 }
 
+export interface InstallBrokerEnv {
+  version?: string;
+  namespace?: string;
+  authMode?: string;
+}
+export interface InstallFactoryEnv {
+  reachable: boolean;
+  version?: string;
+  name?: string;
+  namespace?: string;
+  defaultHarness?: string;
+  policyStage?: string;
+  hardening?: string;
+  routinesUIWrite?: boolean;
+  demo?: boolean;
+}
+export interface InstallInfo {
+  unsafe?: string[];
+  version?: string;
+  environment?: {
+    broker?: InstallBrokerEnv;
+    factory?: InstallFactoryEnv;
+  };
+}
+
+function authModeText(mode: string): string {
+  if (mode === "oidc") return "OIDC";
+  if (mode === "local") return "Local (no sign-in)";
+  return mode;
+}
+
+// environmentSection renders the broker and factory versions and bounded environment facts from
+// GET /api/install. Returns undefined for older brokers that omit version and environment.
+export function environmentSection(info: InstallInfo): HTMLElement | undefined {
+  const env = info.environment;
+  const brokerVersion = env?.broker?.version || info.version;
+  if (!brokerVersion && !env) return undefined;
+  const factory = env?.factory;
+  const mismatch = Boolean(brokerVersion && factory?.reachable && factory.version && factory.version !== brokerVersion);
+
+  const sec = el("section", undefined, "settings-env");
+  sec.setAttribute("aria-labelledby", "settings-env-heading");
+  const head = el("div", undefined, "settings-env-head");
+  const h2 = el("h2", "Environment");
+  h2.id = "settings-env-heading";
+  head.append(h2);
+  if (mismatch) {
+    const warn = el("span", "Version mismatch", "policy-condition");
+    warn.dataset.tone = "warn";
+    head.append(warn);
+  }
+  sec.append(head);
+
+  const dl = el("dl", undefined, "settings-env-list");
+  const add = (label: string, value: string | Node, cls?: string) => {
+    dl.append(el("dt", label));
+    const dd = el("dd", undefined, cls);
+    dd.append(value);
+    dl.append(dd);
+  };
+
+  if (brokerVersion) add("Broker version", el("code", brokerVersion, "settings-env-mono"));
+  if (factory) {
+    if (!factory.reachable) {
+      add("Factory version", "Unreachable", "settings-env-warn");
+    } else if (factory.version) {
+      const wrap = el("span");
+      wrap.append(el("code", factory.version, "settings-env-mono"));
+      if (mismatch) wrap.append(" (differs from broker)");
+      add("Factory version", wrap, mismatch ? "settings-env-warn" : undefined);
+    } else {
+      add("Factory version", "Not reported", "settings-env-muted");
+    }
+  }
+  if (factory?.reachable && factory.name) {
+    const wrap = el("span");
+    wrap.append(el("code", factory.name, "settings-env-mono"));
+    if (factory.demo) wrap.append(" · demo");
+    add("Factory", wrap);
+  }
+  const bns = env?.broker?.namespace;
+  const fns = factory?.reachable ? factory.namespace : undefined;
+  if (bns && fns && bns !== fns) {
+    add("Namespace", `broker: ${bns} · factory: ${fns}`);
+  } else if (bns || fns) {
+    add("Namespace", el("code", bns || fns!, "settings-env-mono"));
+  }
+  if (env?.broker?.authMode) add("Sign-in mode", authModeText(env.broker.authMode));
+  if (factory?.reachable && factory.defaultHarness) add("Default harness", el("code", factory.defaultHarness, "settings-env-mono"));
+  if (factory?.reachable && factory.policyStage) add("Merge policy stage", factory.policyStage);
+  if (factory?.reachable && factory.hardening) add("Hardening", factory.hardening);
+  if (factory?.reachable && typeof factory.routinesUIWrite === "boolean") {
+    add("Routines UI write", factory.routinesUIWrite ? "Enabled (ConfigMap)" : "Disabled (YAML export only)");
+  }
+  if (Array.isArray(info.unsafe)) {
+    if (info.unsafe.length === 0) add("Install notices", "None");
+    else add("Install notices", `${plural(info.unsafe.length, "notice")}: ${info.unsafe.join(", ")}`, "settings-env-warn");
+  }
+
+  sec.append(dl);
+  return sec;
+}
+
 async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
   const main = settingsFrame(app, "Settings", "/settings", theme);
   const box = el("div", undefined, "settings-cards");
@@ -276,12 +379,16 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
   let repos: string[] | undefined;
   let pages: (RepositoryPage | Error)[] = [];
   let grants: number | undefined;
+  let install: InstallInfo | undefined;
   try { ({ repositories: repos } = await read<{ repositories: string[] }>("/api/policy/repositories", get)); pages = await readAll(repos, get); }
   catch (e) {
     if (e instanceof SignInRequired) { failed(main, e); return; }
     repos = undefined; // the card says the counts are unavailable
   }
-  try { grants = (await read<{ grants: unknown[] }>("/api/approval-memory/grants", get)).grants.length; } catch { /* counts unknown */ }
+  await Promise.all([
+    read<{ grants: unknown[] }>("/api/approval-memory/grants", get).then((r) => { grants = r.grants.length; }, () => { /* counts unknown */ }),
+    read<InstallInfo>("/api/install", get).then((r) => { install = r; }, () => { /* environment optional */ }),
+  ]);
   const ok = pages.filter((p): p is RepositoryPage => !(p instanceof Error));
   const modes: Record<string, number> = {};
   for (const p of ok) for (const [m, n] of Object.entries(modeCounts(p.report))) modes[m] = (modes[m] ?? 0) + n;
@@ -297,6 +404,8 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
       !known ? unknown : repos!.length === 0 ? "No class to promote yet." : `${plural(eligible, "class", "classes")} eligible to promote${note}`),
     card("/settings/approval-memory", "Approval memory", "Approvals you saved so a later, similar pull request can merge without asking again.",
       grants === undefined ? unknown : plural(grants, "saved grant")));
+  const envSec = install ? environmentSection(install) : undefined;
+  if (envSec) main.append(envSec);
 }
 
 function bindingHealth(r: Report): string | undefined {

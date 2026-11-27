@@ -560,9 +560,9 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		FactoryInstall: factoryInstall(cfg)}, nil
 }
 
-// factoryInstall reads the factory's banner codes (v4 D3) with the caller's own token: nil while no
-// factory is configured.
-func factoryInstall(cfg config.Config) func(ctx context.Context, accessToken string) ([]string, error) {
+// factoryInstall reads the factory's banner codes and environment metadata (v4 D3) with the
+// caller's own token: nil while no factory is configured.
+func factoryInstall(cfg config.Config) func(ctx context.Context, accessToken string) (runrequest.InstallInfo, error) {
 	if cfg.FactoryURL == "" {
 		return nil
 	}
