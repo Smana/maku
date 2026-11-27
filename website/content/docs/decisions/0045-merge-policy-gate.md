@@ -1,7 +1,7 @@
 ---
 title: "ADR-0045: palantir/policy-bot, required through a repository ruleset, decides which agent PRs merge"
-linkTitle: "0045 Merge policy gate"
-weight: 45
+linkTitle: 0045 · Merge policy gate
+weight: 450
 description: Agent PRs in a live low-risk class auto-merge only when policy-bot, reading .policy.yml from main, posts success from its own App; everything else needs a maintainer, and gate paths are unmergeable.
 lastVerified: 2026-09-27
 ---
