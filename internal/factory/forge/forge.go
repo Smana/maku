@@ -62,6 +62,9 @@ var ErrActivityTruncated = errors.New("forge: a branch's activity past the page 
 var (
 	ErrHeadMoved    = errors.New("forge: the pull request's head moved since the decision")
 	ErrNotMergeable = errors.New("forge: GitHub does not allow the merge as it stands")
+	// ErrMergeConflict is the ErrNotMergeable whose cause GitHub names: the pull request conflicts
+	// with its base. A rebase can fix it, where a missing approval or protection cannot.
+	ErrMergeConflict = fmt.Errorf("%w: it conflicts with its base", ErrNotMergeable)
 )
 
 // ErrNotAFile is DefaultBranchFile or FileAtCommit at a path that is never a readable file: a

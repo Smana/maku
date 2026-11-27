@@ -892,6 +892,7 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		"CommandApplied":         {CommandApplied(tk, 99, "/factory retry"), ClassChanged},
 		"CommandExpired":         {CommandExpired(tk, 99, "/factory retry", "smana", "the task ended"), ClassNeedsYou},
 		"CommandNotApplicable":   {CommandNotApplicable(tk, 99, "/factory fix", "not a report task"), ClassChanged},
+		"Rebasing":               {Rebasing(tk, 12, "abc", 1, 2), ClassChanged},
 		"NotActedOn":             {NotActedOn(tk, 99, "`/factory retry`"), ClassChanged},
 		"CommentReviewIgnored":   {CommentReviewIgnored(tk), ClassChanged},
 		"ImagesRemoved":          {ImagesRemoved(7, 2), ClassChanged},

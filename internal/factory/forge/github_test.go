@@ -1561,7 +1561,7 @@ func (g *fakeGitHub) setMergeReply(body string) {
 func TestMergeRefusalsInGraphQLErrorsAreTheSentinels(t *testing.T) {
 	for file, want := range map[string]error{
 		"merge-head-moved.json":    ErrHeadMoved,
-		"merge-not-mergeable.json": ErrNotMergeable,
+		"merge-not-mergeable.json": ErrMergeConflict,
 		"merge-unknown.json":       nil,
 	} {
 		t.Run(file, func(t *testing.T) {
@@ -2977,3 +2977,11 @@ func TestAllCommentsCapsPages(t *testing.T) {
 type staticToken string
 
 func (s staticToken) Token(context.Context) (string, error) { return string(s), nil }
+
+// Developer review gap 7: a merge refused for conflicts is ErrMergeConflict, which is still
+// ErrNotMergeable for every caller that does not tell them apart.
+func TestAConflictIsNotMergeable(t *testing.T) {
+	if !errors.Is(ErrMergeConflict, ErrNotMergeable) || errors.Is(ErrNotMergeable, ErrMergeConflict) {
+		t.Fatal("ErrMergeConflict wraps ErrNotMergeable, not the other way round")
+	}
+}

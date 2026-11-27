@@ -1381,7 +1381,7 @@ var mergeRefusals = []struct {
 	err     error
 }{
 	{"Head branch was modified", ErrHeadMoved},
-	{"Pull Request has merge conflicts", ErrNotMergeable},
+	{"Pull Request has merge conflicts", ErrMergeConflict},
 }
 
 // Merge merges the pull request now, at the decided head (external review R02, ruling R52):

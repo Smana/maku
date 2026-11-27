@@ -357,6 +357,11 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			}
 			r.to(t, v1alpha1.PhaseAwaitingCI, "head_moved")
 			return nil
+		case errors.Is(err, forge.ErrMergeConflict) && !adoptedTask(t) && r.fixRunsLeft(cfg, t):
+			if armStatus {
+				r.withdrawGateStatus(ctx, t, pr.HeadSHA, ArmDecision{Verdict: "wait", Reason: "not_mergeable", Matched: d.Matched})
+			}
+			return r.rebase(ctx, cfg, t, pr)
 		case errors.Is(err, forge.ErrNotMergeable):
 			if armStatus {
 				r.withdrawGateStatus(ctx, t, pr.HeadSHA, ArmDecision{Verdict: "human", Reason: "not_mergeable", Matched: d.Matched})
@@ -1176,6 +1181,30 @@ func (r *Reconciler) fixCI(ctx context.Context, cfg *config.Config, t *v1alpha1.
 		msg = fmt.Sprintf("CI failed on %s: %s. Read the failing jobs with forge_read (target checks) and fix them on the same branch.",
 			pr.HeadSHA, strings.Join(names, ", "))
 	}
+	if err := r.Rooms.Enqueue(ctx, t.Status.RoomRef, "ci", msg, int64(t.Status.FixRuns)); err != nil {
+		return err
+	}
+	t.Status.NextTrigger = "ci"
+	r.to(t, v1alpha1.PhaseQueued, "")
+	return nil
+}
+
+// fixRunsLeft is whether the task may still start a CI fix run (merge.fixRuns, counted from the
+// escalation step when there was one, R33).
+func (r *Reconciler) fixRunsLeft(cfg *config.Config, t *v1alpha1.Task) bool {
+	return t.Status.FixRuns-t.Status.FixRunsBeforeStep < r.repo(cfg, t).Merge.FixRuns
+}
+
+// rebase starts one run that rebases the task's branch onto main (developer review gap 7): a merge
+// GitHub refused for conflicts. It spends a CI fix run, so a branch that keeps conflicting ends as
+// not_mergeable with a person, as before.
+func (r *Reconciler) rebase(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) error {
+	t.Status.FixRuns++
+	n, limit := int(t.Status.FixRuns-t.Status.FixRunsBeforeStep), int(r.repo(cfg, t).Merge.FixRuns)
+	narrateLater(t, narrate.Rebasing(t, pr.Number, pr.HeadSHA, n, limit))
+	msg := fmt.Sprintf("Pull request #%d conflicts with main at %s, so it cannot merge. Fetch origin, rebase agent/%s onto "+
+		"origin/main, and resolve each conflict keeping both this change's intent and what main changed. Run the checks "+
+		"again, then push the rebased branch.", pr.Number, pr.HeadSHA, t.Name)
 	if err := r.Rooms.Enqueue(ctx, t.Status.RoomRef, "ci", msg, int64(t.Status.FixRuns)); err != nil {
 		return err
 	}

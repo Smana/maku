@@ -158,7 +158,7 @@ An approval counts only once the head has stopped moving. GitHub must have recor
 | `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity. Next step: approve the current head |
 | `gate_path` | It touches a gate path, so an agent can never merge it; a human re-authors the change |
 | `steering_path` | Steering is on for some class and the pull request changes a [steering note](config.md#steering); a human merges it |
-| `not_mergeable` | GitHub refused the merge as the pull request stands |
+| `not_mergeable` | GitHub refused the merge as the pull request stands: a protection or approval it lacks, or a conflict with main once the CI fix runs that rebase it are spent |
 | `not_agent_authored` | The pull request is not from `agentsLogin` |
 | `no_policy_matched` | No policy of the repository holds on the diff (each one's refusal is in the record's `considered=`): a maintainer reviews and merges it. Not counted in `maku_factory_class_mismatch_total` |
 | `reviewer_verdict_missing` | In `considered=`: a policy with no `diffShape` and no `oracle` holds only on a reviewer's approve, and the workflow has no reviewer |
