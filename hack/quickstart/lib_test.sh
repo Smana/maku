@@ -43,12 +43,12 @@ no qs_retry_webhook 3 0 _cold; eq "$_cold_n" 3 "a webhook that never answers giv
 
 ok qs_port_ok 8080; ok qs_port_ok 18080; no qs_port_ok 80; no qs_port_ok 70000; no qs_port_ok 8o80; no qs_port_ok 010000; no qs_port_ok 08080
 
-# qs_prebuilt_ok: every image an artifact was meant to provide is present locally; no Docker needed.
-docker() { [[ $1 == image && $2 == inspect && $3 == ghcr.io/smana/present:e2e ]]; }
-ok qs_prebuilt_ok e2e present
-no qs_prebuilt_ok e2e missing
-[[ $(qs_prebuilt_ok e2e missing 2>&1) == *"ghcr.io/smana/missing:e2e"* ]] || { echo "FAIL: the missing prebuilt image is named" >&2; fail=1; }
-unset -f docker
+# qs_cache_from: CI reads the prerelease's image-specific cache; local builds have no registry dependency.
+unset QUICKSTART_CACHE
+eq "$(qs_cache_from maku-broker)" "" "local build has no cache input"
+eq "$(QUICKSTART_CACHE=1 qs_cache_from maku-broker)" "type=registry,ref=ghcr.io/smana/maku-broker:buildcache-X64" "CI reads the broker's prerelease cache"
+eq "$(QUICKSTART_CACHE=0 qs_cache_from maku-broker)" "" "any value but 1 disables the cache"
+unset QUICKSTART_CACHE
 
 # qs_secret: the value comes from the environment, survives quoting, and is never an argument
 export QS_TEST_KEY=$'s3cr"et $HOME `id`\nline2'

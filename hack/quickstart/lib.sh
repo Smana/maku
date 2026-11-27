@@ -45,14 +45,10 @@ qs_port_ok() {
   return 1
 }
 
-# qs_prebuilt_ok TAG IMAGE...: PREBUILT=1 names images that must already be loaded locally.
-qs_prebuilt_ok() {
-  local tag=$1 image
-  shift
-  for image in "$@"; do
-    docker image inspect "ghcr.io/smana/$image:$tag" >/dev/null 2>&1 ||
-      { echo "PREBUILT=1: ghcr.io/smana/$image:$tag is not loaded" >&2; return 1; }
-  done
+# qs_cache_from IMAGE: quickstart CI reads the PR prerelease's cache for IMAGE on its amd64 runner.
+qs_cache_from() {
+  [[ ${QUICKSTART_CACHE:-} == 1 ]] || return 0
+  printf 'type=registry,ref=ghcr.io/smana/%s:buildcache-X64\n' "$1"
 }
 
 # qs_retry_webhook TRIES DELAY CMD...: runs CMD, retrying only while an admission webhook does not

@@ -25,41 +25,7 @@ concurrency:
   group: quickstart-e2e-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  # The four Go images are small enough to hand to both legs as one artifact. The much larger harness
-  # stays built locally in each leg, avoiding a multi-GB upload and download.
-  images:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    env:
-      QUICKSTART_REPO: ${{ secrets.QUICKSTART_REPO }}
-    steps:
-      - if: env.QUICKSTART_REPO != ''
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-      - if: env.QUICKSTART_REPO != ''
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - if: env.QUICKSTART_REPO != ''
-        run: |
-          set -euo pipefail
-          for i in maku-broker maku-bridge maku-run-controller; do
-            docker build -q -f "images/$i/Dockerfile" -t "ghcr.io/smana/$i:e2e" . >/dev/null
-          done
-          docker build -q -f hack/quickstart/stub-model/Dockerfile -t ghcr.io/smana/stub-model:e2e . >/dev/null
-          docker save ghcr.io/smana/maku-broker:e2e ghcr.io/smana/maku-bridge:e2e \
-            ghcr.io/smana/maku-run-controller:e2e ghcr.io/smana/stub-model:e2e -o "$RUNNER_TEMP/images.tar"
-      - if: env.QUICKSTART_REPO != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: quickstart-e2e-images
-          path: ${{ runner.temp }}/images.tar
-          retention-days: 1
-          if-no-files-found: error
-
   e2e:
-    needs: images
     # cilium: the default mode. kubernetes: plain NetworkPolicies and the egress proxy (v4 D6) on the
     # same Cilium, which enforces standard policies, under gVisor.
     name: e2e (${{ matrix.netpol }})
@@ -74,7 +40,8 @@ jobs:
     env:
       QUICKSTART_REPO: ${{ secrets.QUICKSTART_REPO }}
       E2E_NETPOL: ${{ matrix.netpol }}
-      PREBUILT: "1"
+      # Read the prerelease workflow's caches; this workflow never writes them.
+      QUICKSTART_CACHE: "1"
     steps:
       - if: env.QUICKSTART_REPO == ''
         run: |
@@ -97,13 +64,6 @@ jobs:
       - if: env.QUICKSTART_REPO != ''
         # ~14 GB free is less than the harness image takes once built, saved and loaded into kind.
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - if: env.QUICKSTART_REPO != ''
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: quickstart-e2e-images
-          path: ${{ runner.temp }}
-      - if: env.QUICKSTART_REPO != ''
-        run: docker load -i "$RUNNER_TEMP/images.tar" && rm "$RUNNER_TEMP/images.tar"
       - if: env.QUICKSTART_REPO != ''
         run: hack/quickstart/e2e.sh
         env:

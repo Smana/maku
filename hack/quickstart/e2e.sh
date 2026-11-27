@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # quickstart-e2e: this checkout's images and maku in kind, a stub model, one run to Succeeded through maku run.
 # Env: GITHUB_TOKEN REPO (the throwaway repo the harness clones). `.github/workflows/quickstart-e2e.yaml`.
-# PREBUILT=1 expects the broker, bridge, run-controller and stub images locally; only the harness is built.
+# QUICKSTART_CACHE=1 reads the CI prerelease's per-image build cache; unset, every build is local as before.
 # E2E_NETPOL=kubernetes installs networkPolicies.mode kubernetes (plain NetworkPolicies and the egress
 # proxy, v4 D6) on the same Cilium, which enforces standard policies, and asserts the run went through
 # the proxy; unset or cilium is the default mode.
@@ -45,16 +45,20 @@ onexit() {
 }
 trap onexit EXIT
 
+build_image() {
+  local image=$1 file=$2 context=$3 cache
+  local args=()
+  cache=$(qs_cache_from "$image")
+  [[ -z $cache ]] || args=(--cache-from "$cache")
+  docker build "${args[@]}" -f "$file" -t "ghcr.io/smana/$image:$TAG" "$context"
+}
+
 step "build the images"
-docker build -t "ghcr.io/smana/maku-harness:$TAG" images/maku-harness
-if [[ ${PREBUILT:-} == 1 ]]; then
-  qs_prebuilt_ok "$TAG" maku-broker maku-bridge maku-run-controller stub-model
-else
-  for i in maku-broker maku-bridge maku-run-controller; do
-    docker build -f "images/$i/Dockerfile" -t "ghcr.io/smana/$i:$TAG" .
-  done
-  docker build -f hack/quickstart/stub-model/Dockerfile -t "ghcr.io/smana/stub-model:$TAG" .
-fi
+build_image maku-harness images/maku-harness/Dockerfile images/maku-harness
+for i in maku-broker maku-bridge maku-run-controller; do
+  build_image "$i" "images/$i/Dockerfile" .
+done
+build_image stub-model hack/quickstart/stub-model/Dockerfile .
 mkdir -p .quickstart/e2e && go build -o .quickstart/e2e/maku ./cmd/maku
 
 step "cluster and image load"
