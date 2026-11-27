@@ -44,3 +44,18 @@ func TestMarkdownComesFromTheTable(t *testing.T) {
 		}
 	}
 }
+
+// Developer review gap 8: the reasons a developer meets most each name one thing a developer or a
+// maintainer does next, without kubectl. Taken from the reasons the review names; with no live
+// metrics to rank them, the plan records the choice.
+func TestTheCommonReasonsNameANextStep(t *testing.T) {
+	for _, code := range DeveloperReasons {
+		w := For(code)
+		if w.Next == "" || w.Next == "a maintainer reviews the task and chooses the next step" || strings.Contains(w.Next, "kubectl") {
+			t.Errorf("%s: %q", code, w.Next)
+		}
+	}
+	if len(DeveloperReasons) != 20 {
+		t.Errorf("%d reasons", len(DeveloperReasons))
+	}
+}

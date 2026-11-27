@@ -1131,8 +1131,8 @@ The gate's policy-related reasons. Every other reason is in [the factory](factor
 | `label_not_adopted` | its required label was not applied by a login the class adopts | a maintainer reviews the task and chooses the next step |
 | `approval_stale` | a maintainer's approval is of an older head: approve the current one | a maintainer reviews the task and chooses the next step |
 | `head_unreported` | the task's implementer never reported its current head in the room: no handoff of its runs names that commit | a maintainer reviews the task and chooses the next step |
-| `changes_requested` | a reviewer requested changes, and the factory does not merge over them | a maintainer reviews the task and chooses the next step |
-| `policy_pending` | the merge policy is not ready | a maintainer reviews the task and chooses the next step |
+| `changes_requested` | a reviewer requested changes, and the factory does not merge over them | the agent revises after a Request changes review; to merge as it stands, the reviewer approves |
+| `policy_pending` | the merge policy is not ready | a maintainer approves the merge policy in Settings |
 | `policy_absent` | the merge policy has not evaluated the pull request | a maintainer reviews the task and chooses the next step |
 | `gate_path` | it touches a gate path, so an agent can never merge it | a maintainer reviews the task and chooses the next step |
 | `class_paused` | auto-merge of this class is paused after a revert, a follow-up fix or a regression in its recent merges | a maintainer reviews the task and chooses the next step |

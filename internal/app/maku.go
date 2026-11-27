@@ -57,6 +57,8 @@ const makuUsage = `usage: maku <command>
   token                           print a valid access token, for scripts (task agent:run)
   status <room> [--json] [--after seq:N] [--format md|text]
                                   where a room stands: status, what needs you, notes
+  why <room>                      why the room's task stopped, in words; what to do next; its last run and the
+                                  judge's last evidence; the pull request and the room
   changes <room> [--cursor seq:N] [--format md|text] [--json]
                                   what changed in a room since the cursor of your last call (the first call: 24 hours)
   rooms [--repo owner/name] [--mine] [--needs-me] [--all] [--format md|text] [--json]
@@ -318,7 +320,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.completion(args)
 	case "help", "-h", "--help":
 		return r.help(args)
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "workflow", "routine", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "why", "changes", "checkout", "coordination", "watch", "post", "cancel", "start", "retry", "answer", "split", "plan", "stages", "workflow", "routine", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, everydayUsage())
 	}
@@ -400,6 +402,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.routine(ctx, c, args)
 	case "status":
 		return r.status(ctx, c, args)
+	case "why":
+		return r.why(ctx, c, args)
 	case "changes":
 		return r.changes(ctx, c, filepath.Join(r.Dir, "cursors.json"), args)
 	case "checkout":
