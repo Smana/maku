@@ -1,5 +1,6 @@
 # What an agent runs before it pushes: the CI's fast subset. Read from the default branch only.
-# The repository's Repository object names the registry access a run gets: npm here.
+# The repository's Repository object names the registry access a run gets: npm for packages,
+# node for mise's Node download.
 version: 1
 timeoutMinutes: 12
 tools: [node]

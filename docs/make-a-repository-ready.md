@@ -13,7 +13,7 @@ possible. Without them, a run still opens a pull request, but nothing in the san
 | It has | It does not have |
 |---|---|
 | One platform image with `git`, `bash`, `mise` and Python | Your own image (planned: a per-repository runtime) |
-| GitHub, and the package registries the platform grants the repository: PyPI, npm, the Go proxy, crates.io | Maven Central, Gradle, `nodejs.org`, a private feed, any other host |
+| GitHub, and the package registries the platform grants the repository: PyPI, npm, the Go proxy, crates.io, Maven Central and Gradle (`maven`), Node's downloads (`node`) | A private feed, or any other host |
 | 2 CPU and 4 GiB by default, 10 GiB of scratch | Docker, Testcontainers, a database or any other service |
 | 8 minutes of checks by default, 15 at most | Your CI's secrets |
 
@@ -77,9 +77,9 @@ One ready repository per stack, under [`examples/agent-ready/`](../examples/agen
 | Stack | Steps | `ciOnly` | Registry the platform grants |
 |---|---|---|---|
 | [Go](../examples/agent-ready/go/) | build, unit, lint | integration tests on Postgres | `golang` |
-| [Node](../examples/agent-ready/node/) | `npm ci`, `tsc`, Vitest, ESLint | Playwright | `npm` |
+| [Node](../examples/agent-ready/node/) | `npm ci`, `tsc`, Vitest, ESLint | Playwright | `npm`, `node` |
 | [Python](../examples/agent-ready/python/) | `uv sync`, pytest, ruff | warehouse tests (DuckDB fixtures run instead) | `pypi` |
-| [JVM](../examples/agent-ready/jvm/) | Maven resolve, unit tests offline | Testcontainers | Maven Central: not in this release |
+| [JVM](../examples/agent-ready/jvm/) | `./mvnw` resolve, unit tests offline | Testcontainers | `maven` |
 
 ## Check it
 
