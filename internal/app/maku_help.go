@@ -95,19 +95,3 @@ func (r Maku) help(args []string) error {
 	_, err := fmt.Fprintln(r.Out, text)
 	return err
 }
-
-// commandHelpAsked is `maku <command> [<sub>] --help` (or -h): the command's own help, read from the
-// words before the flag. ok is false when the arguments ask for no help.
-func commandHelpAsked(cmd string, args []string) ([]string, bool) {
-	i := slices.IndexFunc(args, func(a string) bool { return a == "--help" || a == "-h" })
-	if i < 0 {
-		return nil, false
-	}
-	name := []string{cmd}
-	if i > 0 && !strings.HasPrefix(args[0], "-") {
-		if _, ok := commandHelp([]string{cmd, args[0]}); ok {
-			name = append(name, args[0])
-		}
-	}
-	return name, true
-}

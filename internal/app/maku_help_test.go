@@ -65,11 +65,9 @@ func TestEveryCommandIsEverydayOrAdmin(t *testing.T) {
 
 func TestHelpForOneCommand(t *testing.T) {
 	for args, want := range map[string]string{
-		"help checkout":     "  checkout <room>",
-		"help repo check":   "  repo check <owner/name>",
-		"checkout --help":   "  checkout <room>",
-		"repo check --help": "  repo check <owner/name>",
-		"plan -h":           "  plan approve|split <task>",
+		"help checkout":   "  checkout <room>",
+		"help repo check": "  repo check <owner/name>",
+		"help plan":       "  plan approve|split <task>",
 	} {
 		out, err := runHelp(t, strings.Fields(args)...)
 		if err != nil || !strings.HasPrefix(out, want) {
@@ -79,6 +77,11 @@ func TestHelpForOneCommand(t *testing.T) {
 	out, _ := runHelp(t, "help", "repo")
 	if !strings.Contains(out, "repo add") || !strings.Contains(out, "repo check") {
 		t.Errorf("help repo shows both:\n%s", out)
+	}
+	// A command's own --help stays the command's: scripts probe a binary with it (hack/demo/lib.sh,
+	// hack/install-e2e/upgrade.sh), and a flag error names that command's lines, not the whole wall.
+	if _, err := runHelp(t, "repo", "check", "--bogus"); err == nil || !strings.Contains(err.Error(), "  repo check <owner/name>") || strings.Contains(err.Error(), "db bootstrap") {
+		t.Errorf("a flag error: %v", err)
 	}
 	var ee *maku.ExitError
 	if _, err := runHelp(t, "help", "nope"); !errors.As(err, &ee) || ee.Code != 2 {

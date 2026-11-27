@@ -290,12 +290,6 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return fmt.Errorf("a command is required\n%s", everydayUsage())
 	}
 	cmd, args := args[0], args[1:]
-	if name, ok := commandHelpAsked(cmd, args); ok && cmd != "completion" && cmd != "help" {
-		if h, known := commandHelp(name); known {
-			_, err := fmt.Fprintln(r.Out, h)
-			return err
-		}
-	}
 	cfgPath, tokPath := filepath.Join(r.Dir, "config.json"), filepath.Join(r.Dir, "token.json")
 	switch cmd {
 	case "configure":
