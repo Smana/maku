@@ -1,13 +1,12 @@
 # What an agent runs before it pushes: the CI's fast subset. Read from the default branch only.
-# Maven Central needs the maven registry access on the repository's Repository object. It is not
-# in this release yet (docs/make-a-repository-ready.md): until it is, the resolve step fails on
-# egress and the run says so.
+# The Maven wrapper (./mvnw, committed with .mvn/wrapper/) downloads Maven and the dependencies from
+# Maven Central: the repository's Repository object grants the maven registry access.
 version: 1
 timeoutMinutes: 15
-tools: [java, maven]
-definedBy: [mise.toml, pom.xml, .github/workflows/ci.yaml]
+tools: [java]
+definedBy: [mise.toml, pom.xml, .mvn/wrapper/maven-wrapper.properties, .github/workflows/ci.yaml]
 steps:
-  - {name: resolve, run: mvn -B -q dependency:go-offline, ci: test, stopOnFailure: true}
-  - {name: unit, run: mvn -B -o test, ci: test}
+  - {name: resolve, run: ./mvnw -B -q dependency:go-offline, ci: test, stopOnFailure: true}
+  - {name: unit, run: ./mvnw -B -o test, ci: test}
 ciOnly:
-  - {check: test, part: "mvn verify (Testcontainers)", why: "needs Docker; the sandbox has none"}
+  - {check: test, part: "mvnw verify (Testcontainers)", why: "needs Docker; the sandbox has none"}
