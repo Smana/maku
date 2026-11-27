@@ -349,14 +349,14 @@ jobs:
 
   # Each image on native amd64 and arm64 runners, joined and signed (image.yaml).
   # Each image on native amd64 and arm64 runners, pushed by digest only (image.yaml, join: false):
-  # no tag yet. Two images at a time, so the builds leave runners to the check-test slices.
+  # no tag yet. Four at a time: two waves rather than four, with a bound on runner use.
   prerelease:
     needs: prerelease-version
     permissions:
       contents: read
       packages: write
     strategy:
-      max-parallel: 2
+      max-parallel: 4
       matrix:
         image: [maku-broker, maku-bridge, maku-browser, maku-factory, maku-harness, maku-opencode, maku-run-controller, maku-slack]
     uses: ./.github/workflows/image.yaml
@@ -364,6 +364,7 @@ jobs:
       image: ${{ matrix.image }}
       version: ${{ needs.prerelease-version.outputs.version }}
       join: false
+      cache: true
 
   # Publishes the builds once the pull request is green: joins each image's two platform digests
   # under the pre-release tag and signs the index. A red check or harness-test leaves only untagged,

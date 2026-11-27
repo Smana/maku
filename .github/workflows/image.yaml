@@ -24,6 +24,11 @@ on:
         required: false
         type: boolean
         default: true
+      cache:
+        description: Read and write the GHCR build cache; false keeps releases isolated from PR-written caches
+        required: false
+        type: boolean
+        default: false
 permissions: {}
 
 jobs:
@@ -61,6 +66,10 @@ jobs:
           build-args: VERSION=${{ inputs.version }}
           provenance: mode=max
           sbom: true
+          # Only ci.yaml opts in: release builds must not consume a PR-written cache. One mutable tag
+          # per image and architecture avoids the Actions cache quota; a missing tag is a cold build.
+          cache-from: ${{ inputs.cache && format('type=registry,ref=ghcr.io/smana/{0}:buildcache-{1}', inputs.image, runner.arch) || '' }}
+          cache-to: ${{ inputs.cache && format('type=registry,ref=ghcr.io/smana/{0}:buildcache-{1},mode=max', inputs.image, runner.arch) || '' }}
           # By digest only: the tag goes on the joined index, never on one platform's image.
           outputs: type=image,name=ghcr.io/smana/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
       # Hardening H3 (HR24): the factory's push applier needs git 2.48 or later in its image, the
