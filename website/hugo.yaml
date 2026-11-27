@@ -1,0 +1,122 @@
+baseURL: https://maku.ogenki.io/
+title: Maku
+locale: en-us
+enableRobotsTXT: true
+enableGitInfo: true
+
+# Fail-closed internal link guard: any unresolved ref/relref fails the build.
+refLinksErrorLevel: ERROR
+
+module:
+  hugoVersion:
+    min: "0.146.0"
+  imports:
+    - path: github.com/imfing/hextra
+  mounts:
+    - source: content
+      target: content
+    - source: layouts
+      target: layouts
+    - source: assets
+      target: assets
+    - source: static
+      target: static
+    - source: data
+      target: data
+    - source: i18n
+      target: i18n
+    - source: ../web/src/assets/fonts
+      target: static/fonts
+    - source: ../web/preview/media
+      target: static/media
+    - source: ../docs/assets/brand/svg
+      target: static/images/brand
+    - source: ../docs/assets/brand/favicon
+      target: static/favicon
+    - source: ../docs/assets/brand/social
+      target: static/images/social
+    - source: ../docs/assets/web-ui
+      target: static/images/web-ui
+    - source: ../docs/assets/room-light.png
+      target: static/images/web-ui/room-light.png
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    noClasses: false
+
+menu:
+  main:
+    - name: Get started
+      pageRef: /docs/get-started
+      weight: 1
+    - name: Docs
+      pageRef: /docs
+      weight: 2
+    - name: Demo
+      url: "/demo/"
+      weight: 3
+    - name: Roadmap
+      pageRef: /docs/roadmap
+      weight: 4
+    - name: Search
+      weight: 5
+      params:
+        type: search
+    - name: Theme
+      weight: 6
+      params:
+        type: theme-toggle
+    - name: GitHub
+      weight: 7
+      url: "https://github.com/Smana/maku"
+      params:
+        icon: github
+
+params:
+  description: "A 100% sovereign, Kubernetes-native coding-agent factory (Apache-2.0): gVisor isolation, gateway-enforced USD budgets, auditable rooms, and GitOps-governed earned auto-merge."
+  images:
+    - images/social/github-social-preview.png
+  navbar:
+    displayTitle: true
+    displayLogo: true
+    logo:
+      path: images/brand/maku-mark-light.svg
+      dark: images/brand/maku-mark-dark.svg
+      width: 32
+      height: 32
+  search:
+    enable: true
+    type: flexsearch
+    flexsearch:
+      index: content
+      tokenize: forward
+  editURL:
+    enable: true
+    base: "https://github.com/Smana/maku/edit/main/website/content"
+  footer:
+    enable: true
+    displayCopyright: true
+    displayPoweredBy: false
+  imageZoom:
+    enable: true
+  mermaid:
+    base: "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist"
+  theme:
+    default: system
+    displayToggle: false
+  pilot:
+    title: "Run a Tier-1 Pilot with your engineering team"
+    message: "Maku is Apache-2.0 open source, not a commercial SaaS pitch. Your team owns its Kubernetes cluster (with gVisor), GitHub repositories, and model API keys; the maintainer provides bootstrap support and collaborates on improvements driven by your stack, with optional freelance days for hands-on integration."
+    links:
+      - name: "Read the Tier-1 Pilot guide"
+        url: "/docs/get-started/pilot/"
+      - name: "Get in touch"
+        url: "https://blog.ogenki.io/about/"
+      - name: "GitHub"
+        url: "https://github.com/Smana/maku"
+  sponsor:
+    url: "https://github.com/sponsors/Smana"
+    message: "One maintainer builds Maku and funds the cloud clusters and model API time used in live testing; [GitHub Sponsors][sponsor] helps cover that."

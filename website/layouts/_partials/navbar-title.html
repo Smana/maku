@@ -1,0 +1,6 @@
+{{- $logoLink := .Site.Params.navbar.logo.link | default .Site.Home.RelPermalink -}}
+<a class="maku-brand hx:ltr:mr-auto hx:rtl:ml-auto" href="{{ $logoLink }}" aria-label="Maku home">
+  <img class="maku-mark-light" src="{{ "images/brand/maku-mark-light.svg" | relURL }}" alt="" aria-hidden="true" width="32" height="32" />
+  <img class="maku-mark-dark" src="{{ "images/brand/maku-mark-dark.svg" | relURL }}" alt="" aria-hidden="true" width="32" height="32" />
+  <span class="maku-wordmark">maku</span>
+</a>

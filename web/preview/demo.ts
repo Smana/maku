@@ -33,6 +33,12 @@ async function run() {
   const theme = initTheme();
   const override = params.get("theme");
   if (override === "light" || override === "dark") applyTheme(override);
+  // Sync with the parent maku.ogenki.io page when embedded in an iframe on the same origin.
+  window.addEventListener("message", (ev) => {
+    if (ev.origin !== window.location.origin) return;
+    const d = ev.data as { type?: string; mode?: string } | null;
+    if (d?.type === "maku:theme" && (d.mode === "light" || d.mode === "dark")) applyTheme(d.mode);
+  });
   const speed = Number(params.get("speed"));
   const jumpFinal = params.get("view") === "final";
 
@@ -73,12 +79,12 @@ async function run() {
     const lead = document.createElement("div");
     lead.className = "demo-banner-lead";
     const about = Object.assign(document.createElement("a"), {
-      href: "https://github.com/Smana/maku#readme",
+      href: "https://maku.ogenki.io/",
       textContent: "What is Maku?",
       rel: "noopener noreferrer",
     });
     const pilot = Object.assign(document.createElement("a"), {
-      href: "https://github.com/Smana/maku/blob/main/docs/pilot.md",
+      href: "https://maku.ogenki.io/docs/get-started/pilot/",
       textContent: "Tier-1 Pilot",
       rel: "noopener noreferrer",
     });

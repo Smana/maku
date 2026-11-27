@@ -5,6 +5,8 @@ web/preview/demo.js
 web/preview/settings.js
 web/.demo-site/
 _site/
+website/public/
+website/resources/
 __pycache__/
 *.pyc
 .quickstart/

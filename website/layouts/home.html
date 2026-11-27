@@ -1,0 +1,451 @@
+{{ define "main" }}
+  {{ partial "sidebar.html" (dict "context" . "disableSidebar" true) }}
+  <main id="content" class="maku-home">
+    {{- /* Band 1: Hero + grounded fact strip */ -}}
+    <section class="maku-hero-band" aria-labelledby="hero-title">
+      <div class="maku-wrap maku-hero-inner">
+        <h1 id="hero-title" class="maku-hero-title">
+          Sovereign coding agents on <span class="maku-hero-accent">your own Kubernetes cluster.</span>
+        </h1>
+        <p class="maku-hero-lead">
+          Keep Claude Code, OpenCode, or Cursor on your laptop, and hand off asynchronous backlog, maintenance, and SRE issues to <strong>Maku</strong>.
+          Every agent runs in a gVisor sandbox behind hard USD budgets and auditable rooms—bringing back a reviewed pull request without trusting a third-party SaaS control plane or the agents themselves.
+        </p>
+        <div class="maku-cta-row">
+          <a class="maku-btn maku-btn-primary" href="{{ "docs/get-started/quickstart/" | relURL }}">
+            Try on your laptop (15 min)
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10h12"/><path d="M11 5l5 5-5 5"/></svg>
+          </a>
+          <a class="maku-btn maku-btn-secondary" href="#replay">
+            Drive a recorded room
+          </a>
+          <a class="maku-btn maku-btn-ghost" href="{{ "docs/get-started/pilot/" | relURL }}">
+            Run a Tier-1 Pilot →
+          </a>
+        </div>
+        <ul class="maku-fact-strip" aria-label="Recorded production run summary">
+          <li><span class="maku-live-dot" aria-hidden="true"></span><strong>Apache-2.0</strong><span>open source, zero seat tax</span></li>
+          <li><strong>12 min</strong><span>sentence to merge</span></li>
+          <li><strong>2</strong><span>sandboxed agents</span></li>
+          <li><strong>$0.14</strong><span>model spend</span></li>
+          <li><strong>1</strong><span>human approval</span></li>
+        </ul>
+      </div>
+    </section>
+
+    {{- /* Band 2: Real-run screencast + synchronized 10-step run rail */ -}}
+    <section class="maku-band" aria-labelledby="stage-title">
+      <div class="maku-wrap">
+        <div class="maku-band-head">
+          <div>
+            <h2 id="stage-title" class="maku-band-title">One sentence in. A reviewed, merged pull request out.</h2>
+            <p class="maku-band-lead">
+              A real documentation fix handed off from OpenCode on a live cluster: the planner drafts the issue, an implementer and a reviewer work inside separate sandboxes, a maintainer approves, and the merger lands the exact approved commit. Nothing was staged; waiting is sped up.
+            </p>
+          </div>
+        </div>
+
+        <div class="maku-stage">
+          <div class="maku-window">
+            <div class="maku-chrome" aria-hidden="true">
+              <span class="maku-dots"><i></i><i></i><i></i></span>
+              <span class="maku-chrome-title">issue #479 → PR #480 · Smana/ai-native-ref</span>
+              <span class="maku-chrome-meta">2:06 · agents at 15×</span>
+            </div>
+            <video id="maku-run-video" controls muted playsinline preload="metadata" poster="{{ "media/maku-run.jpg" | relURL }}" width="1600" height="996">
+              <source src="{{ "media/maku-run.mp4" | relURL }}" type="video/mp4" />
+              <track kind="captions" src="{{ "media/maku-run.en.vtt" | relURL }}" srclang="en" label="English" default />
+              <a href="{{ "media/maku-run.mp4" | relURL }}">Download the screencast (MP4, 2 min)</a>
+            </video>
+          </div>
+
+          <nav class="maku-rail" aria-labelledby="maku-rail-title">
+            <h3 id="maku-rail-title" class="maku-rail-head">The run, step by step</h3>
+            <ol id="maku-chapters">
+              <li class="k-you"><button type="button" data-t="0"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Hand it off</b><small>One line in OpenCode</small></span><time>0:00</time></button></li>
+              <li class="k-factory"><button type="button" data-t="10"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">planner</span><b>The issue, drafted</b><small>One form files it and starts it</small></span><time>0:10</time></button></li>
+              <li class="k-factory"><button type="button" data-t="24"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">factory</span><b>Filed as you</b><small>Issue #479, your gh, your name</small></span><time>0:24</time></button></li>
+              <li class="k-factory"><button type="button" data-t="38.4"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">room</span><b>Every step, live</b><small>The room opens on the run</small></span><time>0:38</time></button></li>
+              <li class="k-agent"><button type="button" data-t="45.7"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">implementer</span><b>Edit, check, PR</b><small>agent-checks 6/6, PR #480</small></span><time>0:45</time></button></li>
+              <li class="k-agent"><button type="button" data-t="60.4"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">reviewer</span><b>Fresh eyes</b><small>Reruns the checks, approves</small></span><time>1:00</time></button></li>
+              <li class="k-you"><button type="button" data-t="81.1"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Needs you</b><small>The merge gate asks a maintainer</small></span><time>1:21</time></button></li>
+              <li class="k-you"><button type="button" data-t="89.1"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">you</span><b>Read, approve</b><small>A one-line diff on GitHub</small></span><time>1:29</time></button></li>
+              <li class="k-done"><button type="button" data-t="100.6"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">merger</span><b>Merged</b><small>The approved head, nothing else</small></span><time>1:40</time></button></li>
+              <li class="k-done"><button type="button" data-t="108.6"><span class="maku-rail-node"></span><span class="maku-rail-label"><span class="maku-rail-who">metrics</span><b>What it cost</b><small>2 runs, $0.14, 366k tokens</small></span><time>1:48</time></button></li>
+            </ol>
+            <div class="maku-rail-legend" aria-hidden="true">
+              <span class="k-you">you</span>
+              <span class="k-factory">factory</span>
+              <span class="k-agent">agents</span>
+              <span class="k-done">done</span>
+            </div>
+          </nav>
+        </div>
+      </div>
+    </section>
+
+    {{- /* Band 3: Architecture schematic & four sovereign controls */ -}}
+    <section class="maku-band maku-band-tinted" aria-labelledby="controls-title">
+      <div class="maku-wrap">
+        <div class="maku-band-head">
+          <div>
+            <h2 id="controls-title" class="maku-band-title">Every control sits outside the sandbox.</h2>
+            <p class="maku-band-lead">
+              A run cannot raise its own budget, widen its egress allow-list, touch another repository's token, or approve its own merge—however it is prompted.
+            </p>
+          </div>
+          <a class="maku-btn maku-btn-secondary" href="{{ "docs/concepts/architecture/" | relURL }}">Read architecture &amp; security →</a>
+        </div>
+
+        <figure class="maku-arch-figure">
+          <svg viewBox="0 0 1040 250" role="img" aria-label="Maku trust boundary diagram: an issue, MCP handoff, or Slack mention triggers maku-factory, which mints a scoped per-run token and launches an untrusted agent inside a gVisor pod with default-deny egress. Every model request crosses agentgateway under hard USD caps and data-class routing; every step streams via maku-bridge into maku-broker's immutable PostgreSQL room log where humans watch, steer, and approve; pull requests pass through the GitOps MergePolicy gate with shadow replay and a post-merge revert breaker.">
+            {{- /* Intake */ -}}
+            <rect class="a-box" x="14" y="54" width="166" height="84" rx="12" />
+            <text class="a-title" x="97" y="88" text-anchor="middle">Intake</text>
+            <text class="a-sub" x="97" y="108" text-anchor="middle">MCP · Slack · GitHub</text>
+            <text class="a-sub" x="97" y="124" text-anchor="middle">factory/ready</text>
+            <line class="a-edge" x1="180" y1="96" x2="218" y2="96" />
+            <polygon class="a-arrow" points="222,96 213,91 213,101" />
+
+            {{- /* Factory */ -}}
+            <rect class="a-box" x="224" y="54" width="166" height="84" rx="12" />
+            <text class="a-title" x="307" y="88" text-anchor="middle">maku-factory</text>
+            <text class="a-sub" x="307" y="108" text-anchor="middle">triage · role tokens</text>
+            <text class="a-sub" x="307" y="124" text-anchor="middle">kill switch · budgets</text>
+            <line class="a-edge" x1="390" y1="96" x2="430" y2="96" />
+            <polygon class="a-arrow" points="434,96 425,91 425,101" />
+
+            {{- /* Untrusted gVisor sandbox */ -}}
+            <rect class="a-sandbox" x="436" y="18" width="248" height="146" rx="14" />
+            <text class="a-tag" x="454" y="40">UNTRUSTED · GVISOR SANDBOX</text>
+            <rect class="a-box" x="452" y="54" width="216" height="44" rx="8" />
+            <text class="a-title" x="560" y="74" text-anchor="middle">Agent harness</text>
+            <text class="a-sub" x="560" y="90" text-anchor="middle">default-deny egress · agent/** branch</text>
+            <rect class="a-box" x="452" y="108" width="216" height="42" rx="8" />
+            <text class="a-title" x="560" y="128" text-anchor="middle">maku-bridge sidecar</text>
+            <text class="a-sub" x="560" y="143" text-anchor="middle">redacted event stream · steering</text>
+
+            {{- /* Model gateway below sandbox */ -}}
+            <line class="a-edge" x1="510" y1="164" x2="510" y2="188" />
+            <polygon class="a-arrow" points="510,192 505,183 515,183" />
+            <rect class="a-gw" x="392" y="194" width="236" height="46" rx="10" />
+            <text class="a-title" x="510" y="214" text-anchor="middle">agentgateway</text>
+            <text class="a-sub" x="510" y="230" text-anchor="middle">per-run JWT · data classes · USD caps</text>
+
+            {{- /* Room broker & Postgres below-right */ -}}
+            <line class="a-edge" x1="636" y1="164" x2="636" y2="188" />
+            <polygon class="a-arrow" points="636,192 631,183 641,183" />
+            <rect class="a-box" x="652" y="194" width="236" height="46" rx="10" />
+            <text class="a-title" x="770" y="214" text-anchor="middle">maku-broker · PostgreSQL RLS</text>
+            <text class="a-sub" x="770" y="230" text-anchor="middle">immutable room log · watch · steer · approve</text>
+
+            {{- /* Merge gate */ -}}
+            <line class="a-edge" x1="684" y1="96" x2="736" y2="96" />
+            <polygon class="a-arrow" points="740,96 731,91 731,101" />
+            <rect class="a-gate" x="742" y="44" width="284" height="104" rx="12" />
+            <text class="a-title" x="884" y="76" text-anchor="middle">MergePolicy gate &amp; Merger App</text>
+            <text class="a-sub" x="884" y="97" text-anchor="middle">shadow by default · diff shape · reviewer verdict</text>
+            <text class="a-sub" x="884" y="114" text-anchor="middle">required CI · daily cap · post-merge revert breaker</text>
+            <text class="a-sub" x="884" y="132" text-anchor="middle">human approval for every other PR</text>
+          </svg>
+        </figure>
+
+        <div class="maku-ledger">
+          <div class="maku-ledger-item">
+            <svg class="maku-ledger-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"/><path d="M9 12l2 2 4-4"/></svg>
+            <div>
+              <h3>Sovereign control plane, zero vendor lock-in</h3>
+              <p>Bring your own Kubernetes cluster, OIDC identity provider (Okta, Entra ID, Keycloak, ZITADEL), OpenAI- or Anthropic-compatible model providers (SaaS or self-hosted), and GitOps controller. Data-class routing keeps private repositories strictly on authorized providers, backed by PostgreSQL 16+ RLS and immutable audit triggers.</p>
+              <a href="{{ "docs/concepts/security/" | relURL }}">Threat model &amp; guarantees →</a>
+            </div>
+          </div>
+
+          <div class="maku-ledger-item">
+            <svg class="maku-ledger-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 10h10"/><path d="M7 14h6"/></svg>
+            <div>
+              <h3>Sandboxed runs with hard external budgets</h3>
+              <p>Each agent runs in its own gVisor pod behind a default-deny network policy and scoped short-lived GitHub App tokens—a reviewer cannot push and an implementer cannot merge. Per-run, per-person, and per-task USD caps are enforced at the model gateway outside the sandbox, alongside a single emergency kill switch.</p>
+              <a href="{{ "docs/install/gateway/" | relURL }}">Model gateway &amp; budgets →</a>
+            </div>
+          </div>
+
+          <div class="maku-ledger-item">
+            <svg class="maku-ledger-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v10H8l-4 4V6z"/><path d="M9 10h6"/><path d="M9 13h4"/></svg>
+            <div>
+              <h3>Collaborative rooms, complementary to local agents</h3>
+              <p>Run <code>maku setup</code> once to register the MCP server and handoff skill for Claude Code, OpenCode, Cursor, Codex, Copilot, and Gemini—or file from Slack and GitHub. Follow live tool calls in the Web UI or CLI, steer a run mid-flight, approve sensitive actions from raw diffs, or fork a room from any event.</p>
+              <a href="{{ "docs/use/cli/" | relURL }}">CLI &amp; MCP handoff →</a>
+            </div>
+          </div>
+
+          <div class="maku-ledger-item">
+            <svg class="maku-ledger-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7"/><path d="M7.5 8l3.5 7.5"/><path d="M16.5 8L13 15.5"/></svg>
+            <div>
+              <h3>Earned auto-merge &amp; scheduled upkeep routines</h3>
+              <p>Every merge class begins in <code>shadow</code> mode so humans review while Maku logs its verdicts. Promote proven classes to <code>live</code> in GitOps with daily caps and an automatic post-merge revert breaker, and schedule recurring hygiene (<code>dead-links</code>, <code>renovate-red</code>, <code>doc-drift</code>, custom CRDs) inside an isolated upkeep budget.</p>
+              <a href="{{ "docs/use/merge-policies/" | relURL }}">Merge policies &amp; upkeep →</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {{- /* Band 4: Inside Maku — tabbed light/dark real Web UI showcase */ -}}
+    <section class="maku-band" aria-labelledby="ui-title">
+      <div class="maku-wrap">
+        <div class="maku-band-head">
+          <div>
+            <h2 id="ui-title" class="maku-band-title">Built to inspect, steer, and govern in the open.</h2>
+            <p class="maku-band-lead">
+              Real captures from Maku's embedded Web UI, automatically matching your Day or Night theme.
+            </p>
+          </div>
+        </div>
+
+        <div class="maku-tabs" role="tablist" aria-label="Maku Web UI views">
+          <button type="button" class="maku-tab" role="tab" id="tab-room" aria-controls="panel-room" aria-selected="true">Live room</button>
+          <button type="button" class="maku-tab" role="tab" id="tab-policies" aria-controls="panel-policies" aria-selected="false" tabindex="-1">Merge policies</button>
+          <button type="button" class="maku-tab" role="tab" id="tab-routines" aria-controls="panel-routines" aria-selected="false" tabindex="-1">Upkeep routines</button>
+          <button type="button" class="maku-tab" role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1">Cluster posture</button>
+        </div>
+
+        <div class="maku-panel" role="tabpanel" id="panel-room" aria-labelledby="tab-room">
+          <figure class="maku-shot">
+            <img class="maku-shot-light" src="{{ "images/web-ui/room-fold-light.png" | relURL }}" alt="Maku room view in Day theme showing live run rail, folded tool steps, human steering composer, and cost strip." loading="lazy" />
+            <img class="maku-shot-dark" src="{{ "images/web-ui/room-fold-dark.png" | relURL }}" alt="Maku room view in Night theme showing live run rail, folded tool steps, human steering composer, and cost strip." loading="lazy" />
+          </figure>
+          <div class="maku-panel-bar">
+            <span>Watch folded tool calls, read reviewer verdicts, approve gated commands, or steer the running agent live.</span>
+            <a href="{{ "docs/use/web-ui/" | relURL }}">Web UI guide →</a>
+          </div>
+        </div>
+
+        <div class="maku-panel" role="tabpanel" id="panel-policies" aria-labelledby="tab-policies" hidden>
+          <figure class="maku-shot">
+            <img class="maku-shot-light" src="{{ "images/web-ui/merge-policies-1280-light.png" | relURL }}" alt="Maku Merge Policies page in Day theme showing shadow vs live policy cards, backtest decisions, and promotion controls." loading="lazy" />
+            <img class="maku-shot-dark" src="{{ "images/web-ui/merge-policies-1280-dark.png" | relURL }}" alt="Maku Merge Policies page in Night theme showing shadow vs live policy cards, backtest decisions, and promotion controls." loading="lazy" />
+          </figure>
+          <div class="maku-panel-bar">
+            <span>Inspect every shadow decision against real pull requests, verify daily blast-radius caps, and promote by pull request.</span>
+            <a href="{{ "docs/use/merge-policies/" | relURL }}">Merge policies →</a>
+          </div>
+        </div>
+
+        <div class="maku-panel" role="tabpanel" id="panel-routines" aria-labelledby="tab-routines" hidden>
+          <figure class="maku-shot">
+            <img class="maku-shot-light" src="{{ "images/web-ui/routines-overview-1280-light.png" | relURL }}" alt="Maku Upkeep Routines overview in Day theme showing scheduled routines, isolated daily budget, merge yield, and breaker posture." loading="lazy" />
+            <img class="maku-shot-dark" src="{{ "images/web-ui/routines-overview-1280-dark.png" | relURL }}" alt="Maku Upkeep Routines overview in Night theme showing scheduled routines, isolated daily budget, merge yield, and breaker posture." loading="lazy" />
+          </figure>
+          <div class="maku-panel-bar">
+            <span>Bind starter or custom <code>Routine</code> CRDs across propose, draft, or PR modes with yield breakers and an isolated upkeep budget.</span>
+            <a href="{{ "docs/use/upkeep-routines/" | relURL }}">Upkeep routines →</a>
+          </div>
+        </div>
+
+        <div class="maku-panel" role="tabpanel" id="panel-settings" aria-labelledby="tab-settings" hidden>
+          <figure class="maku-shot">
+            <img class="maku-shot-light" src="{{ "images/web-ui/settings-env-1280-light.png" | relURL }}" alt="Maku Settings page in Day theme showing broker and factory versions, skew indicator, and read-only cluster posture." loading="lazy" />
+            <img class="maku-shot-dark" src="{{ "images/web-ui/settings-env-1280-dark.png" | relURL }}" alt="Maku Settings page in Night theme showing broker and factory versions, skew indicator, and read-only cluster posture." loading="lazy" />
+          </figure>
+          <div class="maku-panel-bar">
+            <span>Check broker and factory version skew, bounded cluster posture, connected repositories, and CLI setup in one read-only view.</span>
+            <a href="{{ "docs/reference/web-ui-settings/" | relURL }}">Settings reference →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {{- /* Band 5: Interactive static Room Replay */ -}}
+    <section id="replay" class="maku-band maku-band-tinted" aria-labelledby="replay-title">
+      <div class="maku-wrap">
+        <div class="maku-band-head">
+          <div>
+            <h2 id="replay-title" class="maku-band-title">Drive a recorded room—no cluster required.</h2>
+            <p class="maku-band-lead">
+              Three real recorded runs (standard review, earned auto-merge, and guarded approval) replayed directly in Maku's static Web UI. Pause, scrub, switch runs, and inspect every tool call and cost card.
+            </p>
+          </div>
+          <a class="maku-btn maku-btn-primary" href="{{ "demo/" | relURL }}">
+            Open full screen
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 13L15 5"/><path d="M9 5h6v6"/></svg>
+          </a>
+        </div>
+        <div class="maku-replay-frame">
+          <iframe id="maku-replay-frame" src="{{ "demo/" | relURL }}" title="Recorded Maku runs replayed in the static Room UI" loading="lazy"></iframe>
+        </div>
+      </div>
+    </section>
+
+    {{- /* Band 6: Quickstart command, Tier-1 vs Tier-2 adoption & Partner Pilot */ -}}
+    <section class="maku-band" aria-labelledby="adopt-title">
+      <div class="maku-wrap">
+        <div class="maku-band-head">
+          <div>
+            <h2 id="adopt-title" class="maku-band-title">Start on your laptop in 15 minutes. Graduate on the same chart.</h2>
+            <p class="maku-band-lead">
+              One command spins up a local kind/k3d cluster, guides two GitHub clicks, and runs the full issue-to-PR loop on a public repository you own. When ready for your cluster, Tier-1 Pilot and Tier-2 Production run the exact same Helm chart, CRDs, and PostgreSQL audit guarantees.
+            </p>
+          </div>
+        </div>
+
+        <div class="maku-cmd-box">
+          <code id="maku-quickstart-cmd"><span class="maku-cmd-prompt">$</span>git clone https://github.com/Smana/maku &amp;&amp; cd maku &amp;&amp; task demo</code>
+          <button type="button" class="maku-copy-btn" id="maku-copy-cmd" aria-label="Copy quickstart command">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+
+        <div class="maku-tiers-wrap">
+          <table class="maku-tiers">
+            <thead>
+              <tr>
+                <th scope="col">Control</th>
+                <th scope="col">Tier-1 Pilot (Week 1–4)</th>
+                <th scope="col">Tier-2 Hardened Production</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Guide</th>
+                <td><a href="{{ "docs/get-started/pilot/" | relURL }}">Tier-1 Pilot guide →</a></td>
+                <td><a href="{{ "docs/install/" | relURL }}">Install on your cluster →</a></td>
+              </tr>
+              <tr>
+                <th scope="row">Database</th>
+                <td>Hardened bundled PostgreSQL 16+ (PVC, TLS 1.3, automatic 3-role RLS bootstrap, optional S3/GCS backups)</td>
+                <td>External HA PostgreSQL 16+ (CloudNativePG, RDS, Cloud SQL, or Azure Flexible Server)</td>
+              </tr>
+              <tr>
+                <th scope="row">GitHub Apps</th>
+                <td>1 factory App (<code>apps.merger.mode: factory</code>) + 1 agents App</td>
+                <td>Optional dedicated Merger App separated from the factory</td>
+              </tr>
+              <tr>
+                <th scope="row">Sandbox</th>
+                <td><strong>gVisor mandatory</strong> on private repositories</td>
+                <td>Dedicated gVisor node pool with warm headroom</td>
+              </tr>
+              <tr>
+                <th scope="row">Merge gate</th>
+                <td>100% human-approved (<code>shadow</code> mode)</td>
+                <td>Earned <code>live</code> auto-merge + daily caps + automatic revert breaker</td>
+              </tr>
+              <tr>
+                <th scope="row">Network</th>
+                <td>Standard Ingress/HTTPRoute + default-deny <code>NetworkPolicy</code></td>
+                <td>Private gateway + Cilium FQDN egress allow-lists</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {{- with site.Params.pilot }}
+        <aside class="maku-pilot" aria-labelledby="maku-pilot-title">
+          <div class="maku-pilot-mark" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6.5v11L12 22l8-4.5v-11L12 2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <div>
+            <h3 id="maku-pilot-title">{{ .title }}</h3>
+            <p>{{ .message }}</p>
+            <div class="maku-pilot-links">
+              {{- range $i, $l := .links }}
+              {{- $href := $l.url -}}
+              {{- $ext := strings.HasPrefix $href "http" -}}
+              <a class="maku-btn {{ if eq $i 0 }}maku-btn-primary{{ else }}maku-btn-secondary{{ end }}" href="{{ if $ext }}{{ $href }}{{ else }}{{ strings.TrimPrefix "/" $href | relURL }}{{ end }}"{{ if $ext }} rel="noopener"{{ end }}>{{ $l.name }}</a>
+              {{- end }}
+            </div>
+          </div>
+        </aside>
+        {{- end }}
+      </div>
+    </section>
+  </main>
+
+  <script>
+  (function () {
+    // 1. Synchronized run rail: past steps filled, active step lit, click seeks video.
+    var video = document.getElementById("maku-run-video");
+    var list = document.getElementById("maku-chapters");
+    if (video && list) {
+      var items = Array.prototype.slice.call(list.querySelectorAll("li"));
+      var starts = items.map(function (li) { return Number(li.querySelector("button").dataset.t); });
+      items.forEach(function (li, i) {
+        li.querySelector("button").addEventListener("click", function () {
+          video.currentTime = starts[i] + 0.05;
+          video.play().catch(function () {});
+        });
+      });
+      function syncRail() {
+        var t = video.currentTime;
+        var now = -1;
+        starts.forEach(function (s, i) { if (t >= s) now = i; });
+        items.forEach(function (li, i) {
+          li.classList.toggle("done", i < now);
+          li.classList.toggle("now", i === now);
+          li.querySelector("button").toggleAttribute("aria-current", i === now);
+        });
+        var cur = items[Math.max(now, 0)];
+        list.style.setProperty("--fill", now < 0 ? "0px" : (cur.offsetTop + cur.offsetHeight / 2 - 14) + "px");
+      }
+      video.addEventListener("timeupdate", syncRail);
+      video.addEventListener("seeked", syncRail);
+      window.addEventListener("resize", syncRail);
+      syncRail();
+    }
+
+    // 2. Accessible Web UI showcase tabs (click + Left/Right arrow keyboard navigation).
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.maku-tab[role="tab"]'));
+    function selectTab(tab, focus) {
+      tabs.forEach(function (t) {
+        var active = t === tab;
+        t.setAttribute("aria-selected", active ? "true" : "false");
+        t.tabIndex = active ? 0 : -1;
+        var panel = document.getElementById(t.getAttribute("aria-controls"));
+        if (panel) panel.hidden = !active;
+      });
+      if (focus) tab.focus();
+    }
+    tabs.forEach(function (tab, idx) {
+      tab.addEventListener("click", function () { selectTab(tab, false); });
+      tab.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowRight") { e.preventDefault(); selectTab(tabs[(idx + 1) % tabs.length], true); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); selectTab(tabs[(idx - 1 + tabs.length) % tabs.length], true); }
+        else if (e.key === "Home") { e.preventDefault(); selectTab(tabs[0], true); }
+        else if (e.key === "End") { e.preventDefault(); selectTab(tabs[tabs.length - 1], true); }
+      });
+    });
+
+    // 3. Copy quickstart command.
+    var copyBtn = document.getElementById("maku-copy-cmd");
+    if (copyBtn) {
+      var rawCmd = "git clone https://github.com/Smana/maku && cd maku && task demo";
+      var label = copyBtn.querySelector("span");
+      copyBtn.addEventListener("click", function () {
+        if (!navigator.clipboard) return;
+        navigator.clipboard.writeText(rawCmd).then(function () {
+          label.textContent = "Copied";
+          setTimeout(function () { label.textContent = "Copy"; }, 1800);
+        }).catch(function () {});
+      });
+    }
+
+    // 4. Sync Day/Night theme toggle with the embedded /demo/ Room Replay iframe.
+    var frame = document.getElementById("maku-replay-frame");
+    function pushThemeToFrame() {
+      if (!frame || !frame.contentWindow) return;
+      var mode = document.documentElement.classList.contains("dark") ? "dark" : "light";
+      try {
+        frame.contentWindow.postMessage({ type: "maku:theme", mode: mode }, window.location.origin);
+      } catch (_) {}
+    }
+    if (frame) {
+      frame.addEventListener("load", pushThemeToFrame);
+      new MutationObserver(pushThemeToFrame).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    }
+  })();
+  </script>
+{{ end }}

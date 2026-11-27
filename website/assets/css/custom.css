@@ -1,0 +1,1217 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Maku website design system (maku.ogenki.io)
+ *
+ * Mirrors web/src/app.css verbatim: Ogenki Day (:root) and Night (.dark) palettes,
+ * self-hosted Space Grotesk / Inter / JetBrains Mono variable fonts, and WCAG AA
+ * verified contrast across landing, docs, and the embedded /demo/ Room Replay.
+ * hack/site-check.sh pins the token values below against web/src/app.css.
+ */
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/SpaceGrotesk-Variable.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter-Variable-Italic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ── Ogenki tokens: Day (:root) ──────────────────────────────────────────── */
+:root {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Exact Ogenki Day tokens (pinned to web/src/app.css). */
+  --surface-000: #f5f6fc;
+  --surface-100: #fdfdff;
+  --surface-200: #eceef8;
+  --line: #b9bfdc;
+  --foreground: #12163a;
+  --muted-foreground: #545b85;
+  --blue: #1d63b0;
+  --violet: #6a4bd8;
+  --pink: #c2306f;
+  --green: #11795a;
+  --amber: #965800;
+  --ink-on-accent: #fdfdff;
+  --aurora-bar: linear-gradient(90deg, #c2306f 0%, #6a4bd8 100%);
+
+  /* Atmospheric hero canvas & surface elevation (Day). */
+  --maku-deep: #eceef8;
+  --maku-line-subtle: rgb(18 22 58 / 0.09);
+  --maku-img-outline: oklch(0 0 0 / 0.1);
+  --maku-shadow-card:
+    0 1px 2px rgb(18 22 58 / 0.05),
+    0 8px 24px -8px rgb(18 22 58 / 0.09);
+  --maku-shadow-stage:
+    0 2px 4px rgb(18 22 58 / 0.06),
+    0 20px 48px -18px rgb(18 22 58 / 0.18);
+  --maku-diagram-bg: #ffffff;
+
+  /* Align Hextra's Tailwind primary-600 with Ogenki Day blue (#1d63b0). */
+  --primary-hue: 211deg;
+  --primary-saturation: 72%;
+  --primary-lightness: 44.5%;
+
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-stage: 16px;
+
+  color-scheme: light;
+}
+
+/* ── Ogenki tokens: Night (.dark) ────────────────────────────────────────── */
+.dark {
+  /* Exact Ogenki Night tokens (pinned to web/src/app.css). */
+  --surface-000: #0d1330;
+  --surface-100: #161c42;
+  --surface-200: #1f2754;
+  --line: #3a4478;
+  --foreground: #eef0fa;
+  --muted-foreground: #a9b1d6;
+  --blue: #5aa9f0;
+  --violet: #a78bfa;
+  --pink: #ff6fb5;
+  --green: #3ddc97;
+  --amber: #ffb547;
+  --ink-on-accent: #0d1330;
+  --aurora-bar: linear-gradient(90deg, #ff6fb5 0%, #a78bfa 100%);
+
+  --maku-deep: #070b22;
+  --maku-line-subtle: rgb(238 240 250 / 0.10);
+  --maku-img-outline: oklch(1 0 0 / 0.1);
+  --maku-shadow-card:
+    0 1px 2px rgb(0 0 0 / 0.35),
+    0 12px 32px -12px rgb(0 0 0 / 0.55);
+  --maku-shadow-stage:
+    0 2px 6px rgb(0 0 0 / 0.45),
+    0 28px 64px -22px rgb(0 0 0 / 0.72);
+  --maku-diagram-bg: #0d1330;
+
+  /* Align Hextra's dark base and primary-600 with Ogenki Night (#0d1330, #5aa9f0). */
+  --color-dark: #0d1330;
+  --primary-hue: 208deg;
+  --primary-saturation: 83%;
+  --primary-lightness: 72%;
+
+  color-scheme: dark;
+}
+
+/* ── Browser surfaces & global typography ────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  accent-color: var(--blue);
+  scrollbar-color: var(--line) var(--surface-000);
+}
+
+body {
+  background-color: var(--surface-000) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-sans);
+  caret-color: var(--blue);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--blue) 26%, transparent);
+  color: var(--foreground);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-wrap: balance;
+  color: var(--foreground);
+}
+
+p, li {
+  text-wrap: pretty;
+}
+
+pre, code, kbd, samp {
+  font-family: var(--font-mono);
+}
+
+a {
+  text-underline-offset: 0.18em;
+}
+
+/* ── Brand lockup in navbar (exact web/src/brand.ts geometry) ────────────── */
+.maku-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 6px 4px 2px;
+  color: var(--foreground);
+  text-decoration: none;
+  border-radius: 6px;
+  transition-property: opacity;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+.maku-brand:hover {
+  opacity: 0.85;
+}
+.maku-brand img {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+.maku-mark-dark { display: none; }
+.dark .maku-mark-dark { display: block; }
+.dark .maku-mark-light { display: none; }
+.maku-wordmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--foreground);
+}
+
+/* ── Hextra chrome overrides (Ogenki Day & Night surfaces, zero stock white/black) ── */
+.hextra-nav-container-blur {
+  background-color: color-mix(in srgb, var(--surface-100) 92%, transparent) !important;
+  box-shadow: 0 1px 0 var(--maku-line-subtle) !important;
+}
+.dark .hextra-nav-container-blur {
+  background-color: color-mix(in srgb, var(--surface-000) 92%, transparent) !important;
+  box-shadow: 0 1px 0 var(--maku-line-subtle) !important;
+}
+
+.hextra-footer {
+  background-color: var(--surface-200) !important;
+  border-top: 1px solid var(--maku-line-subtle);
+  color: var(--muted-foreground) !important;
+}
+.dark .hextra-footer {
+  background-color: var(--maku-deep) !important;
+}
+
+.hextra-sidebar-container {
+  background-color: var(--surface-000) !important;
+}
+/* Override Hextra's hardcoded #fff / #111 sticky fade boxes inside sidebar and TOC */
+.hextra-sidebar-container [class*="sticky"],
+.hextra-toc [class*="sticky"] {
+  background-color: var(--surface-000) !important;
+  box-shadow: 0 -12px 16px var(--surface-000) !important;
+  border-color: var(--maku-line-subtle) !important;
+}
+.hextra-sidebar-collapsible-button {
+  min-width: 24px;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Docs cards & feature cards */
+.hextra-card,
+.hextra-feature-card {
+  background-color: var(--surface-100) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--maku-shadow-card);
+  transition-property: transform, border-color, box-shadow;
+  transition-duration: 160ms;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.hextra-card:hover,
+.hextra-feature-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--blue) !important;
+}
+
+/* Docs prose polish */
+.content {
+  color: var(--foreground);
+}
+.content h2,
+.content h3,
+.content h4,
+.content h5 {
+  scroll-margin-top: 5rem;
+}
+.content a {
+  color: var(--blue);
+}
+.content table {
+  border-color: var(--line);
+}
+.content th {
+  background-color: var(--surface-200);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+.content td,
+.content th {
+  border-color: var(--maku-line-subtle);
+}
+.content :not(pre) > code {
+  background-color: var(--surface-200);
+  color: var(--foreground);
+  border: 1px solid var(--maku-line-subtle);
+}
+
+/* Code blocks & WCAG AA comments in Day */
+.hextra-code-block pre {
+  border: 1px solid var(--maku-line-subtle);
+}
+html:not(.dark) .chroma .c,
+html:not(.dark) .chroma .ch,
+html:not(.dark) .chroma .cm,
+html:not(.dark) .chroma .c1,
+html:not(.dark) .chroma .cs,
+html:not(.dark) .chroma .cp,
+html:not(.dark) .chroma .cpf {
+  color: #545b85;
+}
+
+/* Search input & dark kbd contrast */
+.hextra-search-input {
+  background-color: var(--surface-200) !important;
+  color: var(--foreground) !important;
+  border: 1px solid var(--maku-line-subtle);
+}
+.hextra-search-wrapper kbd,
+input[type="search"] + kbd {
+  color: var(--muted-foreground) !important;
+  border-color: var(--line) !important;
+}
+.hextra-search-results {
+  background-color: var(--surface-100) !important;
+  border: 1px solid var(--line) !important;
+}
+
+/* Dark theme primary button text */
+.dark a[class*="bg-primary-600"] {
+  color: var(--ink-on-accent) !important;
+}
+
+/* Draw.io diagrams keep a crisp light ground so exported slate labels stay legible in Night */
+img[src*="images/diagrams/"] {
+  color-scheme: light;
+  max-width: 100%;
+  height: auto;
+  background: #ffffff;
+  padding: 1rem;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line);
+  cursor: zoom-in;
+}
+
+/* Matched light/dark Web UI screenshots (themed-img shortcode & landing gallery) */
+.maku-shot {
+  margin: 1.5rem 0;
+}
+.maku-shot img {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-card);
+  outline: 1px solid var(--maku-img-outline);
+  outline-offset: -1px;
+  box-shadow: var(--maku-shadow-card);
+}
+.maku-shot-light { display: block; }
+.maku-shot-dark { display: none; }
+.dark .maku-shot-light { display: none; }
+.dark .maku-shot-dark { display: block; }
+.maku-shot figcaption {
+  margin-top: 0.65rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+/* Mermaid zoom overlay */
+pre.mermaid { cursor: zoom-in; }
+.maku-diagram-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(7 11 34 / 0.88);
+  cursor: grab;
+  overflow: hidden;
+  touch-action: none;
+}
+.maku-diagram-zoom svg {
+  width: 90vw;
+  height: 90vh;
+  background: var(--maku-diagram-bg);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line);
+  transform-origin: center;
+}
+
+/* ── Footer navigation & sponsor line ────────────────────────────────────── */
+.maku-footer-nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 2rem 2.5rem;
+  padding: 2.5rem 0 1.5rem;
+  font-size: 0.875rem;
+}
+.maku-footer-head {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.maku-footer-nav ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.maku-footer-nav li + li {
+  margin-top: 0.45rem;
+}
+.maku-footer-nav a {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  transition-property: color;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+.maku-footer-nav a:hover {
+  color: var(--blue);
+  text-decoration: underline;
+}
+.maku-sponsor-line {
+  margin: 0.5rem 0 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--maku-line-subtle);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.maku-sponsor-line a {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Landing page (layouts/home.html) — Ogenki Day & Night control-room craft
+   ═══════════════════════════════════════════════════════════════════════════ */
+.maku-home {
+  position: relative;
+  overflow-x: clip;
+}
+.maku-wrap {
+  width: min(1220px, 100% - 32px);
+  margin-inline: auto;
+}
+
+/* Band 1: Hero */
+.maku-hero-band {
+  position: relative;
+  padding: clamp(3rem, 6vw, 5.25rem) 0 clamp(2.5rem, 5vw, 4rem);
+  background:
+    radial-gradient(56rem 28rem at 86% -12%, rgb(106 75 216 / 0.10), transparent 62%),
+    radial-gradient(46rem 24rem at -8% 15%, rgb(194 48 111 / 0.07), transparent 62%),
+    radial-gradient(42rem 26rem at 52% 112%, rgb(29 99 176 / 0.08), transparent 62%),
+    var(--surface-000);
+  border-bottom: 1px solid var(--maku-line-subtle);
+}
+.dark .maku-hero-band {
+  background:
+    radial-gradient(58rem 30rem at 86% -12%, rgb(167 139 250 / 0.20), transparent 62%),
+    radial-gradient(48rem 26rem at -8% 15%, rgb(255 111 181 / 0.12), transparent 62%),
+    radial-gradient(42rem 28rem at 52% 112%, rgb(90 169 240 / 0.11), transparent 62%),
+    var(--maku-deep);
+}
+.maku-hero-band::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background-image: radial-gradient(rgb(84 91 133 / 0.18) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, black 25%, transparent 92%);
+}
+.dark .maku-hero-band::before {
+  opacity: 0.36;
+  background-image: radial-gradient(rgb(169 177 214 / 0.22) 1px, transparent 1px);
+}
+.maku-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 1.5rem;
+}
+.maku-hero-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(2.25rem, 4.8vw, 3.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  max-width: 19ch;
+  color: var(--foreground);
+}
+.maku-hero-accent {
+  color: var(--violet);
+}
+.maku-hero-lead {
+  margin: 0;
+  font-size: clamp(1.0625rem, 1.5vw, 1.1875rem);
+  line-height: 1.62;
+  color: var(--muted-foreground);
+  max-width: 64ch;
+}
+.maku-hero-lead strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.maku-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+.maku-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0 1.25rem;
+  border-radius: var(--radius-control);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.maku-btn:active {
+  transform: scale(0.96);
+}
+.maku-btn-primary {
+  background-color: var(--blue);
+  color: var(--ink-on-accent);
+  box-shadow: 0 2px 6px rgb(18 22 58 / 0.14);
+}
+.maku-btn-primary:hover {
+  background-color: color-mix(in srgb, var(--blue) 88%, var(--foreground));
+}
+.maku-btn-secondary {
+  background-color: var(--surface-100);
+  color: var(--foreground);
+  border-color: var(--line);
+}
+.maku-btn-secondary:hover {
+  border-color: var(--blue);
+  background-color: var(--surface-200);
+}
+.maku-btn-ghost {
+  background-color: transparent;
+  color: var(--blue);
+  padding-inline: 0.75rem;
+}
+.maku-btn-ghost:hover {
+  text-decoration: underline;
+}
+.maku-btn svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* Grounded inline fact strip beneath CTAs (no floating metric cards) */
+.maku-fact-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0.75rem 0 0;
+  padding: 1.25rem 0 0;
+  border-top: 1px solid var(--maku-line-subtle);
+  list-style: none;
+}
+.maku-fact-strip li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+.maku-fact-strip strong {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+.maku-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  align-self: center;
+  flex: none;
+}
+
+/* Shared landing band rhythm: generous separation, tighter internal groups */
+.maku-band {
+  padding: clamp(3.5rem, 6.5vw, 5.5rem) 0;
+  border-bottom: 1px solid var(--maku-line-subtle);
+}
+.maku-band-tinted {
+  background-color: var(--surface-200);
+}
+.dark .maku-band-tinted {
+  background-color: color-mix(in srgb, var(--surface-100) 55%, var(--surface-000));
+}
+.maku-band-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  margin-bottom: 2rem;
+}
+.maku-band-title {
+  margin: 0 0 0.65rem;
+  font-size: clamp(1.625rem, 3.1vw, 2.375rem);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  max-width: 28ch;
+}
+.maku-band-lead {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.62;
+  color: var(--muted-foreground);
+  max-width: 66ch;
+}
+
+/* Band 2: Real-run screencast + synchronized run rail */
+.maku-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 336px;
+  gap: 1.25rem;
+  align-items: start;
+}
+.maku-window {
+  border-radius: var(--radius-stage);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #070b22;
+  box-shadow: var(--maku-shadow-stage);
+}
+.maku-chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6875rem 0.9375rem;
+  background: var(--surface-200);
+  border-bottom: 1px solid var(--line);
+}
+.dark .maku-chrome {
+  background: var(--surface-100);
+}
+.maku-dots {
+  display: inline-flex;
+  gap: 6px;
+}
+.maku-dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: block;
+}
+.maku-dots i:nth-child(1) { background: var(--pink); }
+.maku-dots i:nth-child(2) { background: var(--amber); }
+.maku-dots i:nth-child(3) { background: var(--green); }
+.maku-chrome-title {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.maku-chrome-meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.maku-window video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1600 / 996;
+  background: #070b22;
+}
+.maku-window video::cue {
+  font: 500 18px/1.35 var(--font-sans);
+  color: #eef0fa;
+  background: rgb(7 11 34 / 0.88);
+}
+
+/* Synchronized run rail (one authored motion moment: aurora vertical progress fill) */
+.maku-rail {
+  padding: 1rem 0.875rem 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-stage);
+  background: var(--surface-100);
+  box-shadow: var(--maku-shadow-card);
+}
+.maku-rail-head {
+  margin: 0 0 0.625rem 0.375rem;
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.maku-rail ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  position: relative;
+}
+.maku-rail ol::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: var(--line);
+}
+.maku-rail ol::after {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 14px;
+  width: 2px;
+  height: var(--fill, 0px);
+  background: var(--aurora-bar);
+  transition-property: height;
+  transition-duration: 280ms;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.maku-rail button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.375rem 0.375rem;
+  border-radius: var(--radius-control);
+  position: relative;
+  z-index: 1;
+  transition-property: background-color;
+  transition-duration: 140ms;
+  transition-timing-function: ease-out;
+}
+.maku-rail button:hover {
+  background-color: var(--surface-200);
+}
+.maku-rail button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.maku-rail-node {
+  justify-self: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface-100);
+  border: 2px solid var(--c, var(--blue));
+  transition-property: background-color, transform;
+  transition-duration: 180ms;
+  transition-timing-function: ease-out;
+}
+.maku-rail-label {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.maku-rail-who {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c);
+}
+.maku-rail-label b {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+.maku-rail-label small {
+  font-size: 0.78125rem;
+  line-height: 1.35;
+  color: var(--muted-foreground);
+}
+.maku-rail time {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.maku-rail li.done .maku-rail-node {
+  background: var(--c);
+}
+.maku-rail li.now .maku-rail-node {
+  background: var(--c);
+  transform: scale(1.25);
+}
+.maku-rail li.now button {
+  background-color: color-mix(in srgb, var(--c) 10%, var(--surface-100));
+}
+.maku-rail li.now .maku-rail-label b {
+  color: var(--c);
+}
+.maku-rail-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.75rem 0.375rem 0.125rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--maku-line-subtle);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.maku-rail-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.375rem;
+  background: var(--c);
+}
+.k-you { --c: var(--pink); }
+.k-factory { --c: var(--amber); }
+.k-agent { --c: var(--blue); }
+.k-done { --c: var(--green); }
+
+/* Band 3: Architecture schematic + 2-column hairline editorial ledger */
+.maku-arch-figure {
+  margin: 0 0 2.5rem;
+  padding: 1.25rem;
+  border-radius: var(--radius-stage);
+  border: 1px solid var(--line);
+  background: var(--surface-100);
+  box-shadow: var(--maku-shadow-card);
+  overflow-x: auto;
+}
+.maku-arch-figure svg {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  height: auto;
+}
+.maku-arch-figure .a-box {
+  fill: var(--surface-000);
+  stroke: var(--line);
+  stroke-width: 1.25;
+}
+.maku-arch-figure .a-sandbox {
+  fill: color-mix(in srgb, var(--violet) 7%, var(--surface-100));
+  stroke: var(--violet);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+.maku-arch-figure .a-gate {
+  fill: color-mix(in srgb, var(--green) 8%, var(--surface-100));
+  stroke: var(--green);
+  stroke-width: 1.5;
+}
+.maku-arch-figure .a-gw {
+  fill: color-mix(in srgb, var(--blue) 8%, var(--surface-100));
+  stroke: var(--blue);
+  stroke-width: 1.5;
+}
+.maku-arch-figure .a-title {
+  fill: var(--foreground);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+}
+.maku-arch-figure .a-sub {
+  fill: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+}
+.maku-arch-figure .a-tag {
+  fill: var(--violet);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+.maku-arch-figure .a-edge {
+  stroke: var(--muted-foreground);
+  stroke-width: 1.5;
+  fill: none;
+}
+.maku-arch-figure .a-arrow {
+  fill: var(--muted-foreground);
+}
+
+.maku-ledger {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 3rem;
+  border-top: 1px solid var(--line);
+}
+.maku-ledger-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 0.875rem;
+  padding: 1.625rem 0;
+  border-bottom: 1px solid var(--maku-line-subtle);
+  align-items: start;
+}
+.maku-ledger-ico {
+  width: 24px;
+  height: 24px;
+  color: var(--blue);
+  margin-top: 2px;
+}
+.maku-ledger-item h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1.125rem;
+  line-height: 1.3;
+}
+.maku-ledger-item p {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+.maku-ledger-item a {
+  display: inline-block;
+  margin-top: 0.55rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--blue);
+  text-decoration: none;
+}
+.maku-ledger-item a:hover {
+  text-decoration: underline;
+}
+
+/* Band 4: Real Web UI tabbed showcase */
+.maku-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-200);
+  margin-bottom: 1.25rem;
+}
+.maku-tab {
+  min-height: 40px;
+  padding: 0 1rem;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition-property: background-color, color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+.maku-tab:hover {
+  color: var(--foreground);
+}
+.maku-tab[aria-selected="true"] {
+  background: var(--surface-100);
+  color: var(--foreground);
+  box-shadow: 0 1px 3px rgb(18 22 58 / 0.12);
+}
+.maku-panel {
+  border-radius: var(--radius-stage);
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--surface-100);
+  box-shadow: var(--maku-shadow-stage);
+}
+.maku-panel[hidden] {
+  display: none !important;
+}
+.maku-panel .maku-shot {
+  margin: 0;
+}
+.maku-panel .maku-shot img {
+  border-radius: 8px;
+}
+.maku-panel-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  padding: 0.875rem 0.5rem 0.25rem;
+  font-size: 0.9375rem;
+  color: var(--muted-foreground);
+}
+.maku-panel-bar a {
+  font-weight: 600;
+  color: var(--blue);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.maku-panel-bar a:hover {
+  text-decoration: underline;
+}
+
+/* Band 5: Interactive Room Replay embed */
+.maku-replay-frame {
+  border-radius: var(--radius-stage);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface-100);
+  box-shadow: var(--maku-shadow-stage);
+}
+.maku-replay-frame iframe {
+  display: block;
+  width: 100%;
+  height: clamp(540px, 78vh, 860px);
+  border: 0;
+}
+
+/* Band 6: Quickstart terminal, Tier-1/Tier-2 table & Partner Pilot callout */
+.maku-cmd-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9375rem 1.125rem;
+  border-radius: var(--radius-card);
+  background: #0d1330;
+  border: 1px solid #3a4478;
+  color: #eef0fa;
+  margin-bottom: 2rem;
+  overflow-x: auto;
+}
+.maku-cmd-box code {
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  color: #eef0fa;
+  white-space: nowrap;
+}
+.maku-cmd-prompt {
+  color: #3ddc97;
+  user-select: none;
+  margin-right: 0.5rem;
+}
+.maku-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 40px;
+  padding: 0 0.875rem;
+  border-radius: 6px;
+  border: 1px solid #3a4478;
+  background: #161c42;
+  color: #eef0fa;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex: none;
+  transition-property: background-color, border-color, transform;
+  transition-duration: 140ms;
+  transition-timing-function: ease-out;
+}
+.maku-copy-btn:hover {
+  border-color: #5aa9f0;
+  background: #1f2754;
+}
+.maku-copy-btn:active {
+  transform: scale(0.96);
+}
+
+.maku-tiers-wrap {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface-100);
+  overflow-x: auto;
+  box-shadow: var(--maku-shadow-card);
+  margin-bottom: 2.25rem;
+}
+.maku-tiers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+.maku-tiers th,
+.maku-tiers td {
+  text-align: left;
+  padding: 0.875rem 1.125rem;
+  border-top: 1px solid var(--maku-line-subtle);
+  vertical-align: top;
+}
+.maku-tiers thead th {
+  border-top: 0;
+  background: var(--surface-200);
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--foreground);
+}
+.maku-tiers tbody th {
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.maku-tiers td {
+  color: var(--muted-foreground);
+}
+.maku-tiers td strong {
+  color: var(--foreground);
+}
+.maku-tiers a {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.maku-pilot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+  padding: 1.625rem 1.75rem;
+  border-radius: var(--radius-stage);
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--surface-100), var(--surface-100)) padding-box,
+    var(--aurora-bar) border-box;
+  box-shadow: var(--maku-shadow-card);
+}
+.maku-pilot-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-200);
+  color: var(--violet);
+  flex: none;
+}
+.maku-pilot h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1.25rem;
+}
+.maku-pilot p {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.62;
+  color: var(--muted-foreground);
+  max-width: 72ch;
+}
+.maku-pilot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  margin-top: 1.125rem;
+}
+
+/* ── Responsive breakpoints ──────────────────────────────────────────────── */
+@media (max-width: 980px) {
+  .maku-stage {
+    grid-template-columns: 1fr;
+  }
+  .maku-rail ol {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.25rem;
+  }
+  .maku-rail ol::before,
+  .maku-rail ol::after {
+    display: none;
+  }
+  .maku-ledger {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .maku-chrome-meta {
+    display: none;
+  }
+  .maku-pilot {
+    grid-template-columns: 1fr;
+  }
+  .maku-cmd-box {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .maku-copy-btn {
+    justify-content: center;
+  }
+  .maku-replay-frame iframe {
+    height: 76vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hextra-card,
+  .hextra-feature-card,
+  .maku-btn,
+  .maku-rail ol::after,
+  .maku-rail-node,
+  .maku-tab,
+  .maku-copy-btn {
+    transition: none;
+  }
+  .hextra-card:hover,
+  .hextra-feature-card:hover,
+  .maku-btn:active,
+  .maku-copy-btn:active {
+    transform: none;
+  }
+}
