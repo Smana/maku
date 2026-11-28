@@ -1,0 +1,26 @@
+{{- /* An animated explainer clip under static/media/ (<clip>.mp4 and <clip>-poster.jpg).
+     Params: clip (default "agent-factory"), width and height of the encode (default 720x900),
+     alt (caption text below the clip, bound via aria-describedby).
+     Under prefers-reduced-motion, CSS swaps the video for the static poster and the script
+     drops autoplay before playback starts. */ -}}
+{{- $clip := .Get "clip" | default "agent-factory" -}}
+{{- $w := .Get "width" | default 720 -}}
+{{- $h := .Get "height" | default 900 -}}
+{{- $id := printf "maku-clip-alt-%s" $clip -}}
+<div class="maku-clip">
+  <figure class="maku-clip-media">
+    <video class="maku-clip-video" autoplay muted loop playsinline preload="metadata"
+           width="{{ $w }}" height="{{ $h }}" style="aspect-ratio: {{ $w }} / {{ $h }}"
+           poster="{{ printf "media/%s-poster.jpg" $clip | relURL }}" aria-describedby="{{ $id }}">
+      <source src="{{ printf "media/%s.mp4" $clip | relURL }}" type="video/mp4">
+    </video>
+    <img class="maku-clip-poster" src="{{ printf "media/%s-poster.jpg" $clip | relURL }}"
+         width="{{ $w }}" height="{{ $h }}" style="aspect-ratio: {{ $w }} / {{ $h }}" alt="" loading="lazy">
+    <figcaption id="{{ $id }}">{{ .Get "alt" | default "" }}</figcaption>
+  </figure>
+</div>
+<script>
+if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  document.querySelectorAll('.maku-clip-video').forEach(function (v) { v.removeAttribute('autoplay'); v.preload = 'none'; v.pause(); });
+}
+</script>
