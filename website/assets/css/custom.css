@@ -570,7 +570,7 @@ pre.mermaid { cursor: zoom-in; }
   flex: none;
 }
 
-/* Grounded inline fact strip beneath CTAs (no floating metric cards) */
+/* Grounded inline capability strip beneath Hero (no floating metric cards) */
 .maku-fact-strip {
   display: flex;
   flex-wrap: wrap;
@@ -699,154 +699,7 @@ pre.mermaid { cursor: zoom-in; }
   background: rgb(7 11 34 / 0.88);
 }
 
-/* Band 2: synchronized run rail as a chapter grid (one authored motion moment: the aurora bar
-   tracks the hero screencast's playhead) */
-.maku-rail {
-  padding: 1rem 0.875rem 0.875rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-stage);
-  background: var(--surface-100);
-  box-shadow: var(--maku-shadow-card);
-}
-.maku-rail-head {
-  margin: 0 0 0.625rem 0.375rem;
-  font-family: var(--font-display);
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: var(--foreground);
-}
-.maku-rail ol {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 0.25rem;
-  margin: 0;
-  padding: 0.75rem 0 0;
-  list-style: none;
-  position: relative;
-}
-.maku-rail ol::before,
-.maku-rail ol::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0.375rem;
-  right: 0.375rem;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--line);
-}
-.maku-rail ol::after {
-  background: var(--aurora-bar);
-  transform: scaleX(var(--fill, 0));
-  transform-origin: left center;
-  transition-property: transform;
-  transition-duration: 280ms;
-  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-.maku-rail button {
-  all: unset;
-  box-sizing: border-box;
-  cursor: pointer;
-  display: grid;
-  grid-template-columns: 32px 1fr auto;
-  align-items: center;
-  gap: 0.625rem;
-  width: 100%;
-  min-height: 44px;
-  padding: 0.375rem 0.375rem;
-  border-radius: var(--radius-control);
-  position: relative;
-  z-index: 1;
-  transition-property: background-color;
-  transition-duration: 140ms;
-  transition-timing-function: ease-out;
-}
-.maku-rail button:hover {
-  background-color: var(--surface-200);
-}
-.maku-rail button:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-}
-.maku-rail-node {
-  justify-self: center;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--surface-100);
-  border: 2px solid var(--c, var(--blue));
-  transition-property: background-color, transform;
-  transition-duration: 180ms;
-  transition-timing-function: ease-out;
-}
-.maku-rail-label {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-.maku-rail-who {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--c);
-}
-.maku-rail-label b {
-  font-size: 0.875rem;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--foreground);
-}
-.maku-rail-label small {
-  font-size: 0.78125rem;
-  line-height: 1.35;
-  color: var(--muted-foreground);
-}
-.maku-rail time {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted-foreground);
-}
-.maku-rail li.done .maku-rail-node {
-  background: var(--c);
-}
-.maku-rail li.now .maku-rail-node {
-  background: var(--c);
-  transform: scale(1.25);
-}
-.maku-rail li.now button {
-  background-color: color-mix(in srgb, var(--c) 10%, var(--surface-100));
-}
-.maku-rail li.now .maku-rail-label b {
-  color: var(--c);
-}
-.maku-rail-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 0.75rem 0.375rem 0.125rem;
-  padding-top: 0.625rem;
-  border-top: 1px solid var(--maku-line-subtle);
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-}
-.maku-rail-legend span::before {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 0.375rem;
-  background: var(--c);
-}
-.k-you { --c: var(--pink); }
-.k-factory { --c: var(--amber); }
-.k-agent { --c: var(--blue); }
-.k-done { --c: var(--green); }
-
-/* Band 3: Architecture schematic + 2-column hairline editorial ledger */
+/* Band 2: Architecture schematic, composable stack + 2-column hairline editorial ledger */
 .maku-arch-figure {
   margin: 0 0 1.25rem;
   padding: 1.25rem;
@@ -987,7 +840,7 @@ pre.mermaid { cursor: zoom-in; }
   text-decoration: underline;
 }
 
-/* Band 4: Real Web UI tabbed showcase */
+/* Band 3: Real Web UI tabbed showcase */
 .maku-tabs {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1057,7 +910,7 @@ pre.mermaid { cursor: zoom-in; }
   text-decoration: underline;
 }
 
-/* Band 5: Interactive Room Replay embed */
+/* Band 4: Interactive Room Replay embed */
 .maku-replay-frame {
   border-radius: var(--radius-stage);
   overflow: hidden;
@@ -1072,7 +925,7 @@ pre.mermaid { cursor: zoom-in; }
   border: 0;
 }
 
-/* Band 6: Quickstart terminal, Tier-1/Tier-2 table & Partner Pilot callout */
+/* Band 5: Quickstart terminal, Tier-1/Tier-2 table & Partner Pilot callout */
 .maku-cmd-box {
   display: flex;
   align-items: center;
@@ -1275,8 +1128,6 @@ pre.mermaid { cursor: zoom-in; }
   .hextra-card,
   .hextra-feature-card,
   .maku-btn,
-  .maku-rail ol::after,
-  .maku-rail-node,
   .maku-tab,
   .maku-copy-btn {
     transition: none;
