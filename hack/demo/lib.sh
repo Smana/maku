@@ -87,8 +87,11 @@ demo_public_only() {
   esac
 }
 
-# demo_yq_str VALUE: a single-quoted YAML scalar.
-demo_yq_str() { local v=${1//\'/\'\'}; printf "'%s'" "$v"; }
+# demo_yq_str VALUE: a single-quoted YAML scalar (Bash 3.2 safe: no backslash-escaped quotes).
+demo_yq_str() {
+  local sq="'"
+  printf "'%s'" "${1//"$sq"/$sq$sq}"
+}
 
 # demo_provider URL: the model gateway's provider fields for an OpenAI-compatible base URL, one per line:
 # host, port, path (the base's /chat/completions) and tls.
@@ -114,12 +117,12 @@ demo_provider() {
 # tags DEMO_TAG_BROKER, DEMO_TAG_RUN_CONTROLLER, DEMO_TAG_HARNESS, DEMO_TAG_BRIDGE, DEMO_TAG_FACTORY
 # (`<version>@sha256:<digest>`). Helm replaces a list whole, so the whole repositories[0] entry is here.
 demo_render_values() {
-  local out=$1 q bot shadow=${DEMO_SHADOW:-true} prov
+  local out=$1 q bot shadow=${DEMO_SHADOW:-true} prov=() _line
   [[ $shadow == true || $shadow == false ]] || { echo "DEMO_SHADOW is true or false" >&2; return 1; }
   [[ -r ${GITHUB_APP_KEY_FILE:-} ]] || { echo "the App key file is not readable" >&2; return 1; }
   [[ -n ${DEMO_ISSUER:-} ]] || { echo "DEMO_ISSUER (the cluster's ServiceAccount issuer) is required" >&2; return 1; }
-  mapfile -t prov < <(demo_provider "$MODEL_BASE_URL") && [[ ${#prov[@]} == 4 ]] ||
-    { echo "MODEL_BASE_URL is not an http(s) URL" >&2; return 1; }
+  while IFS= read -r _line; do prov+=("$_line"); done < <(demo_provider "$MODEL_BASE_URL")
+  [[ ${#prov[@]} == 4 ]] || { echo "MODEL_BASE_URL is not an http(s) URL" >&2; return 1; }
   q=demo_yq_str
   bot="${DEMO_SLUG}[bot]"
   (
@@ -267,3 +270,55 @@ demo_context_ok() { [[ -n $1 && $1 == "$2" ]]; }
 
 # demo_digest_ok VALUE: a manifest digest.
 demo_digest_ok() { [[ $1 =~ ^sha256:[0-9a-f]{64}$ ]]; }
+
+# demo_is_release_tag VALUE: exact semver release tag vX.Y.Z (not a PR pre-release vX.Y.Z-prN.sha).
+demo_is_release_tag() { [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# demo_charts_dirty TAG [DIR]: returns 0 when runtime chart or agentgateway files differ from TAG
+# (or TAG is absent from git, e.g. a shallow clone or tarball), 1 when local charts match TAG.
+demo_charts_dirty() {
+  local tag=$1 dir=${2:-.}
+  git -C "$dir" rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null 2>&1 || return 0
+  ! git -C "$dir" diff --quiet "$tag" -- charts config/agentgateway \
+    ':(exclude,glob)**/README.md' ':(exclude,glob)charts/*/tests/**' ':(exclude,glob)charts/*/*.example.yaml'
+}
+
+# demo_resolve_version EXPLICIT SAVED EXACT_TAG LATEST_TAG CHARTS_DIRTY [API_LATEST]:
+# Pick the image version and chart source ("local" or "oci"), printed as "<version> <source>".
+# Precedence: EXPLICIT (env/.env) > EXACT_TAG (HEAD on vX.Y.Z) > SAVED (.demo/answers.env) >
+# LATEST_TAG (nearest release tag) > API_LATEST (GitHub releases/latest for shallow clones/tarballs).
+# Chart source: "local" for non-release tags (e.g. PR pre-releases) or when local charts match the
+# chosen release tag (CHARTS_DIRTY=0); "oci" when charts drifted since that release tag or no git
+# tag is present, so images and charts always stay compatible.
+demo_resolve_version() {
+  local explicit=$1 saved=$2 exact=$3 latest=$4 dirty=$5 api=${6:-} v='' src='local'
+  if [[ -n $explicit ]]; then v=$explicit
+  elif [[ -n $exact ]]; then v=$exact
+  elif [[ -n $saved ]]; then v=$saved
+  elif [[ -n $latest ]]; then v=$latest
+  elif [[ -n $api ]]; then v=$api
+  else
+    echo "could not resolve a Maku release version: set MAKU_VERSION=vX.Y.Z or check GitHub connectivity" >&2
+    return 1
+  fi
+  if demo_is_release_tag "$v"; then
+    if [[ $dirty == 1 ]] || { [[ $v != "$exact" ]] && [[ $v != "$latest" ]]; }; then
+      src='oci'
+    fi
+  fi
+  printf '%s %s\n' "$v" "$src"
+}
+
+# demo_latest_release: latest release tag from GitHub Releases (fallback for shallow clones / zip downloads).
+demo_latest_release() {
+  demo_gh_curl "https://api.github.com/repos/Smana/maku/releases/latest" 2>/dev/null |
+    jq -r '.tag_name // empty' 2>/dev/null || true
+}
+
+# demo_port_in_use PORT: returns 0 if something listens on 127.0.0.1:PORT, 1 if connection refused.
+# Uses curl (required by preflight) so it works identically on macOS and minimal Linux bash.
+demo_port_in_use() {
+  local rc=0
+  curl -s --connect-timeout 1 --max-time 1 "http://127.0.0.1:$1/" >/dev/null 2>&1 || rc=$?
+  [[ $rc -ne 7 ]]
+}

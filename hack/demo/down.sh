@@ -32,7 +32,7 @@ if [[ $all == 1 ]]; then
   rm -rf "$DEMO_DIR"
   echo "removed .demo"
 else
-  rm -rf "${DEMO_DIR:?}/bin"
+  rm -rf "${DEMO_DIR:?}/bin" "${DEMO_DIR:?}/charts"
   for f in state cluster context kubeconfig values.yaml port-forward.pid port-forward.log answers.env; do rm -f "${DEMO_DIR:?}/$f"; done
   echo "kept .demo/app (task demo:down -- --all removes it)"
 fi
