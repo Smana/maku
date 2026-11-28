@@ -3,13 +3,16 @@
 package v1alpha1
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/yaml"
@@ -205,6 +208,16 @@ func TestLegacyMergePolicyReadsBackEmptyAfterTheUpgrade(t *testing.T) {
 		Paths: []string{filepath.Join("..", "..", "..", "config", "crd", "maku.ogenki.io_mergepolicies.yaml")}, ErrorIfPathMissing: true,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	// InstallCRDs waits only for Established=True (already set by release N) before returning,
+	// while apiextensions-apiserver reloads the upgraded structural schema asynchronously.
+	// Wait until strict dry-run rejects a removed release-N field so every Get hits the new schema.
+	probe := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: schema-probe}\nspec: {repositoryRef: probe}\n")
+	if err := wait.PollUntilContextTimeout(t.Context(), 25*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		err := c.Create(ctx, probe, client.DryRunAll, client.FieldValidation("Strict"))
+		return err != nil && strings.Contains(err.Error(), "repositoryRef"), nil
+	}); err != nil {
+		t.Fatalf("upgraded MergePolicy schema never became active: %v", err)
 	}
 	for _, name := range names {
 		u := &unstructured.Unstructured{}
