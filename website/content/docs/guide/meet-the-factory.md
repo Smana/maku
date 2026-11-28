@@ -8,13 +8,7 @@ diataxis: how-to
 
 By the end of this chapter you will know what the factory does for you, and the rules it keeps.
 
-<figure class="maku-shot">
-  <video controls preload="metadata" playsinline poster="/media/maku-run.jpg" style="width:100%;height:auto;border-radius:var(--radius-card);background:#070b22;">
-    <source src="/media/maku-run.mp4" type="video/mp4">
-    <track kind="captions" src="/media/maku-run.en.vtt" srclang="en" label="English" default>
-  </video>
-  <figcaption>A real run from <code>/maku handoff</code> in OpenCode through room review, maintainer approval on GitHub, merge, and Grafana spend attribution (2:06).</figcaption>
-</figure>
+{{< hero-video clip="agent-factory" width="720" height="900" alt="Maku in 32 seconds: one sentence from your coding agent or Slack, or a labelled issue, becomes a sandboxed agent run watched and steered in a room, metered through agentgateway under a hard USD cap, and gated by a merge policy or maintainer approval." >}}
 
 You have more small fixes than time. A dead link, a version number that drifted, a script that needs one more flag. Maku takes that kind of work off your plate.
 
@@ -25,6 +19,16 @@ A second agent reviews that pull request before you see it. If the checks fail, 
 You review it the way you review any pull request. Ask for changes, and the agent revises it on the same branch, with your review as its instructions. Approve it, and that approval is the merge.
 
 Every task has a room: a live page of what each agent did and said. You can watch it, leave a note, or stop the task at any time.
+
+## Watch a real run end to end {#real-run}
+
+<figure class="maku-shot">
+  <video controls preload="metadata" playsinline poster="/media/maku-run.jpg" style="width:100%;height:auto;border-radius:var(--radius-card);background:#070b22;">
+    <source src="/media/maku-run.mp4" type="video/mp4">
+    <track kind="captions" src="/media/maku-run.en.vtt" srclang="en" label="English" default>
+  </video>
+  <figcaption>A real run from <code>/maku handoff</code> in OpenCode through room review, maintainer approval on GitHub, merge, and Grafana spend attribution (2:06).</figcaption>
+</figure>
 
 ## Four safety rules {#never}
 

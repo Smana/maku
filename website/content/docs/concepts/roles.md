@@ -40,6 +40,8 @@ flowchart TB
   build -->|"pull request → merge gate"| merge
 ```
 
+{{< hero-video clip="agent-factory-v3" width="720" height="854" alt="Animation: a workflow picks the roles. quick runs the implementer alone; standard adds a reviewer; careful adds a scoper that bounds the task or asks the author one question, the repository search, and a judge call. The merge gate then reads the diff: a live policy merges alone, a shadow one only records, otherwise one approval merges." >}}
+
 Five roles run in a task. The task's **workflow** (`quick`, `standard`, or `careful`) decides which of them run: `quick` runs the implementer alone; `standard` runs the implementer, with its repository checks, then the reviewer; `careful` adds the scoper before them (including a split proposal when an issue is too big for one pull request), the implementer's repository search tool, and the completion judge.
 
 A repository switches the **tester** on, for `careful` tasks, with `Repository.spec.workflow.testFirst: true`. For RunLore's incident role, which investigates an alert and proposes an issue, see [RunLore]({{< relref "/docs/concepts/runlore.md" >}}).

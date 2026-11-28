@@ -1063,6 +1063,31 @@ pre.mermaid { cursor: zoom-in; }
   margin-top: 1.125rem;
 }
 
+/* Animated explainer clips embedded in docs (layouts/_shortcodes/hero-video.html) */
+.maku-clip .maku-clip-media {
+  margin: 1.5rem auto;
+  width: min(100%, 30rem);
+}
+.maku-clip-video,
+.maku-clip-poster {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line);
+  background: #0a0f15;
+  box-shadow: var(--maku-shadow-card);
+}
+.maku-clip-poster {
+  display: none;
+}
+.maku-clip-media figcaption {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
 /* 404: the hero band's surface, one centered column */
 .maku-404 {
   min-height: calc(100vh - 4rem);
@@ -1125,6 +1150,12 @@ pre.mermaid { cursor: zoom-in; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .maku-clip-video {
+    display: none;
+  }
+  .maku-clip-poster {
+    display: block;
+  }
   .hextra-card,
   .hextra-feature-card,
   .maku-btn,
