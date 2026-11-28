@@ -848,7 +848,7 @@ pre.mermaid { cursor: zoom-in; }
 
 /* Band 3: Architecture schematic + 2-column hairline editorial ledger */
 .maku-arch-figure {
-  margin: 0 0 2.5rem;
+  margin: 0 0 1.25rem;
   padding: 1.25rem;
   border-radius: var(--radius-stage);
   border: 1px solid var(--line);
@@ -908,6 +908,40 @@ pre.mermaid { cursor: zoom-in; }
 }
 .maku-arch-figure .a-arrow {
   fill: var(--muted-foreground);
+}
+
+.maku-stack-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.625rem 1rem;
+  margin: 0 0 2.25rem;
+}
+.maku-stack-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.maku-stack-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.maku-stack-items li {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--foreground);
+  background: var(--surface-100);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  padding: 0.25rem 0.65rem;
 }
 
 .maku-ledger {

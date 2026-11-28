@@ -5,13 +5,13 @@
   <img src="docs/assets/brand/png/maku-lockup-horizontal-light.png" alt="Maku" width="300">
 </picture>
 
-**Run coding agents on Kubernetes without trusting them (Apache-2.0).**
+**The open-source software factory for Kubernetes (Apache-2.0).**
 
-Run coding agents on your own Kubernetes cluster without trusting a third-party SaaS control plane
-or the agents themselves. Maku complements local coding agents (Claude Code, OpenCode, Cursor,
-Codex, Copilot, Gemini): hand off an issue from your editor, Slack or GitHub, and Maku runs
-sandboxed agents under strict budgets, streams every action into an auditable room, and brings back
-a reviewed pull request.
+Own the entire issue-to-PR pipeline instead of renting a black-box SaaS. Composed from open-source
+cloud-native tools, Maku complements local coding agents (Claude Code, OpenCode, Cursor, Codex,
+Copilot, Gemini): hand off an issue from your editor, Slack or GitHub, and Maku runs sandboxed
+agents on your cluster under hard external USD budgets, streams every action into an auditable room,
+and brings back a reviewed pull request—with any model, any harness, and zero vendor lock-in.
 
 Every control sits outside the sandbox. A run cannot raise its own budget, widen its own network
 egress, touch another repository's token or approve its own merge, however it is prompted.
@@ -24,7 +24,7 @@ egress, touch another repository's token or approve its own merge, however it is
 
 ## Why Maku
 
-### Your cluster, zero vendor lock-in
+### Open cloud-native stack, zero vendor lock-in
 
 - **Your cluster, your data, your keys.** No SaaS control plane, no seat tax, no vendor lock-in.
   Bring any OIDC identity provider (Okta, Entra ID, Keycloak, ZITADEL), any OpenAI- or
