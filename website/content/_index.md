@@ -1,4 +1,4 @@
 ---
-title: "Maku — Run coding agents on Kubernetes without trusting them"
-description: "Self-hosted, Apache-2.0 coding-agent factory on Kubernetes: gVisor sandboxes, gateway-enforced USD budgets, append-only rooms, and GitOps-governed merge policies."
+title: "Maku — The open-source software factory for Kubernetes"
+description: "Own the entire issue-to-PR pipeline on Kubernetes using open-source cloud-native tools: any model, any harness, zero vendor lock-in, hard USD budgets, auditable rooms, and GitOps merge gates."
 ---

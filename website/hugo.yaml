@@ -79,7 +79,7 @@ menu:
         icon: github
 
 params:
-  description: "Run coding agents on Kubernetes without trusting them (Apache-2.0): gVisor sandboxes, gateway-enforced USD budgets, append-only rooms, and GitOps-governed earned auto-merge."
+  description: "The open-source software factory for Kubernetes (Apache-2.0): composed from cloud-native tools with zero vendor lock-in—any LLM, pluggable harnesses, gateway USD budgets, auditable rooms, and GitOps merge gates."
   images:
     - images/social/github-social-preview.png
   navbar:
