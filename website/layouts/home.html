@@ -259,7 +259,7 @@
           </a>
         </div>
         <div class="maku-replay-frame">
-          <iframe id="maku-replay-frame" src="{{ "demo/" | relURL }}" title="Recorded Maku runs replayed in the static Room UI" loading="lazy"></iframe>
+          <iframe id="maku-replay-frame" src="{{ "demo/?theme=light" | relURL }}" title="Recorded Maku runs replayed in the static Room UI" loading="lazy"></iframe>
         </div>
       </div>
     </section>
@@ -335,7 +335,7 @@
           </div>
           <div>
             <h3 id="maku-pilot-title">{{ .title }}</h3>
-            <p>{{ .message }}</p>
+            <p>{{ $.RenderString .message }}</p>
             <div class="maku-pilot-links">
               {{- range $i, $l := .links }}
               {{- $href := $l.url -}}

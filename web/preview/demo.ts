@@ -6,7 +6,7 @@
 
 import type { RoomEvent, Snapshot } from "../src/conn";
 import type { Summary } from "../src/summary";
-import { applyTheme, initTheme } from "../src/theme";
+import { applyTheme, initTheme, THEME_STORAGE_KEY } from "../src/theme";
 import { DEMO_ROOMS, roomById, type DemoRoom } from "./demo-rooms";
 import { summaryAt } from "./demo-summary";
 import { mountPreviewPage, type PreviewPage } from "./page";
@@ -32,7 +32,19 @@ async function run() {
   const params = new URLSearchParams(location.search);
   const theme = initTheme();
   const override = params.get("theme");
-  if (override === "light" || override === "dark") applyTheme(override);
+  if (override === "light" || override === "dark") {
+    applyTheme(override);
+  } else {
+    // Public demo defaults to Day (light) unless the visitor opted into dark on maku.ogenki.io
+    // or explicitly stored a room theme choice.
+    try {
+      if (!localStorage.getItem(THEME_STORAGE_KEY)) {
+        applyTheme(localStorage.getItem("color-theme") === "dark" ? "dark" : "light");
+      }
+    } catch {
+      applyTheme("light");
+    }
+  }
   // Sync with the parent maku.ogenki.io page when embedded in an iframe on the same origin.
   window.addEventListener("message", (ev) => {
     if (ev.origin !== window.location.origin) return;

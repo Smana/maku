@@ -109,11 +109,11 @@ params:
   mermaid:
     base: "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist"
   theme:
-    default: system
+    default: light
     displayToggle: false
   pilot:
-    title: "Run a Tier-1 Pilot with your engineering team"
-    message: "Maku is Apache-2.0 open source, not a commercial SaaS pitch. Your team owns its Kubernetes cluster (with gVisor), GitHub repositories, and model API keys; the maintainer provides bootstrap support and collaborates on improvements driven by your stack, with optional freelance days for hands-on integration."
+    title: "Pilot Maku with your engineering team"
+    message: "Maku is Apache-2.0 open source and runs on any Kubernetes cluster with GitHub (Cloud or Enterprise Server). I'm looking for a **partner team** to run a Tier-1 Pilot on real private repositories — you own your cluster and model keys, and I help bootstrap and co-build against your stack."
     links:
       - name: "Read the Tier-1 Pilot guide"
         url: "/docs/get-started/pilot/"
