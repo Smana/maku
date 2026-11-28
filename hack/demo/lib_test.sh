@@ -122,6 +122,53 @@ no demo_context_ok '' kind-a
 ok demo_digest_ok "sha256:$(printf 'a%.0s' {1..64})"
 no demo_digest_ok 'sha256:abc'; no demo_digest_ok ''; no demo_digest_ok 'error: not found'
 
+# release version and chart source resolution (works on release tags, ahead-of-tag main, shallow clones)
+ok demo_is_release_tag v0.58.1
+no demo_is_release_tag v0.59.0-pr123.abcdef12
+no demo_is_release_tag main
+eq "$(demo_resolve_version 'v0.59.0-pr9.12345678' '' '' 'v0.58.1' 1 '')" 'v0.59.0-pr9.12345678 local' "explicit PR pre-release uses local charts"
+eq "$(demo_resolve_version 'v0.58.1' '' '' 'v0.58.1' 0 '')" 'v0.58.1 local' "explicit release on matching charts uses local"
+eq "$(demo_resolve_version 'v0.58.1' '' '' 'v0.58.1' 1 '')" 'v0.58.1 oci' "explicit release on drifted charts uses oci"
+eq "$(demo_resolve_version '' '' 'v0.58.1' 'v0.58.1' 0 '')" 'v0.58.1 local' "exact release tag uses local charts"
+eq "$(demo_resolve_version '' '' 'v0.58.1' 'v0.58.1' 1 '')" 'v0.58.1 oci' "exact tag with dirty local charts uses oci"
+eq "$(demo_resolve_version '' '' '' 'v0.58.1' 0 '')" 'v0.58.1 local' "main ahead of release with unchanged charts uses latest release + local"
+eq "$(demo_resolve_version '' '' '' 'v0.58.1' 1 '')" 'v0.58.1 oci' "main ahead of release with changed charts uses latest release + oci"
+eq "$(demo_resolve_version '' '' '' '' 1 'v0.58.1')" 'v0.58.1 oci' "shallow clone / tarball uses GitHub latest + oci"
+eq "$(demo_resolve_version '' 'v0.57.0' '' 'v0.58.1' 0 '')" 'v0.57.0 oci' "saved older release uses oci charts"
+no demo_resolve_version '' '' '' '' 1 ''
+
+# demo_charts_dirty: ignores READMEs, tests, and examples; catches chart/config runtime edits and missing tags
+repo="$tmp/repo"
+mkdir -p "$repo/charts/agent-factory/tests" "$repo/config/agentgateway"
+printf 'x: 1\n' >"$repo/charts/agent-factory/values.yaml"
+printf 'readme\n' >"$repo/charts/agent-factory/README.md"
+printf 'test\n' >"$repo/charts/agent-factory/tests/install.sh"
+printf 'example\n' >"$repo/charts/agent-factory/values-mine.example.yaml"
+printf 'crd\n' >"$repo/config/agentgateway/crds.yaml"
+git -C "$repo" init -q
+git -C "$repo" -c user.name=t -c user.email=t@t add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qm init
+git -C "$repo" tag v0.58.1
+no demo_charts_dirty v0.58.1 "$repo"
+printf 'updated docs\n' >"$repo/charts/agent-factory/README.md"
+printf 'updated test\n' >"$repo/charts/agent-factory/tests/install.sh"
+printf 'updated example\n' >"$repo/charts/agent-factory/values-mine.example.yaml"
+no demo_charts_dirty v0.58.1 "$repo"
+printf 'x: 2\n' >"$repo/charts/agent-factory/values.yaml"
+ok demo_charts_dirty v0.58.1 "$repo"
+ok demo_charts_dirty v9.9.9 "$repo"
+
+# demo_yq_str quotes apostrophes without Bash 3.2 backslash corruption
+eq "$(demo_yq_str "a'b")" "'a''b'" "demo_yq_str escapes single quote cleanly"
+
+# demo_port_in_use: curl exit 7 (connection refused) means free; any other exit means busy
+mkdir -p "$tmp/fake-free" "$tmp/fake-busy"
+printf '#!/bin/sh\nexit 7\n' >"$tmp/fake-free/curl"
+printf '#!/bin/sh\nexit 28\n' >"$tmp/fake-busy/curl"
+chmod +x "$tmp/fake-free/curl" "$tmp/fake-busy/curl"
+no env PATH="$tmp/fake-free:$PATH" bash -c '. hack/demo/lib.sh; demo_port_in_use 8080'
+ok env PATH="$tmp/fake-busy:$PATH" bash -c '. hack/demo/lib.sh; demo_port_in_use 8080'
+
 # the values file renders, is 0600, leaks nothing odd, and the chart's config parses (plan B's Parse test)
 openssl genrsa -out "$tmp/app.pem" 2048 2>/dev/null
 export DEMO_ISSUER=https://kubernetes.default.svc.cluster.local

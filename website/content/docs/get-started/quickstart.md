@@ -11,15 +11,15 @@ aliases:
 
 ```bash
 git clone https://github.com/Smana/maku && cd maku
-task demo
+task demo          # or ./hack/demo/up.sh if Task is not installed
 ```
 
 ## Before you start
 
 | Need | Detail |
 |---|---|
-| Tools | Docker with `buildx`, Helm, kubectl, [Task](https://taskfile.dev), `curl`, and k3d or kind (k3d wins when both exist). `gh` (logged in) is optional and automates repository setup |
-| System | Linux with Docker is proven; macOS with Docker Desktop is best effort. Runs use the default runtime (`runc`), not a sandbox |
+| Tools | Docker with `buildx`, Helm, kubectl, `curl`, `jq`, and k3d or kind (k3d wins when both exist). [Task](https://taskfile.dev) is optional (`./hack/demo/up.sh` runs directly). `gh` (logged in) is optional and automates repository setup |
+| System | Linux or macOS (`amd64` and `arm64`, with Docker, Docker Desktop, OrbStack, or Colima). Runs use the default runtime (`runc`), not a sandbox |
 | GitHub | An account and a **public** repository: the agent can read the model key and the App's token, so the demo refuses private repositories |
 | Model | An OpenAI-compatible base URL, model name and API key (one model serves every role) |
 | Network | Access to `ghcr.io/smana` and the GitHub API (60 unauthenticated requests/hour is enough) |
@@ -47,7 +47,7 @@ The repository's default branch must contain `.github/agent-factory.yaml` with `
 | `DEMO_LOGIN` | `gh` login, else asked | GitHub login allowed to trigger tasks |
 | `GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG` | unset | Existing App id, PEM path and URL slug; skips browser creation (permissions in [the factory page]({{< relref "/docs/reference/config.md#demo" >}})) |
 | `CLUSTER` | `k3d`, else `kind` | `k3d`, `kind`, or `current` (confirmed interactively or via `DEMO_CONFIRM_CONTEXT=<context>`) |
-| `MAKU_VERSION` | release tag, else saved | Image and CLI release tag |
+| `MAKU_VERSION` | latest release (or saved) | Image, CLI, and chart release tag; auto-pulls published OCI charts if local charts changed since that release, or set to a PR pre-release tag to test local chart edits |
 | `DEMO_LIVE` | saved, else `0` | `1` turns the `docs-links` [class]({{< relref "/docs/concepts/glossary.md#glossary" >}}) live so the gate merges (`DEMO_LIVE=0 task demo` reverts it) |
 | `DEMO_NO_GH` | unset | Never call `gh` or write to GitHub |
 | `K3S_IMAGE`, `KIND_NODE_IMAGE` | pinned | Cluster node image override |
@@ -88,7 +88,8 @@ Delete the GitHub repository and App yourself on GitHub. Under `CLUSTER=current`
 
 | Symptom | Cause and fix |
 |---|---|
-| "this checkout is not at a release tag ..." | Ahead of a release, `task demo` refuses to guess: set `MAKU_VERSION` to a matching `ghcr.io/smana` pre-release tag (`vX.Y.Z-prN.<sha8>`, checked via `docker buildx imagetools inspect ghcr.io/smana/maku-broker:<tag>`) or `git checkout` a release tag |
+| "could not resolve a Maku release version ..." | Shallow clone or tarball without GitHub access: set `MAKU_VERSION=vX.Y.Z` to a published release tag or check connectivity to `api.github.com` |
+| `mise ERROR ... mise.toml are not trusted` | Only affects shells using `mise`: run `mise trust` in the cloned directory |
 | `curl: (22) ... 404` / "could not fetch maku <version>" on the App step | Expected until a release ships `maku demo app`: the script falls back to `go run ./cmd/maku demo app` (needs Go on `PATH`), or pass `GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE` and `DEMO_SLUG` |
 | "the repository is private" or GitHub API rate-limit error | Use a public `DEMO_REPO`; authenticate with `gh` or `GITHUB_TOKEN` if rate-limited |
 | "<deployment> did not roll out" | Inspect the printed pod logs; commonly `MAKU_VERSION` is older than the chart |

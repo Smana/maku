@@ -11,8 +11,9 @@
 #   DEMO_REPO=owner/name                      your repository (public); created from Smana/maku-demo
 #   GITHUB_APP_ID GITHUB_APP_KEY_FILE         an existing App (with DEMO_SLUG): skips the browser
 #   CLUSTER=k3d|kind|current                  default k3d if installed, else kind
-#   MAKU_VERSION                              the images' tag; default: this checkout's tag, else the last answer.
-#                                             A checkout ahead of a release needs a matching one (a PR pre-release tag)
+#   MAKU_VERSION                              the images' tag; default: this checkout's tag, else the latest release
+#                                             (pulling matching OCI charts when local charts changed since that release).
+#                                             Set to a PR pre-release tag (vX.Y.Z-prN.<sha8>) to test local chart edits.
 #   DEMO_LIVE=1                               turn the docs-links class live (Q13); kept for the next run, DEMO_LIVE=0 undoes it
 #   DEMO_NO_GH=1                              never use gh, never write to GitHub
 #   DEMO_LOGIN                                the GitHub login allowed to file work
@@ -73,21 +74,34 @@ resolve() {
 preflight() {
   step "preflight"
   case "$(uname -s)" in
-  Linux) ;;
-  Darwin) echo "    macOS is best effort: the demo is proven on Linux with Docker." ;;
+  Linux | Darwin) ;;
   *) die "Linux or macOS only" ;;
   esac
   for t in docker helm kubectl curl jq; do command -v "$t" >/dev/null || die "$t is not installed"; done
   docker info >/dev/null 2>&1 || die "the Docker daemon is not reachable"
   docker buildx version >/dev/null 2>&1 || die "docker buildx is not installed (it resolves the images' digests)"
   MAKU_VERSION=${MAKU_VERSION:-}
-  if [[ -z $MAKU_VERSION ]]; then
-    MAKU_VERSION=$(git describe --tags --exact-match 2>/dev/null || true)
-    [[ -n $MAKU_VERSION ]] || MAKU_VERSION=$(demo_env_get MAKU_VERSION "$DEMO_DIR/answers.env")
-    [[ -n $MAKU_VERSION ]] || die "this checkout is not at a release tag, and the chart here may need images newer than the latest release (the release's run-controller refuses a chart it does not know). Set MAKU_VERSION to images that match this checkout, e.g. a pull request pre-release tag vX.Y.Z-prN.<sha8> that exists in ghcr.io/smana (docker buildx imagetools inspect ghcr.io/smana/maku-broker:<tag>), or git checkout a release tag."
+  local explicit_ver=$MAKU_VERSION saved_ver exact_tag latest_tag dirty=1 api_latest='' resolved
+  saved_ver=$(demo_env_get MAKU_VERSION "$DEMO_DIR/answers.env")
+  exact_tag=$(git describe --tags --exact-match --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+  latest_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+  if [[ -n $exact_tag ]]; then
+    if demo_charts_dirty "$exact_tag" "$ROOT"; then dirty=1; else dirty=0; fi
+  elif [[ -n $latest_tag ]]; then
+    if demo_charts_dirty "$latest_tag" "$ROOT"; then dirty=1; else dirty=0; fi
   fi
+  if [[ -z $explicit_ver && -z $exact_tag && -z $saved_ver && -z $latest_tag ]]; then
+    api_latest=$(demo_latest_release)
+  fi
+  resolved=$(demo_resolve_version "$explicit_ver" "$saved_ver" "$exact_tag" "$latest_tag" "$dirty" "$api_latest") || exit 1
+  MAKU_VERSION=${resolved%% *}
+  CHART_SOURCE=${resolved#* }
   save_answer MAKU_VERSION
-  echo "    maku $MAKU_VERSION"
+  if [[ $CHART_SOURCE == oci ]]; then
+    echo "    maku $MAKU_VERSION (published OCI charts; set MAKU_VERSION=<prerelease> to test local chart edits)"
+  else
+    echo "    maku $MAKU_VERSION"
+  fi
   local have_k3d=0 have_kind=0
   command -v k3d >/dev/null && have_k3d=1
   command -v kind >/dev/null && have_kind=1
@@ -113,7 +127,7 @@ model() {
 # when it has the command, else go run ./cmd/maku if go is on PATH, else die naming the ways out.
 maku_demo_app() {
   local bin="$DEMO_DIR/bin/maku" bin_ok=0 go_ok=0
-  if [[ $(cat "$DEMO_DIR/bin/maku.version" 2>/dev/null) != "$MAKU_VERSION" || ! -x $bin ]]; then
+  if [[ $(cat "$DEMO_DIR/bin/maku.version" 2>/dev/null || true) != "$MAKU_VERSION" || ! -x $bin ]]; then
     rm -f "$bin"
     if demo_fetch_maku "$MAKU_VERSION" "$bin"; then printf '%s' "$MAKU_VERSION" >"$DEMO_DIR/bin/maku.version"; fi
   fi
@@ -192,7 +206,7 @@ seed_github() {
       body=$(demo_issue_field "$f" "$i" body)
       local args=()
       while IFS= read -r l; do args+=(-l "$l"); done < <(demo_issue_field "$f" "$i" labels)
-      gh issue create -R "$DEMO_REPO" -t "$title" -b "$body" "${args[@]}" >/dev/null || warn "could not create the issue '$title'"
+      gh issue create -R "$DEMO_REPO" -t "$title" -b "$body" ${args[@]+"${args[@]}"} >/dev/null || warn "could not create the issue '$title'"
     done
     echo "    seeded the issues from the template"
   else
@@ -354,7 +368,23 @@ install_chart() {
   DEMO_ISSUER=$(kc get --raw /.well-known/openid-configuration | jq -r .issuer) || die "the cluster's ServiceAccount issuer could not be read"
   export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME DEMO_ISSUER
   demo_render_values "$DEMO_DIR/values.yaml"
-  hl dependency build charts/agent-factory >/dev/null
+  local crds_chart="charts/agent-factory-crds" af_chart="charts/agent-factory" demo_vals="charts/agent-factory/values-demo.yaml"
+  if [[ ${CHART_SOURCE:-local} == oci ]]; then
+    local oci_dir="$DEMO_DIR/charts/$v" cv="${v#v}"
+    if [[ ! -f $oci_dir/agent-factory/values-demo.yaml || ! -d $oci_dir/agent-factory-crds ]]; then
+      rm -rf "$oci_dir"
+      mkdir -p "$oci_dir"
+      hl pull oci://ghcr.io/smana/charts/agent-factory-crds --version "$cv" --untar -d "$oci_dir" >/dev/null ||
+        die "could not pull oci://ghcr.io/smana/charts/agent-factory-crds:$cv"
+      hl pull oci://ghcr.io/smana/charts/agent-factory --version "$cv" --untar -d "$oci_dir" >/dev/null ||
+        die "could not pull oci://ghcr.io/smana/charts/agent-factory:$cv"
+    fi
+    crds_chart="$oci_dir/agent-factory-crds"
+    af_chart="$oci_dir/agent-factory"
+    demo_vals="$oci_dir/agent-factory/values-demo.yaml"
+  else
+    hl dependency build "$af_chart" >/dev/null
+  fi
   # The CRD chart first. A demo cluster from before it holds the CRDs from the subcharts' crds/:
   # hand them to the af-crds release (docs/upgrading.md), which is a no-op once they are its own.
   local crds
@@ -376,9 +406,9 @@ install_chart() {
     # shellcheck disable=SC2086
     kc annotate $roles meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" helm.sh/resource-policy=keep --overwrite >/dev/null
   fi
-  hl upgrade --install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m >/dev/null
+  hl upgrade --install af-crds "$crds_chart" -n "$NS" --create-namespace --timeout 2m >/dev/null
   kc wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s >/dev/null
-  hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f charts/agent-factory/values-demo.yaml -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
+  hl upgrade --install af "$af_chart" -n "$NS" --create-namespace -f "$demo_vals" -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
   echo "    waiting for the workloads"
   rollout sts/rooms-db
   rollout deploy/room-broker
@@ -411,7 +441,7 @@ room_page() {
       kill "$pid" 2>/dev/null || true
       for ((i = 0; i < 50; i++)); do demo_pid_is_forward "$pid" || break; sleep 0.1; done
     fi
-    if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then die "port $PORT is in use by something else: free it, the room page needs it"; fi
+    if demo_port_in_use "$PORT"; then die "port $PORT is in use by something else: free it, the room page needs it"; fi
     local start=(kubectl)
     [[ -z $KCTX ]] || start+=(--context "$KCTX")
     start+=(-n "$NS" port-forward --address 127.0.0.1 deploy/room-broker "$PORT:8080")
